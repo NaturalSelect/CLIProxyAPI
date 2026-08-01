@@ -11,6 +11,7 @@ import (
 	"time"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
 
 type recordingCooldownStateStore struct {
@@ -252,6 +253,59 @@ func TestManager_MarkResult_PersistsCooldownOnlyWhenStateChanges(t *testing.T) {
 	manager.MarkResult(context.Background(), Result{AuthID: auth.ID, Provider: "xai", Model: "grok-4", Success: true})
 	if got := store.saveCount.Load(); got != 2 {
 		t.Fatalf("clean success saved cooldown state %d times, want 2", got)
+	}
+}
+
+func TestManager_ReconcileRegistryModelStates_PersistsCooldownRemoval(t *testing.T) {
+	store := &recordingCooldownStateStore{}
+	manager := NewManager(nil, nil, nil)
+	manager.SetCooldownStateStore(store)
+
+	auth := &Auth{ID: "auth-reconcile-cooldown", Provider: "xai", Status: StatusActive}
+	model := "grok-4"
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: model}})
+	t.Cleanup(func() { reg.UnregisterClient(auth.ID) })
+
+	if _, errRegister := manager.Register(WithSkipPersist(context.Background()), auth); errRegister != nil {
+		t.Fatalf("Register() returned error: %v", errRegister)
+	}
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    model,
+		Success:  false,
+		Error:    &Error{Message: "upstream unavailable", HTTPStatus: 500},
+	})
+	if got := store.saveCount.Load(); got != 1 {
+		t.Fatalf("cooldown failure saved state %d times, want 1", got)
+	}
+	store.mu.Lock()
+	recordsBeforeReconcile := cloneCooldownStateRecords(store.records)
+	store.mu.Unlock()
+	if len(recordsBeforeReconcile) != 2 {
+		t.Fatalf("records before reconcile = %+v, want aggregate and model cooldowns", recordsBeforeReconcile)
+	}
+	foundModelCooldown := false
+	for _, record := range recordsBeforeReconcile {
+		if record.Model == model {
+			foundModelCooldown = true
+			break
+		}
+	}
+	if !foundModelCooldown {
+		t.Fatalf("records before reconcile = %+v, want cooldown for model %q", recordsBeforeReconcile, model)
+	}
+
+	manager.ReconcileRegistryModelStates(context.Background(), auth.ID)
+	if got := store.saveCount.Load(); got != 2 {
+		t.Fatalf("reconcile saved state %d times, want 2", got)
+	}
+	store.mu.Lock()
+	recordsAfterReconcile := cloneCooldownStateRecords(store.records)
+	store.mu.Unlock()
+	if len(recordsAfterReconcile) != 0 {
+		t.Fatalf("records after reconcile = %+v, want no stale cooldown", recordsAfterReconcile)
 	}
 }
 

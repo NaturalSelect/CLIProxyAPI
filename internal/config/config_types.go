@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	sdkpluginstore "github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginstore"
@@ -108,6 +109,56 @@ type ClaudeHeaderDefaults struct {
 	Arch                   string `yaml:"arch" json:"arch"`
 	Timeout                string `yaml:"timeout" json:"timeout"`
 	StabilizeDeviceProfile *bool  `yaml:"stabilize-device-profile,omitempty" json:"stabilize-device-profile,omitempty"`
+}
+
+const (
+	ClaudePromptCacheModeLegacy      = "legacy"
+	ClaudePromptCacheModeAdaptive    = "adaptive"
+	ClaudePromptCacheModePassthrough = "passthrough"
+
+	defaultClaudePromptCacheColdStartMaxWaitSeconds = 15
+	maxClaudePromptCacheColdStartMaxWaitSeconds     = 60
+)
+
+// ClaudePromptCacheConfig configures prompt-cache planning for Claude requests.
+type ClaudePromptCacheConfig struct {
+	// Mode controls automatic cache-control behavior: legacy, adaptive, or passthrough.
+	// Empty and unknown values preserve the legacy behavior.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+
+	// ColdStartMaxWaitSeconds limits how long a request waits for another request
+	// to start creating an identical cache prefix. Zero disables waiting.
+	ColdStartMaxWaitSeconds *int `yaml:"cold-start-max-wait-seconds,omitempty" json:"cold-start-max-wait-seconds,omitempty"`
+
+	// Diagnostics enables Anthropic's cache-diagnosis beta for official endpoints.
+	Diagnostics bool `yaml:"diagnostics,omitempty" json:"diagnostics,omitempty"`
+}
+
+// EffectiveMode returns the normalized prompt-cache mode.
+func (c ClaudePromptCacheConfig) EffectiveMode() string {
+	switch strings.ToLower(strings.TrimSpace(c.Mode)) {
+	case ClaudePromptCacheModeAdaptive:
+		return ClaudePromptCacheModeAdaptive
+	case ClaudePromptCacheModePassthrough:
+		return ClaudePromptCacheModePassthrough
+	default:
+		return ClaudePromptCacheModeLegacy
+	}
+}
+
+// EffectiveColdStartMaxWaitSeconds returns the bounded follower wait duration.
+func (c ClaudePromptCacheConfig) EffectiveColdStartMaxWaitSeconds() int {
+	if c.ColdStartMaxWaitSeconds == nil {
+		return defaultClaudePromptCacheColdStartMaxWaitSeconds
+	}
+	configuredSeconds := *c.ColdStartMaxWaitSeconds
+	if configuredSeconds < 0 {
+		return defaultClaudePromptCacheColdStartMaxWaitSeconds
+	}
+	if configuredSeconds > maxClaudePromptCacheColdStartMaxWaitSeconds {
+		return maxClaudePromptCacheColdStartMaxWaitSeconds
+	}
+	return configuredSeconds
 }
 
 // CodexHeaderDefaults configures fallback header values injected into Codex
@@ -304,8 +355,8 @@ type CloakConfig struct {
 	// This can help bypass certain content filters.
 	SensitiveWords []string `yaml:"sensitive-words,omitempty" json:"sensitive-words,omitempty"`
 
-	// CacheUserID controls whether Claude user_id values are cached per API key.
-	// When false, a fresh random user_id is generated for every request.
+	// CacheUserID preserves legacy per-credential user_id caching when a request
+	// does not carry the pre-auth normalized Claude identity metadata.
 	CacheUserID *bool `yaml:"cache-user-id,omitempty" json:"cache-user-id,omitempty"`
 }
 

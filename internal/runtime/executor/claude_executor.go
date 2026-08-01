@@ -23,6 +23,7 @@ type ClaudeExecutor struct {
 	cfg                     *config.Config
 	requestLogProvider      string
 	upstreamModelNormalizer func(string) string
+	promptCacheRuntime      *helps.ClaudePromptCacheRuntime
 }
 
 // claudeToolPrefix is empty to match real Claude Code behavior (no tool name prefix).
@@ -133,7 +134,9 @@ var oauthToolsToRemove = map[string]bool{}
 // omit max_tokens. Prefer registered model metadata before using a fallback.
 const defaultModelMaxTokens = 1024
 
-func NewClaudeExecutor(cfg *config.Config) *ClaudeExecutor { return &ClaudeExecutor{cfg: cfg} }
+func NewClaudeExecutor(cfg *config.Config) *ClaudeExecutor {
+	return NewClaudeExecutorWithPromptCacheRuntime(cfg, NewClaudePromptCacheRuntime())
+}
 
 func (e *ClaudeExecutor) Identifier() string { return "claude" }
 

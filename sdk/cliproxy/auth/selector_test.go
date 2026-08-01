@@ -17,6 +17,14 @@ import (
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
+func claudeUserIDForSession(sessionID string) string {
+	return fmt.Sprintf(
+		"user_%s_account_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa_session_%s",
+		strings.Repeat("1", 64),
+		sessionID,
+	)
+}
+
 func TestFillFirstSelectorPick_Deterministic(t *testing.T) {
 	t.Parallel()
 
@@ -660,7 +668,7 @@ func TestExtractSessionID(t *testing.T) {
 	}{
 		{
 			name:    "valid_claude_code_format",
-			payload: `{"metadata":{"user_id":"user_3f221fe75652cf9a89a31647f16274bb8036a9b85ac4dc226a4df0efec8dc04d_account__session_ac980658-63bd-4fb3-97ba-8da64cb1e344"}}`,
+			payload: fmt.Sprintf(`{"metadata":{"user_id":%q}}`, claudeUserIDForSession("ac980658-63bd-4fb3-97ba-8da64cb1e344")),
 			want:    "claude:ac980658-63bd-4fb3-97ba-8da64cb1e344",
 		},
 		{
@@ -718,7 +726,7 @@ func TestSessionAffinitySelector_SameSessionSameAuth(t *testing.T) {
 	}
 
 	// Use valid UUID format for session ID
-	payload := []byte(`{"metadata":{"user_id":"user_xxx_account__session_ac980658-63bd-4fb3-97ba-8da64cb1e344"}}`)
+	payload := []byte(fmt.Sprintf(`{"metadata":{"user_id":%q}}`, claudeUserIDForSession("ac980658-63bd-4fb3-97ba-8da64cb1e344")))
 	opts := cliproxyexecutor.Options{OriginalRequest: payload}
 
 	// Same session should always pick the same auth
@@ -849,8 +857,8 @@ func TestSessionAffinitySelector_DifferentSessionsDifferentAuths(t *testing.T) {
 	}
 
 	// Use valid UUID format for session IDs
-	session1 := []byte(`{"metadata":{"user_id":"user_xxx_account__session_11111111-1111-1111-1111-111111111111"}}`)
-	session2 := []byte(`{"metadata":{"user_id":"user_xxx_account__session_22222222-2222-2222-2222-222222222222"}}`)
+	session1 := []byte(fmt.Sprintf(`{"metadata":{"user_id":%q}}`, claudeUserIDForSession("11111111-1111-1111-1111-111111111111")))
+	session2 := []byte(fmt.Sprintf(`{"metadata":{"user_id":%q}}`, claudeUserIDForSession("22222222-2222-2222-2222-222222222222")))
 
 	opts1 := cliproxyexecutor.Options{OriginalRequest: session1}
 	opts2 := cliproxyexecutor.Options{OriginalRequest: session2}
@@ -888,7 +896,7 @@ func TestSessionAffinitySelector_FailoverWhenAuthUnavailable(t *testing.T) {
 		{ID: "auth-c"},
 	}
 
-	payload := []byte(`{"metadata":{"user_id":"user_xxx_account__session_failover-test-uuid"}}`)
+	payload := []byte(fmt.Sprintf(`{"metadata":{"user_id":%q}}`, claudeUserIDForSession("33333333-3333-3333-3333-333333333333")))
 	opts := cliproxyexecutor.Options{OriginalRequest: payload}
 
 	// First pick establishes binding
@@ -923,6 +931,34 @@ func TestSessionAffinitySelector_FailoverWhenAuthUnavailable(t *testing.T) {
 	}
 }
 
+func TestIsAuthBlockedForModel_DoesNotExpandModelCooldownAcrossModels(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	coolingModel := "claude-haiku-4-5-20251001"
+	availableModel := "claude-sonnet-4-20250514"
+	auth := &Auth{
+		ID:             "model-scoped-cooldown",
+		Unavailable:    true,
+		NextRetryAfter: now.Add(30 * time.Minute),
+		LastError:      &Error{HTTPStatus: http.StatusUnauthorized, Message: "model credential rejected"},
+		ModelStates: map[string]*ModelState{
+			coolingModel: {
+				Status:         StatusError,
+				Unavailable:    true,
+				NextRetryAfter: now.Add(30 * time.Minute),
+			},
+		},
+	}
+
+	if blocked, _, _ := isAuthBlockedForModel(auth, coolingModel, now); !blocked {
+		t.Fatalf("expected model %q to remain blocked", coolingModel)
+	}
+	if blocked, _, _ := isAuthBlockedForModel(auth, availableModel, now); blocked {
+		t.Fatalf("expected aggregate model state not to block unrelated model %q", availableModel)
+	}
+}
+
 func TestExtractSessionID_ClaudeCodePriorityOverHeader(t *testing.T) {
 	t.Parallel()
 
@@ -930,7 +966,7 @@ func TestExtractSessionID_ClaudeCodePriorityOverHeader(t *testing.T) {
 	headers := make(http.Header)
 	headers.Set("X-Session-ID", "header-session-id")
 
-	payload := []byte(`{"metadata":{"user_id":"user_xxx_account__session_ac980658-63bd-4fb3-97ba-8da64cb1e344"}}`)
+	payload := []byte(fmt.Sprintf(`{"metadata":{"user_id":%q}}`, claudeUserIDForSession("ac980658-63bd-4fb3-97ba-8da64cb1e344")))
 
 	got := ExtractSessionID(headers, payload, nil)
 	want := "claude:ac980658-63bd-4fb3-97ba-8da64cb1e344"
@@ -944,7 +980,7 @@ func TestExtractSessionID_ClaudeCodePriorityOverIdempotencyKey(t *testing.T) {
 
 	// Claude Code metadata.user_id should have highest priority, even when idempotency_key is present
 	metadata := map[string]any{"idempotency_key": "idem-12345"}
-	payload := []byte(`{"metadata":{"user_id":"user_xxx_account__session_ac980658-63bd-4fb3-97ba-8da64cb1e344"}}`)
+	payload := []byte(fmt.Sprintf(`{"metadata":{"user_id":%q}}`, claudeUserIDForSession("ac980658-63bd-4fb3-97ba-8da64cb1e344")))
 
 	got := ExtractSessionID(nil, payload, metadata)
 	want := "claude:ac980658-63bd-4fb3-97ba-8da64cb1e344"

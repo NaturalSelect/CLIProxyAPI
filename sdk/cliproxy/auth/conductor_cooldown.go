@@ -707,6 +707,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	m.mu.Lock()
 	if auth, ok := m.auths[result.AuthID]; ok && auth != nil {
 		now := time.Now()
+		credentialCooldownActive := hasActiveCredentialScopedCooldown(auth, now)
 		var cooldownRecordsBefore []CooldownStateRecord
 		trackCooldownState := m.cooldownStore != nil
 		if trackCooldownState {
@@ -723,20 +724,27 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			if result.Model != "" {
 				state := ensureModelState(auth, result.Model)
 				resetModelState(state, now)
-				updateAggregatedAvailability(auth, now)
-				if !hasModelError(auth, now) {
-					auth.LastError = nil
-					auth.StatusMessage = ""
-					auth.Status = StatusActive
+				if !credentialCooldownActive {
+					updateAggregatedAvailability(auth, now)
+					if !hasModelError(auth, now) {
+						auth.LastError = nil
+						auth.StatusMessage = ""
+						auth.Status = StatusActive
+					}
 				}
 				auth.UpdatedAt = now
 				shouldResumeModel = true
 				clearModelQuota = true
-			} else {
+			} else if !credentialCooldownActive {
 				clearAuthStateOnSuccess(auth, now)
+			} else {
+				auth.UpdatedAt = now
 			}
 		} else {
-			if result.Model != "" {
+			if isCredentialScopedResultError(result.Error) {
+				disableCooling := m.cooldownDisabledForAuth(auth)
+				applyAuthFailureState(auth, result.Error, result.RetryAfter, now, disableCooling)
+			} else if result.Model != "" {
 				if !isRequestScopedResultError(result.Error) {
 					disableCooling := m.cooldownDisabledForAuth(auth)
 					state := ensureModelState(auth, result.Model)
@@ -746,8 +754,10 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 					if result.Error != nil {
 						state.LastError = cloneError(result.Error)
 						state.StatusMessage = result.Error.Message
-						auth.LastError = cloneError(result.Error)
-						auth.StatusMessage = result.Error.Message
+						if !credentialCooldownActive {
+							auth.LastError = cloneError(result.Error)
+							auth.StatusMessage = result.Error.Message
+						}
 					}
 
 					statusCode := statusCodeFromResult(result.Error)
@@ -841,13 +851,17 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 						state.Unavailable = false
 						state.Quota.Exceeded = false
 					}
-					auth.Status = StatusError
+					if !credentialCooldownActive {
+						auth.Status = StatusError
+						updateAggregatedAvailability(auth, now)
+					}
 					auth.UpdatedAt = now
-					updateAggregatedAvailability(auth, now)
 				}
-			} else {
+			} else if !credentialCooldownActive {
 				disableCooling := m.cooldownDisabledForAuth(auth)
 				applyAuthFailureState(auth, result.Error, result.RetryAfter, now, disableCooling)
+			} else {
+				auth.UpdatedAt = now
 			}
 		}
 
@@ -1142,7 +1156,9 @@ func resultErrorFromError(err error) *Error {
 	if resultErr.HTTPStatus == 0 {
 		resultErr.HTTPStatus = statusCodeFromError(err)
 	}
-	if isRequestScopedError(err) || isRequestInvalidError(err) {
+	if isCredentialScopedError(err) {
+		resultErr.Code = credentialScopedErrorCode
+	} else if isRequestScopedError(err) || isRequestInvalidError(err) {
 		resultErr.Code = requestScopedErrorCode
 	}
 	return resultErr
@@ -1335,8 +1351,56 @@ func isRequestScopedNotFoundResultError(err *Error) bool {
 	return isRequestScopedNotFoundMessage(err.Message)
 }
 
+func isCredentialScopedErrorMessage(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "third-party apps now draw from extra usage") ||
+		strings.Contains(lower, "claim credit at console.anthropic.com/settings/usage")
+}
+
+func isCredentialScopedError(err error) bool {
+	if err == nil || statusCodeFromError(err) != http.StatusBadRequest {
+		return false
+	}
+	return isCredentialScopedErrorMessage(err.Error())
+}
+
+func isCredentialScopedResultError(err *Error) bool {
+	if err == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(err.Code), credentialScopedErrorCode) {
+		return true
+	}
+	return statusCodeFromResult(err) == http.StatusBadRequest && isCredentialScopedErrorMessage(err.Message)
+}
+
+func preserveActiveCredentialCooldown(existing, updated *Auth, now time.Time) {
+	if existing == nil || updated == nil {
+		return
+	}
+	if !hasActiveCredentialScopedCooldown(existing, now) {
+		return
+	}
+	updated.Unavailable = true
+	updated.Status = existing.Status
+	updated.StatusMessage = existing.StatusMessage
+	updated.LastError = cloneError(existing.LastError)
+	updated.NextRetryAfter = existing.NextRetryAfter
+	updated.Quota = existing.Quota
+}
+
+func hasActiveCredentialScopedCooldown(auth *Auth, now time.Time) bool {
+	if auth == nil || !auth.Unavailable || auth.NextRetryAfter.IsZero() || !auth.NextRetryAfter.After(now) {
+		return false
+	}
+	return isCredentialScopedResultError(auth.LastError)
+}
+
 func isRequestScopedResultError(err *Error) bool {
-	return err != nil && (err.IsRequestScoped() || isRequestScopedNotFoundResultError(err))
+	return err != nil && (err.IsRequestScoped() || isRequestScopedNotFoundResultError(err) || isRequestInvalidError(err))
 }
 
 func isCountTokensEndpointNotFoundError(err error, requestedModel string) bool {
@@ -1533,11 +1597,8 @@ func isMissingModelPhrase(value string) bool {
 }
 
 // isRequestInvalidError returns true if the error represents a client request
-// error that should not be retried. Specifically, it treats 400 responses with
-// "invalid_request_error", request-scoped 404 item misses caused by `store=false`,
-// and all 422 responses as request-shape failures, where switching auths or
-// pooled upstream models will not help. Model-support errors are excluded so
-// routing can fall through to another auth or upstream.
+// error that should not be retried. Credential-, model-, and provider-scoped
+// failures are excluded so routing can fall through to another auth or upstream.
 func isRequestInvalidError(err error) bool {
 	if err == nil {
 		return false
@@ -1554,14 +1615,13 @@ func isRequestInvalidError(err error) bool {
 	if isModelSupportError(err) {
 		return false
 	}
+	if isCredentialScopedError(err) {
+		return false
+	}
 	status := statusCodeFromError(err)
 	switch status {
 	case http.StatusBadRequest:
-		msg := err.Error()
-		return strings.Contains(msg, "invalid_request_error") ||
-			strings.Contains(msg, "bad_request_error") ||
-			strings.Contains(msg, "INVALID_ARGUMENT") ||
-			strings.Contains(msg, "FAILED_PRECONDITION")
+		return true
 	case http.StatusNotFound:
 		return isRequestScopedNotFoundMessage(err.Error())
 	case http.StatusUnprocessableEntity:
@@ -1598,6 +1658,15 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 		}
 	}
 	statusCode := statusCodeFromResult(resultErr)
+	if isCredentialScopedResultError(resultErr) {
+		auth.StatusMessage = "credential billing unavailable"
+		if disableCooling {
+			auth.NextRetryAfter = time.Time{}
+		} else {
+			auth.NextRetryAfter = now.Add(30 * time.Minute)
+		}
+		return
+	}
 	if isCloudflareChallengeResultError(resultErr) {
 		auth.StatusMessage = "cloudflare challenge"
 		next, backoffLevel := nextCloudflareCooldown(auth.Quota.BackoffLevel, disableCooling, now)

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -118,6 +119,10 @@ func (e *ClaudeExecutor) countTokensUpstream(ctx context.Context, auth *cliproxy
 	stream := from != to
 	body := helps.TranslateRequestWithCodexMultiAgentV2(ctx, opts.Headers, e.cfg, from, to, baseModel, req.Payload, stream)
 	body = helps.SetStringIfDifferent(body, "model", upstreamModel)
+	body, errIdentity := applyResolvedClaudeRequestIdentity(body, opts)
+	if errIdentity != nil {
+		return cliproxyexecutor.Response{}, errIdentity
+	}
 	var errThinking error
 	body, errThinking = helps.ApplyRequestThinking(body, req, opts, from.String(), to.String(), e.Identifier())
 	if errThinking != nil {
@@ -131,9 +136,12 @@ func (e *ClaudeExecutor) countTokensUpstream(ctx context.Context, auth *cliproxy
 		body = checkSystemInstructions(body)
 	}
 
-	// Keep count_tokens requests compatible with Anthropic cache-control constraints too.
-	body = enforceCacheControlLimit(body, 4)
-	body = normalizeCacheControlTTL(body)
+	// Preserve the historical count_tokens behavior in legacy mode. Passthrough
+	// leaves client cache controls byte-for-byte untouched.
+	if e.claudePromptCacheMode() == config.ClaudePromptCacheModeLegacy {
+		body = enforceCacheControlLimit(body, helps.ClaudePromptCacheMaxBreakpoints)
+		body = normalizeCacheControlTTL(body)
+	}
 
 	// Extract betas from body and convert to header (for count_tokens too)
 	var extraBetas []string
@@ -142,13 +150,27 @@ func (e *ClaudeExecutor) countTokensUpstream(ctx context.Context, auth *cliproxy
 		body, _ = prepareClaudeOAuthToolNamesForUpstream(body, claudeToolPrefix, auth.ToolPrefixDisabled())
 	}
 	body = sanitizeClaudeMessagesForClaudeUpstreamWithDebug(ctx, body, baseModel)
+	body, errIdentity = applyResolvedClaudeRequestIdentity(body, opts)
+	if errIdentity != nil {
+		return cliproxyexecutor.Response{}, errIdentity
+	}
+	if e.claudePromptCacheMode() == config.ClaudePromptCacheModeAdaptive {
+		body, _ = e.planAdaptiveClaudePromptCache(
+			ctx,
+			auth,
+			apiKey,
+			baseURL,
+			baseModel,
+			body,
+		)
+	}
 
 	url := fmt.Sprintf("%s/v1/messages/count_tokens?beta=true", baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return cliproxyexecutor.Response{}, err
 	}
-	if errHeaders := applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg, opts.Headers); errHeaders != nil {
+	if errHeaders := applyClaudeHeadersWithSession(httpReq, auth, apiKey, false, extraBetas, claudeSessionIDFromPayload(body), e.cfg, opts.Headers); errHeaders != nil {
 		return cliproxyexecutor.Response{}, errHeaders
 	}
 	var authID, authLabel, authType, authValue string

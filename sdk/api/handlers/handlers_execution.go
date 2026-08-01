@@ -87,6 +87,12 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 		lifecycle.completeError(ctx, interceptErr)
 		return nil, nil, interceptErr
 	}
+	var identityErr *interfaces.ErrorMessage
+	req, opts, identityErr = normalizeClaudeIdentityBeforeAuth(entryProtocol, req, opts)
+	if identityErr != nil {
+		lifecycle.completeError(ctx, identityErr)
+		return nil, nil, identityErr
+	}
 	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
@@ -151,6 +157,12 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 		lifecycle.completeError(ctx, interceptErr)
 		return nil, nil, interceptErr
 	}
+	var identityErr *interfaces.ErrorMessage
+	req, opts, identityErr = normalizeClaudeIdentityBeforeAuth(handlerType, req, opts)
+	if identityErr != nil {
+		lifecycle.completeError(ctx, identityErr)
+		return nil, nil, identityErr
+	}
 	resp, err := h.AuthManager.ExecuteCount(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
@@ -187,6 +199,12 @@ func (h *BaseAPIHandler) executeWithPluginExecutor(ctx context.Context, entryPro
 		lifecycle.completeError(ctx, interceptErr)
 		return nil, nil, interceptErr
 	}
+	var identityErr *interfaces.ErrorMessage
+	req, opts, identityErr = normalizeClaudeIdentityBeforeAuth(entryProtocol, req, opts)
+	if identityErr != nil {
+		lifecycle.completeError(ctx, identityErr)
+		return nil, nil, identityErr
+	}
 	resp, errExecute := host.ExecutePluginExecutor(ctx, executorPluginID, req, opts)
 	if errExecute != nil {
 		errMsg := executionErrorMessage(errExecute)
@@ -220,6 +238,12 @@ func (h *BaseAPIHandler) countWithPluginExecutor(ctx context.Context, handlerTyp
 	if interceptErr != nil {
 		lifecycle.completeError(ctx, interceptErr)
 		return nil, nil, interceptErr
+	}
+	var identityErr *interfaces.ErrorMessage
+	req, opts, identityErr = normalizeClaudeIdentityBeforeAuth(handlerType, req, opts)
+	if identityErr != nil {
+		lifecycle.completeError(ctx, identityErr)
+		return nil, nil, identityErr
 	}
 	resp, errCount := host.CountPluginExecutor(ctx, executorPluginID, req, opts)
 	if errCount != nil {

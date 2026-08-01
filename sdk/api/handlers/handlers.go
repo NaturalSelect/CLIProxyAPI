@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	. "github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
@@ -500,6 +501,31 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 
 		cancel()
 	}
+}
+
+func normalizeClaudeIdentityBeforeAuth(entryProtocol string, req coreexecutor.Request, opts coreexecutor.Options) (coreexecutor.Request, coreexecutor.Options, *interfaces.ErrorMessage) {
+	if entryProtocol != Claude {
+		return req, opts, nil
+	}
+	payload := req.Payload
+	if len(payload) == 0 {
+		payload = opts.OriginalRequest
+	}
+	normalizedPayload, identity, errResolve := coreauth.ResolveClaudeRequestIdentity(payload)
+	if errResolve != nil {
+		return req, opts, &interfaces.ErrorMessage{
+			StatusCode: http.StatusBadRequest,
+			Error:      fmt.Errorf("normalize Claude request identity: %w", errResolve),
+		}
+	}
+	req.Payload = cloneBytes(normalizedPayload)
+	opts.OriginalRequest = cloneBytes(normalizedPayload)
+	if opts.Metadata == nil {
+		opts.Metadata = make(map[string]any)
+	}
+	opts.Metadata[coreexecutor.ClaudeUserIDMetadataKey] = identity.UserID
+	opts.Metadata[coreexecutor.ClaudeSessionIDMetadataKey] = identity.SessionID
+	return req, opts, nil
 }
 
 // StartNonStreamingKeepAlive emits blank lines every 5 seconds while waiting for a non-streaming response.

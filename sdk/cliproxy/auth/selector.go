@@ -480,6 +480,19 @@ func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, block
 	if auth.Disabled || auth.Status == StatusDisabled {
 		return true, blockReasonDisabled, time.Time{}
 	}
+	if hasActiveCredentialScopedCooldown(auth, now) {
+		next := auth.NextRetryAfter
+		if !auth.Quota.NextRecoverAt.IsZero() && auth.Quota.NextRecoverAt.After(now) {
+			next = auth.Quota.NextRecoverAt
+		}
+		if next.Before(now) {
+			next = now
+		}
+		if auth.Quota.Exceeded {
+			return true, blockReasonCooldown, next
+		}
+		return true, blockReasonOther, next
+	}
 	if model != "" {
 		if len(auth.ModelStates) > 0 {
 			state, ok := auth.ModelStates[model]
@@ -727,6 +740,13 @@ func extractSessionIDs(headers http.Header, payload []byte, metadata map[string]
 	if sid := sessionHeaderValue(headers, "X-Claude-Code-Session-Id"); sid != "" {
 		return "claude:" + sid, ""
 	}
+	if len(payload) > 0 {
+		if userID := gjson.GetBytes(payload, "metadata.user_id").String(); userID != "" {
+			if identity, valid := ParseClaudeUserID(userID); valid {
+				return "claude:" + identity.SessionID, ""
+			}
+		}
+	}
 	if sid := cliproxysession.ClaudeMetadataSessionID(payload); sid != "" {
 		return "claude:" + sid, ""
 	}
@@ -770,6 +790,9 @@ func extractSessionIDs(headers http.Header, payload []byte, metadata map[string]
 		}
 
 		if userID := normalizedSessionCandidate(gjson.GetBytes(payload, "metadata.user_id").String()); userID != "" {
+			if identity, valid := ParseClaudeUserID(userID); valid {
+				return "claude:" + identity.SessionID, ""
+			}
 			return "user:" + userID, ""
 		}
 		if conversationID := normalizedSessionCandidate(gjson.GetBytes(payload, "conversation_id").String()); conversationID != "" {

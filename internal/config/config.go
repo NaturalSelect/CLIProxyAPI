@@ -129,6 +129,10 @@ type Config struct {
 	// These are used as fallbacks when the client does not send its own headers.
 	ClaudeHeaderDefaults ClaudeHeaderDefaults `yaml:"claude-header-defaults" json:"claude-header-defaults"`
 
+	// ClaudePromptCache configures Claude prompt-cache planning and diagnostics.
+	// The zero value preserves the legacy cache-control behavior.
+	ClaudePromptCache ClaudePromptCacheConfig `yaml:"claude-prompt-cache" json:"claude-prompt-cache"`
+
 	// DisableClaudeCloakMode globally disables Claude request cloaking when true.
 	// Cloaking disguises requests as the official Claude Code CLI and replaces the
 	// system prompt. When true, every Claude credential defaults to no cloaking

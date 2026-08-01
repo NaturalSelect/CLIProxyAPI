@@ -122,6 +122,86 @@ func (p *peekableBody) Close() error {
 	return p.closer.Close()
 }
 
+func (p *peekableBody) Close() error {
+	return p.closer.Close()
+}
+
+type lazyMagicDecodeReadCloser struct {
+	source      io.ReadCloser
+	decoded     io.ReadCloser
+	initialize  func(io.ReadCloser) (io.ReadCloser, error)
+	initialized bool
+	closed      bool
+	initErr     error
+}
+
+func (reader *lazyMagicDecodeReadCloser) Read(buffer []byte) (int, error) {
+	if reader == nil || reader.closed {
+		return 0, io.ErrClosedPipe
+	}
+	if !reader.initialized {
+		reader.initialized = true
+		reader.decoded, reader.initErr = reader.initialize(reader.source)
+		reader.source = nil
+	}
+	if reader.initErr != nil {
+		return 0, reader.initErr
+	}
+	return reader.decoded.Read(buffer)
+}
+
+func (reader *lazyMagicDecodeReadCloser) Close() error {
+	if reader == nil || reader.closed {
+		return nil
+	}
+	reader.closed = true
+	if reader.decoded != nil {
+		return reader.decoded.Close()
+	}
+	if reader.source != nil {
+		return reader.source.Close()
+	}
+	return nil
+}
+
+func decodeMagicResponseBody(body io.ReadCloser) (io.ReadCloser, error) {
+	// The bufio wrapper preserves unread bytes so callers always see the full
+	// stream regardless of whether decompression is applied.
+	peekableResponseBody := &peekableBody{Reader: bufio.NewReader(body), closer: body}
+	magic, errPeek := peekableResponseBody.Peek(4)
+	if errPeek == nil || (errPeek == io.EOF && len(magic) >= 2) {
+		switch {
+		case len(magic) >= 2 && magic[0] == 0x1f && magic[1] == 0x8b:
+			gzipReader, errGzip := gzip.NewReader(peekableResponseBody)
+			if errGzip != nil {
+				_ = peekableResponseBody.Close()
+				return nil, fmt.Errorf("magic-byte gzip: failed to create reader: %w", errGzip)
+			}
+			return &compositeReadCloser{
+				Reader: gzipReader,
+				closers: []func() error{
+					gzipReader.Close,
+					peekableResponseBody.Close,
+				},
+			}, nil
+		case len(magic) >= 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f && magic[3] == 0xfd:
+			decoder, errZstd := zstd.NewReader(peekableResponseBody)
+			if errZstd != nil {
+				_ = peekableResponseBody.Close()
+				return nil, fmt.Errorf("magic-byte zstd: failed to create reader: %w", errZstd)
+			}
+			return &compositeReadCloser{
+				Reader: decoder,
+				closers: []func() error{
+					func() error { decoder.Close(); return nil },
+					peekableResponseBody.Close,
+				},
+			}, nil
+		}
+	}
+	return peekableResponseBody, nil
+}
+
 func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadCloser, error) {
 	if body == nil {
 		return nil, fmt.Errorf("response body is nil")
@@ -130,42 +210,12 @@ func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadClos
 		// No Content-Encoding header.  Attempt best-effort magic-byte detection to
 		// handle misbehaving upstreams that compress without setting the header.
 		// Only gzip (1f 8b) and zstd (28 b5 2f fd) have reliable magic sequences;
-		// br and deflate have none and are left as-is.
-		// The bufio wrapper preserves unread bytes so callers always see the full
-		// stream regardless of whether decompression was applied.
-		pb := &peekableBody{Reader: bufio.NewReader(body), closer: body}
-		magic, peekErr := pb.Peek(4)
-		if peekErr == nil || (peekErr == io.EOF && len(magic) >= 2) {
-			switch {
-			case len(magic) >= 2 && magic[0] == 0x1f && magic[1] == 0x8b:
-				gzipReader, gzErr := gzip.NewReader(pb)
-				if gzErr != nil {
-					_ = pb.Close()
-					return nil, fmt.Errorf("magic-byte gzip: failed to create reader: %w", gzErr)
-				}
-				return &compositeReadCloser{
-					Reader: gzipReader,
-					closers: []func() error{
-						gzipReader.Close,
-						pb.Close,
-					},
-				}, nil
-			case len(magic) >= 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f && magic[3] == 0xfd:
-				decoder, zdErr := zstd.NewReader(pb)
-				if zdErr != nil {
-					_ = pb.Close()
-					return nil, fmt.Errorf("magic-byte zstd: failed to create reader: %w", zdErr)
-				}
-				return &compositeReadCloser{
-					Reader: decoder,
-					closers: []func() error{
-						func() error { decoder.Close(); return nil },
-						pb.Close,
-					},
-				}, nil
-			}
-		}
-		return pb, nil
+		// br and deflate have none and are left as-is. Detection is deferred to
+		// the first Read so streaming callers can return before the first event.
+		return &lazyMagicDecodeReadCloser{
+			source:     body,
+			initialize: decodeMagicResponseBody,
+		}, nil
 	}
 	encodings := strings.Split(contentEncoding, ",")
 	for _, raw := range encodings {
@@ -223,6 +273,19 @@ func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadClos
 }
 
 func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string, stream bool, extraBetas []string, cfg *config.Config, incomingHeaders http.Header) error {
+	return applyClaudeHeadersWithSession(r, auth, apiKey, stream, extraBetas, "", cfg, incomingHeaders)
+}
+
+func applyClaudeHeadersWithSession(
+	r *http.Request,
+	auth *cliproxyauth.Auth,
+	apiKey string,
+	stream bool,
+	extraBetas []string,
+	resolvedSessionID string,
+	cfg *config.Config,
+	incomingHeaders http.Header,
+) error {
 	if r == nil {
 		return nil
 	}
@@ -314,12 +377,17 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 	misc.EnsureHeader(r.Header, incomingHeaders, "X-Stainless-Runtime", "node")
 	misc.EnsureHeader(r.Header, incomingHeaders, "X-Stainless-Lang", "js")
 	misc.EnsureHeader(r.Header, incomingHeaders, "X-Stainless-Timeout", hdrDefault(hd.Timeout, "600"))
-	// Session ID: stable per auth/apiKey, matches Claude Code's X-Claude-Code-Session-Id header.
-	sessionID, errSessionID := helps.CachedSessionIDRequired(r.Context(), apiKey)
-	if errSessionID != nil {
-		return errSessionID
+	// Keep the Claude session header aligned with the session UUID embedded in metadata.user_id.
+	effectiveSessionID := resolvedSessionID
+	if effectiveSessionID != "" {
+		r.Header.Set("X-Claude-Code-Session-Id", effectiveSessionID)
+	} else {
+		fallbackSessionID, errSessionID := helps.CachedSessionIDRequired(r.Context(), apiKey)
+		if errSessionID != nil {
+			return errSessionID
+		}
+		misc.EnsureHeader(r.Header, incomingHeaders, "X-Claude-Code-Session-Id", fallbackSessionID)
 	}
-	misc.EnsureHeader(r.Header, incomingHeaders, "X-Claude-Code-Session-Id", sessionID)
 	// Per-request UUID, matches Claude Code's x-client-request-id for first-party API.
 	if isAnthropicBase {
 		misc.EnsureHeader(r.Header, incomingHeaders, "x-client-request-id", uuid.New().String())
@@ -348,6 +416,11 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs)
+	// Session affinity is part of the resolved request identity and must not be
+	// overridden by credential-level custom headers.
+	if effectiveSessionID != "" {
+		r.Header.Set("X-Claude-Code-Session-Id", effectiveSessionID)
+	}
 	// Re-enforce the SSE transport contract after custom headers. A custom Accept
 	// value can disable event negotiation, while compressed SSE breaks line parsing.
 	if stream {

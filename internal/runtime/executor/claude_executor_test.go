@@ -1233,13 +1233,21 @@ func TestClaudeExecutor_ExecuteStripsEmptySignatureEmptyTextThinking(t *testing.
 	}
 }
 
+func completeClaudeStreamTestBody() []byte {
+	return []byte(
+		"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_stream_test\",\"model\":\"claude-3-5-sonnet-20241022\",\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n" +
+			"data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":1}}\n\n" +
+			"data: {\"type\":\"message_stop\"}\n\n",
+	)
+}
+
 func TestClaudeExecutor_ExecuteStreamStripsOpenAIEncryptedThinkingBeforeUpstream(t *testing.T) {
 	var seenBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		seenBody = bytes.Clone(body)
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+		_, _ = w.Write(completeClaudeStreamTestBody())
 	}))
 	defer server.Close()
 
@@ -1279,13 +1287,17 @@ func TestClaudeExecutor_ExecuteStreamStripsOpenAIEncryptedThinkingBeforeUpstream
 }
 
 func TestClaudeExecutor_ExecuteStreamDirectPassthroughEmitsCompleteSSEEvents(t *testing.T) {
-	firstData := `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`
-	secondData := `{"type":"message_stop"}`
-	upstreamStream := "event: content_block_delta\n" +
+	firstData := `{"type":"message_start","message":{"id":"msg_1","model":"claude-3-5-sonnet-20241022","usage":{"input_tokens":1,"output_tokens":0}}}`
+	secondData := `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`
+	thirdData := `{"type":"message_stop"}`
+	upstreamStream := "event: message_start\n" +
 		"data: " + firstData + "\n" +
 		"\n" +
-		"event: message_stop\n" +
+		"event: message_delta\n" +
 		"data: " + secondData + "\n" +
+		"\n" +
+		"event: message_stop\n" +
+		"data: " + thirdData + "\n" +
 		"\n"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1318,8 +1330,9 @@ func TestClaudeExecutor_ExecuteStreamDirectPassthroughEmitsCompleteSSEEvents(t *
 	}
 
 	want := []string{
-		"event: content_block_delta\n" + "data: " + firstData + "\n\n",
-		"event: message_stop\n" + "data: " + secondData + "\n\n",
+		"event: message_start\n" + "data: " + firstData + "\n\n",
+		"event: message_delta\n" + "data: " + secondData + "\n\n",
+		"event: message_stop\n" + "data: " + thirdData + "\n\n",
 	}
 	if len(payloads) != len(want) {
 		t.Fatalf("payload count = %d, want %d: %#v", len(payloads), len(want), payloads)
@@ -1635,16 +1648,11 @@ func TestClaudeExecutor_ExecuteOpenAINonStreamRejectsIncompleteClaudeStream(t *t
 
 func TestClaudeExecutor_ExecuteOpenAINonStreamConvertsValidClaudeStream(t *testing.T) {
 	body := strings.Join([]string{
-		`event: message_start`,
-		`data: {"type":"message_start","message":{"id":"msg_123","model":"claude-3-5-sonnet-20241022"}}`,
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`,
-		`event: message_delta`,
-		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":2,"output_tokens":1}}`,
-		`event: message_stop`,
-		`data: {"type":"message_stop"}`,
-		``,
-	}, "\n")
+		"event: message_start\n" + `data: {"type":"message_start","message":{"id":"msg_123","model":"claude-3-5-sonnet-20241022","usage":{"input_tokens":2,"output_tokens":0}}}`,
+		"event: content_block_delta\n" + `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`,
+		"event: message_delta\n" + `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`,
+		"event: message_stop\n" + `data: {"type":"message_stop"}`,
+	}, "\n\n") + "\n\n"
 
 	resp, err := executeOpenAIChatCompletionThroughClaude(t, body)
 	if err != nil {
@@ -1667,16 +1675,11 @@ func TestClaudeExecutor_ExecuteOpenAINonStreamConvertsValidClaudeStream(t *testi
 func TestClaudeExecutor_ExecuteTransportMatchesResponseFormat(t *testing.T) {
 	const model = "claude-3-5-sonnet-20241022"
 	streamResponse := strings.Join([]string{
-		`event: message_start`,
-		`data: {"type":"message_start","message":{"id":"msg_123","model":"claude-3-5-sonnet-20241022"}}`,
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`,
-		`event: message_delta`,
-		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":2,"output_tokens":1}}`,
-		`event: message_stop`,
-		`data: {"type":"message_stop"}`,
-		``,
-	}, "\n")
+		"event: message_start\n" + `data: {"type":"message_start","message":{"id":"msg_123","model":"claude-3-5-sonnet-20241022","usage":{"input_tokens":2,"output_tokens":0}}}`,
+		"event: content_block_delta\n" + `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`,
+		"event: message_delta\n" + `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`,
+		"event: message_stop\n" + `data: {"type":"message_stop"}`,
+	}, "\n\n") + "\n\n"
 	jsonResponse := `{"id":"msg_123","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":2,"output_tokens":1}}`
 
 	tests := []struct {
@@ -2153,7 +2156,7 @@ func TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding(t *testing.T) {
 		gotEncoding = r.Header.Get("Accept-Encoding")
 		gotAccept = r.Header.Get("Accept")
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+		_, _ = w.Write(completeClaudeStreamTestBody())
 	}))
 	defer server.Close()
 
@@ -2231,7 +2234,7 @@ func TestClaudeExecutor_Execute_SetsCompressedAcceptEncoding(t *testing.T) {
 func TestClaudeExecutor_ExecuteStream_GzipSuccessBodyDecoded(t *testing.T) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
-	_, _ = gz.Write([]byte("data: {\"type\":\"message_stop\"}\n"))
+	_, _ = gz.Write(bytes.TrimSuffix(completeClaudeStreamTestBody(), []byte("\n")))
 	_ = gz.Close()
 	compressedBody := buf.Bytes()
 
@@ -2357,7 +2360,7 @@ func TestDecodeResponseBody_PlainTextNoHeader(t *testing.T) {
 func TestClaudeExecutor_ExecuteStream_GzipNoContentEncodingHeader(t *testing.T) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
-	_, _ = gz.Write([]byte("data: {\"type\":\"message_stop\"}\n"))
+	_, _ = gz.Write(bytes.TrimSuffix(completeClaudeStreamTestBody(), []byte("\n")))
 	_ = gz.Close()
 	compressedBody := buf.Bytes()
 
@@ -2491,7 +2494,7 @@ func TestClaudeExecutor_ExecuteStream_AcceptEncodingOverrideCannotBypassIdentity
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotEncoding = r.Header.Get("Accept-Encoding")
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+		_, _ = w.Write(completeClaudeStreamTestBody())
 	}))
 	defer server.Close()
 

@@ -228,6 +228,10 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 	body = sanitizeOpenAIResponsesReasoningEncryptedContent(ctx, "codex executor", body)
 	body = normalizeCodexParallelToolCalls(body, opts.Headers)
 	body, optimizeMultiAgentV2 := helps.OptimizeCodexMultiAgentV2Request(ctx, opts.Headers, body, e.cfg)
+	// The compact upstream rejects fields that ordinary /responses requests
+	// commonly include (e.g. store, temperature, client_metadata); strip them
+	// last so the checks above still see the original client-supplied body.
+	body = stripUnsupportedCodexCompactFields(body)
 	reporter.SetTranslatedReasoningEffort(body, to.String())
 
 	url := strings.TrimSuffix(baseURL, "/") + "/responses/compact"
@@ -235,6 +239,15 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 	httpReq, upstreamBody, identityState, err := e.cacheHelper(ctx, from, url, auth, req, originalPayloadSource, body, opts.Headers)
 	if err != nil {
 		return resp, err
+	}
+	// Identity Confuse may reintroduce client_metadata; re-apply compact allowlist.
+	if cleaned := stripUnsupportedCodexCompactFields(upstreamBody); !bytes.Equal(cleaned, upstreamBody) {
+		upstreamBody = cleaned
+		httpReq.Body = io.NopCloser(bytes.NewReader(upstreamBody))
+		httpReq.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(upstreamBody)), nil
+		}
+		httpReq.ContentLength = int64(len(upstreamBody))
 	}
 	applyCodexHeaders(httpReq, auth, apiKey, false, e.cfg)
 	applyModelHeaderOverrides(httpReq.Header, baseModel)

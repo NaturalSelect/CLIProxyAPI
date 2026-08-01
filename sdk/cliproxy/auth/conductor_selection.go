@@ -182,11 +182,18 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 	}
 
 	var snapshot *Auth
+	cooldownStateChanged := false
 	now := time.Now()
 
 	m.mu.Lock()
 	auth, ok := m.auths[authID]
 	if ok && auth != nil && len(auth.ModelStates) > 0 {
+		var cooldownRecordsBefore []CooldownStateRecord
+		trackCooldownState := m.cooldownStore != nil
+		if trackCooldownState {
+			cooldownRecordsBefore = m.cooldownStateRecordsForAuthLocked(auth, now)
+		}
+		credentialCooldownActive := hasActiveCredentialScopedCooldown(auth, now)
 		changed := false
 		for modelKey, state := range auth.ModelStates {
 			baseModel := canonicalModelKey(modelKey)
@@ -214,23 +221,32 @@ func (m *Manager) ReconcileRegistryModelStates(ctx context.Context, authID strin
 			auth.ModelStates = nil
 		}
 		if changed {
-			updateAggregatedAvailability(auth, now)
-			if !hasModelError(auth, now) {
-				auth.LastError = nil
-				auth.StatusMessage = ""
-				auth.Status = StatusActive
+			if !credentialCooldownActive {
+				updateAggregatedAvailability(auth, now)
+				if !hasModelError(auth, now) {
+					auth.LastError = nil
+					auth.StatusMessage = ""
+					auth.Status = StatusActive
+				}
 			}
 			auth.UpdatedAt = now
 			if errPersist := m.persist(ctx, auth); errPersist != nil {
 				logEntryWithRequestID(ctx).WithField("auth_id", auth.ID).Warnf("failed to persist auth changes during model state reconciliation: %v", errPersist)
 			}
 			snapshot = auth.Clone()
+			if trackCooldownState {
+				cooldownRecordsAfter := m.cooldownStateRecordsForAuthLocked(auth, now)
+				cooldownStateChanged = !cooldownStateRecordsEqual(cooldownRecordsBefore, cooldownRecordsAfter)
+			}
 		}
 	}
 	m.mu.Unlock()
 
 	if m.scheduler != nil && snapshot != nil {
 		m.scheduler.upsertAuth(snapshot)
+	}
+	if snapshot != nil && cooldownStateChanged {
+		m.persistCooldownStates(ctx)
 	}
 }
 

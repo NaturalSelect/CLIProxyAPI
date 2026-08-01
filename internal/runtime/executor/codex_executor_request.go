@@ -489,3 +489,51 @@ func codexImageGenerationToolModel(body []byte) string {
 	}
 	return codexDefaultImageToolModel
 }
+
+// codexCompactUnsupportedFields lists top-level Responses request fields that the
+// Codex /responses/compact upstream unconditionally rejects with "Unknown
+// parameter"/"Unsupported parameter" errors, confirmed against the live endpoint.
+// Regular /responses clients commonly populate these fields with SDK defaults (e.g.
+// store, temperature, previous_response_id: null), so they must be stripped before
+// forwarding a compact request instead of being passed through unchanged.
+// service_tier is handled separately because the endpoint accepts some values.
+var codexCompactUnsupportedFields = []string{
+	"store",
+	"temperature",
+	"top_p",
+	"max_output_tokens",
+	"max_completion_tokens",
+	"truncation",
+	"background",
+	"previous_response_id",
+	"metadata",
+	"safety_identifier",
+	"user",
+	"tool_choice",
+	"include",
+	"frequency_penalty",
+	"presence_penalty",
+	"conversation",
+	"max_tool_calls",
+	"moderation",
+	"client_metadata",
+	"context_management",
+}
+
+// stripUnsupportedCodexCompactFields removes request fields that the Codex
+// /responses/compact endpoint does not accept, so ordinary Responses clients that
+// reuse their default request builder for compact calls do not fail upstream.
+func stripUnsupportedCodexCompactFields(body []byte) []byte {
+	for _, field := range codexCompactUnsupportedFields {
+		if gjson.GetBytes(body, field).Exists() {
+			body, _ = sjson.DeleteBytes(body, field)
+		}
+	}
+	// The compact endpoint confirms "priority" (and rejects "auto"/"flex"/other
+	// values with "Unsupported service_tier: <value>"), mirroring the conditional
+	// handling already applied to ordinary Codex /responses requests.
+	if serviceTier := gjson.GetBytes(body, "service_tier"); serviceTier.Exists() && serviceTier.String() != "priority" {
+		body, _ = sjson.DeleteBytes(body, "service_tier")
+	}
+	return body
+}

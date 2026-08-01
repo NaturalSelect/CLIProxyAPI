@@ -58,6 +58,15 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 		close(errChan)
 		return nil, nil, errChan
 	}
+	var identityErr *interfaces.ErrorMessage
+	req, opts, identityErr = normalizeClaudeIdentityBeforeAuth(entryProtocol, req, opts)
+	if identityErr != nil {
+		lifecycle.completeError(ctx, identityErr)
+		errChan := make(chan *interfaces.ErrorMessage, 1)
+		errChan <- identityErr
+		close(errChan)
+		return nil, nil, errChan
+	}
 	streamResult, errStream := host.ExecutePluginExecutorStream(ctx, executorPluginID, req, opts)
 	if errStream != nil {
 		errMsg := executionErrorMessage(errStream)
@@ -283,6 +292,15 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		lifecycle.completeError(ctx, interceptErr)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
 		errChan <- interceptErr
+		close(errChan)
+		return nil, nil, errChan
+	}
+	var identityErr *interfaces.ErrorMessage
+	req, opts, identityErr = normalizeClaudeIdentityBeforeAuth(entryProtocol, req, opts)
+	if identityErr != nil {
+		lifecycle.completeError(ctx, identityErr)
+		errChan := make(chan *interfaces.ErrorMessage, 1)
+		errChan <- identityErr
 		close(errChan)
 		return nil, nil, errChan
 	}
