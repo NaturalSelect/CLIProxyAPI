@@ -122,10 +122,6 @@ func (p *peekableBody) Close() error {
 	return p.closer.Close()
 }
 
-func (p *peekableBody) Close() error {
-	return p.closer.Close()
-}
-
 type lazyMagicDecodeReadCloser struct {
 	source      io.ReadCloser
 	decoded     io.ReadCloser
