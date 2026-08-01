@@ -30,6 +30,7 @@ type HashPreviewItem struct {
 }
 
 // SessionAffinitySnapshot returns active sticky-session bindings touched within window.
+// On current main, sticky state lives in SessionAffinitySelector's SessionCache.
 func (m *Manager) SessionAffinitySnapshot(window time.Duration) []SessionAffinitySnapshotItem {
 	if m == nil {
 		return nil
@@ -37,30 +38,84 @@ func (m *Manager) SessionAffinitySnapshot(window time.Duration) []SessionAffinit
 	if window <= 0 {
 		window = 5 * time.Minute
 	}
-	cutoff := time.Now().UTC().Add(-window)
-	items := make([]SessionAffinitySnapshotItem, 0)
 
-	m.mu.Lock()
-	if m.sessionAffinity == nil {
-		m.mu.Unlock()
-		return items
+	m.mu.RLock()
+	selector := m.selector
+	m.mu.RUnlock()
+
+	affinity, ok := selector.(*SessionAffinitySelector)
+	if !ok || affinity == nil || affinity.cache == nil {
+		return nil
 	}
-	for sessionID, binding := range m.sessionAffinity {
-		lastSeen := m.sessionAffinitySeenAt[sessionID]
-		if lastSeen.IsZero() || lastSeen.Before(cutoff) {
-			// Opportunistically clean stale entries while scanning diagnostics.
-			m.deleteSessionAffinityLocked(sessionID)
+	return affinity.Snapshot(window)
+}
+
+// Snapshot returns active session bindings last refreshed within window.
+func (s *SessionAffinitySelector) Snapshot(window time.Duration) []SessionAffinitySnapshotItem {
+	if s == nil || s.cache == nil {
+		return nil
+	}
+	if window <= 0 {
+		window = 5 * time.Minute
+	}
+	cutoff := time.Now().UTC().Add(-window)
+	ttl := s.cache.ttl
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+
+	type groupedBinding struct {
+		sessionID  string
+		provider   string
+		modelKey   string
+		authID     string
+		lastSeenAt time.Time
+	}
+
+	s.cache.mu.Lock()
+	now := time.Now()
+	grouped := make(map[string]groupedBinding)
+	for key, entry := range s.cache.entries {
+		if !now.Before(entry.expiresAt) {
+			s.cache.removeAliasGroupLocked(entry)
 			continue
 		}
+		lastSeen := entry.expiresAt.Add(-ttl)
+		if lastSeen.Before(cutoff) {
+			continue
+		}
+		provider, sessionID, modelKey := splitSessionCacheKey(key)
+		groupKey := entry.authID + "|" + entry.expiresAt.UTC().Format(time.RFC3339Nano)
+		if existing, exists := grouped[groupKey]; exists {
+			// Prefer a shorter / clearer session id when aliases share a binding.
+			if len(sessionID) > 0 && (existing.sessionID == "" || len(sessionID) < len(existing.sessionID)) {
+				existing.sessionID = sessionID
+				existing.provider = provider
+				existing.modelKey = modelKey
+				grouped[groupKey] = existing
+			}
+			continue
+		}
+		grouped[groupKey] = groupedBinding{
+			sessionID:  sessionID,
+			provider:   provider,
+			modelKey:   modelKey,
+			authID:     strings.TrimSpace(entry.authID),
+			lastSeenAt: lastSeen.UTC(),
+		}
+	}
+	s.cache.mu.Unlock()
+
+	items := make([]SessionAffinitySnapshotItem, 0, len(grouped))
+	for _, binding := range grouped {
 		items = append(items, SessionAffinitySnapshotItem{
-			SessionID:  sessionID,
-			AuthID:     strings.TrimSpace(binding.AuthID),
-			Provider:   strings.TrimSpace(binding.Provider),
-			ModelKey:   strings.TrimSpace(binding.ModelKey),
-			LastSeenAt: lastSeen,
+			SessionID:  binding.sessionID,
+			AuthID:     binding.authID,
+			Provider:   binding.provider,
+			ModelKey:   binding.modelKey,
+			LastSeenAt: binding.lastSeenAt,
 		})
 	}
-	m.mu.Unlock()
 
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].LastSeenAt.Equal(items[j].LastSeenAt) {
@@ -69,6 +124,17 @@ func (m *Manager) SessionAffinitySnapshot(window time.Duration) []SessionAffinit
 		return items[i].LastSeenAt.After(items[j].LastSeenAt)
 	})
 	return items
+}
+
+func splitSessionCacheKey(key string) (provider, sessionID, modelKey string) {
+	parts := strings.Split(key, "::")
+	if len(parts) < 3 {
+		return "", strings.TrimSpace(key), ""
+	}
+	provider = strings.TrimSpace(parts[0])
+	modelKey = strings.TrimSpace(parts[len(parts)-1])
+	sessionID = strings.TrimSpace(strings.Join(parts[1:len(parts)-1], "::"))
+	return provider, sessionID, modelKey
 }
 
 // BalancedHashPreview returns score breakdown for eligible auths.

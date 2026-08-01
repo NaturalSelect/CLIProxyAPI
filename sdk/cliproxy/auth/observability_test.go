@@ -2,17 +2,48 @@ package auth
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
+
+type sessionAffinityExecutor struct {
+	id string
+}
+
+func (e *sessionAffinityExecutor) Identifier() string { return e.id }
+func (e *sessionAffinityExecutor) Execute(_ context.Context, _ *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{Payload: []byte(`{"ok":true}`)}, nil
+}
+func (e *sessionAffinityExecutor) ExecuteStream(_ context.Context, _ *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	ch := make(chan cliproxyexecutor.StreamChunk, 1)
+	ch <- cliproxyexecutor.StreamChunk{Payload: []byte("data: {}\n\n")}
+	close(ch)
+	return &cliproxyexecutor.StreamResult{Chunks: ch}, nil
+}
+func (e *sessionAffinityExecutor) Refresh(_ context.Context, auth *Auth) (*Auth, error) {
+	return auth, nil
+}
+func (e *sessionAffinityExecutor) CountTokens(_ context.Context, _ *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{Payload: []byte(`{"count":1}`)}, nil
+}
+func (e *sessionAffinityExecutor) HttpRequest(context.Context, *Auth, *http.Request) (*http.Response, error) {
+	return nil, nil
+}
 
 func TestSessionAffinitySnapshot_WindowFilter(t *testing.T) {
 	t.Parallel()
 
-	manager := NewManager(nil, &BalancedHashSelector{}, nil)
+	selector := NewSessionAffinitySelectorWithConfig(SessionAffinityConfig{
+		Fallback: &BalancedHashSelector{},
+		TTL:      time.Hour,
+	})
+	t.Cleanup(selector.Stop)
+
+	manager := NewManager(nil, selector, nil)
 	manager.RegisterExecutor(&sessionAffinityExecutor{id: "claude"})
 	_, errRegister := manager.Register(context.Background(), &Auth{
 		ID:       "auth-observe-1",
@@ -49,9 +80,13 @@ func TestSessionAffinitySnapshot_WindowFilter(t *testing.T) {
 		t.Fatalf("unexpected snapshot item: %+v", got[0])
 	}
 
-	manager.mu.Lock()
-	manager.sessionAffinitySeenAt["sess-observe-1"] = time.Now().UTC().Add(-10 * time.Minute)
-	manager.mu.Unlock()
+	selector.cache.mu.Lock()
+	for key, entry := range selector.cache.entries {
+		entry.expiresAt = time.Now().Add(-time.Minute)
+		selector.cache.entries[key] = entry
+	}
+	selector.cache.mu.Unlock()
+
 	got = manager.SessionAffinitySnapshot(5 * time.Minute)
 	if len(got) != 0 {
 		t.Fatalf("snapshot len=%d after stale cleanup, want 0", len(got))
