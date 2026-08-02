@@ -116,21 +116,25 @@ if [[ "${IMAGE_REFERENCE}" =~ :sha-([0-9a-f]{40})$ ]]; then
 fi
 
 if [[ -n "${EXPECTED_COMMIT}" ]]; then
-  if [[ -z "${MANAGEMENT_KEY}" ]]; then
-    echo "Error: MANAGEMENT_KEY or the current container's MANAGEMENT_PASSWORD is required to verify the build commit."
-    rollback
-    exit 1
+  BUILD_COMMIT=""
+  if [[ -n "${MANAGEMENT_KEY}" ]]; then
+    while IFS=':' read -r header_name header_value; do
+      header_name="${header_name//$'\r'/}"
+      header_value="${header_value//$'\r'/}"
+      if [[ "${header_name,,}" == "x-cpa-commit" ]]; then
+        BUILD_COMMIT="${header_value# }"
+        break
+      fi
+    done < <(curl -fsS -D - -o /dev/null --max-time 10 -H "Authorization: Bearer ${MANAGEMENT_KEY}" http://127.0.0.1:8317/v0/management/config || true)
   fi
 
-  BUILD_COMMIT=""
-  while IFS=':' read -r header_name header_value; do
-    header_name="${header_name//$'\r'/}"
-    header_value="${header_value//$'\r'/}"
-    if [[ "${header_name,,}" == "x-cpa-commit" ]]; then
-      BUILD_COMMIT="${header_value# }"
-      break
-    fi
-  done < <(curl -fsS -D - -o /dev/null --max-time 10 -H "Authorization: Bearer ${MANAGEMENT_KEY}" http://127.0.0.1:8317/v0/management/config)
+  # Fall back to the immutable image revision label when management auth is unavailable.
+  if [[ -z "${BUILD_COMMIT}" ]]; then
+    BUILD_COMMIT="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE_REFERENCE}" 2>/dev/null || true)"
+  fi
+  if [[ -z "${BUILD_COMMIT}" ]]; then
+    BUILD_COMMIT="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
+  fi
 
   if [[ "${BUILD_COMMIT}" != "${EXPECTED_COMMIT}" ]]; then
     echo "Build commit mismatch: ${BUILD_COMMIT:-missing} != ${EXPECTED_COMMIT}"
