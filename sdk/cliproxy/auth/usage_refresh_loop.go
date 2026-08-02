@@ -131,13 +131,7 @@ func needsUsageProbe(a *Auth, now time.Time) bool {
 	if !usageRefreshProviders[a.Provider] {
 		return false
 	}
-	if a.Disabled || a.Status == StatusDisabled || a.Unavailable {
-		return false
-	}
 	if hasUnauthorizedAuthFailure(a) {
-		return false
-	}
-	if !a.NextRetryAfter.IsZero() && a.NextRetryAfter.After(now) {
 		return false
 	}
 	observedAt, ok := parseRateLimitObservedAt(a.RateLimits)
