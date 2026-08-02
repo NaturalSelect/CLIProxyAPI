@@ -19,7 +19,7 @@ const (
 	usageRefreshCheckInterval = 5 * time.Minute
 	// usageRefreshStaleAfter is how old a RateLimits snapshot must be (or
 	// missing entirely) before the prober refreshes it with a probe call.
-	usageRefreshStaleAfter = 10 * time.Minute
+	usageRefreshStaleAfter = 30 * time.Minute
 	// usageRefreshBetweenProbes spaces out consecutive probe calls so a cold
 	// start (every auth stale at once) doesn't burst-call every credential.
 	usageRefreshBetweenProbes = 5 * time.Second

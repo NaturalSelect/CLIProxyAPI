@@ -386,8 +386,9 @@ func (e *ClaudeExecutor) executeClaudeMessagesHTTPRequest(
 		errorBody, errRead := readClaudeErrorResponse(ctx, e.cfg, httpResponse)
 		if errRead != nil {
 			return nil, requestBody, diagnosticsState, statusErr{
-				code: httpResponse.StatusCode,
-				msg:  errRead.Error(),
+				code:    httpResponse.StatusCode,
+				msg:     errRead.Error(),
+				headers: httpResponse.Header.Clone(),
 			}
 		}
 		if requestAttempt == 0 && shouldRetryClaudeRequestWithoutDiagnostics(
@@ -414,8 +415,9 @@ func (e *ClaudeExecutor) executeClaudeMessagesHTTPRequest(
 			helps.SummarizeErrorBody(httpResponse.Header.Get("Content-Type"), errorBody),
 		)
 		return nil, requestBody, diagnosticsState, statusErr{
-			code: httpResponse.StatusCode,
-			msg:  string(errorBody),
+			code:    httpResponse.StatusCode,
+			msg:     string(errorBody),
+			headers: httpResponse.Header.Clone(),
 		}
 	}
 

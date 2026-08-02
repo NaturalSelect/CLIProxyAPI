@@ -104,7 +104,7 @@ func codexTerminalStreamErr(eventData []byte) (statusErr, []byte, bool) {
 	if !ok || !codexTerminalStreamErrShouldHandle(body) {
 		return statusErr{}, nil, false
 	}
-	return newCodexStatusErr(http.StatusBadRequest, body), body, true
+	return newCodexStatusErr(http.StatusBadRequest, body, http.Header{}), body, true
 }
 
 func codexTerminalFailureErr(eventData []byte) (statusErr, []byte, bool) {
@@ -115,7 +115,7 @@ func codexTerminalFailureErr(eventData []byte) (statusErr, []byte, bool) {
 	if !ok {
 		return statusErr{}, nil, false
 	}
-	return newCodexStatusErr(codexTerminalFailureStatus(body), body), body, true
+	return newCodexStatusErr(codexTerminalFailureStatus(body), body, http.Header{}), body, true
 }
 
 func codexTerminalFailureStatus(body []byte) int {
@@ -248,13 +248,13 @@ func codexTerminalErrorIsContextLength(body []byte) bool {
 		strings.Contains(message, "too many tokens")
 }
 
-func newCodexStatusErr(statusCode int, body []byte) statusErr {
+func newCodexStatusErr(statusCode int, body []byte, headers http.Header) statusErr {
 	errCode := statusCode
 	if isCodexModelCapacityError(body) || isCodexUsageLimitError(body) {
 		errCode = http.StatusTooManyRequests
 	}
 	body = classifyCodexStatusError(errCode, body)
-	err := statusErr{code: errCode, msg: string(body)}
+	err := statusErr{code: errCode, msg: string(body), headers: headers}
 	if retryAfter := parseCodexRetryAfter(errCode, body, time.Now()); retryAfter != nil {
 		err.retryAfter = retryAfter
 	}
