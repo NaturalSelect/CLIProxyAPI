@@ -857,6 +857,7 @@ type statusErr struct {
 	code       int
 	msg        string
 	retryAfter *time.Duration
+	headers    http.Header
 }
 
 func (e statusErr) Error() string {
@@ -867,3 +868,9 @@ func (e statusErr) Error() string {
 }
 func (e statusErr) StatusCode() int            { return e.code }
 func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
+
+// Headers exposes upstream response headers captured alongside a non-2xx status, so
+// callers such as coreauth.Manager.MarkResult can still extract rate-limit headers
+// (e.g. Claude's Anthropic-Ratelimit-Unified-*) from error responses like 429s, which
+// otherwise carry no *http.Response through the executor's error path.
+func (e statusErr) Headers() http.Header { return e.headers }

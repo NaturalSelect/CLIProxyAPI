@@ -330,7 +330,7 @@ func finalizeClaudeStreamUsage(
 	return nil
 }
 
-func validateClaudeStreamingResponse(data []byte) error {
+func validateClaudeStreamingResponse(data []byte, headers http.Header) error {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(nil, 52_428_800)
 
@@ -354,7 +354,7 @@ func validateClaudeStreamingResponse(data []byte) error {
 		}
 		hasData = true
 		if !gjson.ValidBytes(payload) {
-			return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream returned malformed stream data"}
+			return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream returned malformed stream data", headers: headers}
 		}
 
 		root := gjson.ParseBytes(payload)
@@ -367,11 +367,11 @@ func validateClaudeStreamingResponse(data []byte) error {
 			if message == "" {
 				message = "unknown upstream error"
 			}
-			return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream returned error event: " + message}
+			return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream returned error event: " + message, headers: headers}
 		case "message_start":
 			message := root.Get("message")
 			if strings.TrimSpace(message.Get("id").String()) == "" || strings.TrimSpace(message.Get("model").String()) == "" {
-				return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream stream message_start is missing id or model"}
+				return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream stream message_start is missing id or model", headers: headers}
 			}
 			hasMessageStart = true
 		case "message_delta":
@@ -384,16 +384,16 @@ func validateClaudeStreamingResponse(data []byte) error {
 		return errScan
 	}
 	if !hasData {
-		return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream returned empty stream response"}
+		return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream returned empty stream response", headers: headers}
 	}
 	if !hasMessageStart {
-		return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream stream response is missing message_start"}
+		return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream stream response is missing message_start", headers: headers}
 	}
 	if !hasMessageDelta {
-		return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream stream response ended before message completion"}
+		return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream stream response ended before message completion", headers: headers}
 	}
 	if !hasTerminalMarker {
-		return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream stream response is missing a terminal marker"}
+		return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream stream response is missing a terminal marker", headers: headers}
 	}
 	return nil
 }

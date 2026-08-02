@@ -64,7 +64,7 @@ func TestParseCodexRetryAfter(t *testing.T) {
 func TestNewCodexStatusErrTreatsCapacityAsRetryableRateLimit(t *testing.T) {
 	body := []byte(`{"error":{"message":"Selected model is at capacity. Please try a different model."}}`)
 
-	err := newCodexStatusErr(http.StatusBadRequest, body)
+	err := newCodexStatusErr(http.StatusBadRequest, body, http.Header{})
 
 	if got := err.StatusCode(); got != http.StatusTooManyRequests {
 		t.Fatalf("status code = %d, want %d", got, http.StatusTooManyRequests)
@@ -77,7 +77,7 @@ func TestNewCodexStatusErrTreatsCapacityAsRetryableRateLimit(t *testing.T) {
 func TestNewCodexStatusErrTreatsUsageLimitAsRetryableRateLimit(t *testing.T) {
 	body := []byte(`{"error":{"type":"usage_limit_reached","message":"You've hit your usage limit.","resets_in_seconds":120}}`)
 
-	err := newCodexStatusErr(http.StatusBadRequest, body)
+	err := newCodexStatusErr(http.StatusBadRequest, body, http.Header{})
 
 	if got := err.StatusCode(); got != http.StatusTooManyRequests {
 		t.Fatalf("status code = %d, want %d", got, http.StatusTooManyRequests)
@@ -173,7 +173,7 @@ func TestNewCodexStatusErrClassifiesKnownCodexFailures(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := newCodexStatusErr(tc.statusCode, tc.body)
+			err := newCodexStatusErr(tc.statusCode, tc.body, http.Header{})
 
 			if got := err.StatusCode(); got != tc.wantStatus {
 				t.Fatalf("status code = %d, want %d", got, tc.wantStatus)
@@ -186,7 +186,7 @@ func TestNewCodexStatusErrClassifiesKnownCodexFailures(t *testing.T) {
 func TestNewCodexStatusErrPreservesUnclassifiedErrors(t *testing.T) {
 	body := []byte(`{"error":{"message":"documentation mentions too many tokens, but this is a billing configuration failure","type":"server_error","code":"billing_config_error"}}`)
 
-	err := newCodexStatusErr(http.StatusBadGateway, body)
+	err := newCodexStatusErr(http.StatusBadGateway, body, http.Header{})
 
 	if got := err.StatusCode(); got != http.StatusBadGateway {
 		t.Fatalf("status code = %d, want %d", got, http.StatusBadGateway)

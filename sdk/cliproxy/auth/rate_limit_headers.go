@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -91,9 +92,9 @@ func parseRateLimitHeaders(provider string, headers http.Header) (map[string]any
 
 func parseClaudeRateLimitHeaders(headers http.Header) (map[string]any, bool) {
 	snapshot := make(map[string]any)
-	setRateLimitInt(snapshot, "5h_utilization", headers.Get(claudeRateLimit5hUtilizationHeader))
+	setRateLimitUtilizationPercent(snapshot, "5h_utilization", headers.Get(claudeRateLimit5hUtilizationHeader))
 	setRateLimitResetTime(snapshot, "5h_reset", headers.Get(claudeRateLimit5hResetHeader))
-	setRateLimitInt(snapshot, "7d_utilization", headers.Get(claudeRateLimit7dUtilizationHeader))
+	setRateLimitUtilizationPercent(snapshot, "7d_utilization", headers.Get(claudeRateLimit7dUtilizationHeader))
 	setRateLimitResetTime(snapshot, "7d_reset", headers.Get(claudeRateLimit7dResetHeader))
 	if status := strings.TrimSpace(headers.Get(claudeRateLimit7dStatusHeader)); status != "" {
 		snapshot["7d_status"] = status
@@ -138,6 +139,24 @@ func setRateLimitInt(snapshot map[string]any, key, raw string) {
 	}
 	if n, err := strconv.Atoi(raw); err == nil {
 		snapshot[key] = n
+		return
+	}
+	snapshot[key] = raw
+}
+
+// setRateLimitUtilizationPercent stores a Claude "*-Utilization" header value as a
+// whole-number percent. Anthropic reports utilization as a fraction (e.g. "0.35" for
+// 35%, occasionally above 1 during overage such as "1.13" for 113%), not a plain
+// integer percent, so this scales by 100 and rounds rather than reusing
+// setRateLimitInt. Falls back to the raw string when it is not numeric, so
+// unexpected upstream formats still round-trip.
+func setRateLimitUtilizationPercent(snapshot map[string]any, key, raw string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return
+	}
+	if f, err := strconv.ParseFloat(raw, 64); err == nil {
+		snapshot[key] = int(math.Round(f * 100))
 		return
 	}
 	snapshot[key] = raw

@@ -187,7 +187,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	}
 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
 	if upstreamStream {
-		if errValidate := validateClaudeStreamingResponse(data); errValidate != nil {
+		if errValidate := validateClaudeStreamingResponse(data, httpResp.Header.Clone()); errValidate != nil {
 			helps.RecordAPIResponseError(ctx, e.cfg, errValidate)
 			return resp, errValidate
 		}
