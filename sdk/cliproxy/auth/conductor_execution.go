@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
@@ -349,7 +350,14 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 					}
 				}
 			}
-			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: errExec == nil}
+			result := Result{
+				AuthID:          auth.ID,
+				Provider:        provider,
+				Model:           resultModel,
+				Success:         errExec == nil,
+				ResponseHeaders: headersFromExecResult(resp, errExec),
+				ObservedAt:      time.Now(),
+			}
 			if errExec != nil {
 				result.Error = resultErrorFromError(errExec)
 				if ra := retryAfterFromError(errExec); ra != nil {
@@ -470,7 +478,14 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 					}
 				}
 			}
-			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: errExec == nil}
+			result := Result{
+				AuthID:          auth.ID,
+				Provider:        provider,
+				Model:           resultModel,
+				Success:         errExec == nil,
+				ResponseHeaders: headersFromExecResult(resp, errExec),
+				ObservedAt:      time.Now(),
+			}
 			if errExec != nil {
 				result.Error = resultErrorFromError(errExec)
 				if ra := retryAfterFromError(errExec); ra != nil {

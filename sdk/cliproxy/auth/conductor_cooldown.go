@@ -865,6 +865,10 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			}
 		}
 
+		if result.ResponseHeaders != nil {
+			applyRateLimitHeaders(auth, result.ResponseHeaders, result.ObservedAt)
+		}
+
 		_ = m.persist(ctx, auth)
 		authSnapshot = auth.Clone()
 		if trackCooldownState {
@@ -1162,6 +1166,19 @@ func resultErrorFromError(err error) *Error {
 		resultErr.Code = requestScopedErrorCode
 	}
 	return resultErr
+}
+
+// headersFromExecResult extracts upstream response headers from an executor result,
+// preferring the successful response and otherwise checking whether the execution
+// error carries headers (e.g. statusErrWithHeaders on a non-2xx upstream response).
+func headersFromExecResult(resp cliproxyexecutor.Response, execErr error) http.Header {
+	if execErr == nil {
+		return resp.Headers
+	}
+	if he, ok := execErr.(interface{ Headers() http.Header }); ok && he != nil {
+		return he.Headers()
+	}
+	return nil
 }
 
 func isUnauthorizedError(err error) bool {

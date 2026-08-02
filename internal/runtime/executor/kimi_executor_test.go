@@ -156,6 +156,8 @@ func TestKimiExecutorClaudeStreamForwardsAnthropicBetaAndLogsUpstream(t *testing
 			Body: io.NopCloser(strings.NewReader(
 				"event: message_start\n" +
 					`data: {"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","model":"k3","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}` + "\n\n" +
+					"event: message_delta\n" +
+					`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}` + "\n\n" +
 					"event: message_stop\n" +
 					`data: {"type":"message_stop"}` + "\n\n",
 			)),

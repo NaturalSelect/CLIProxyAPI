@@ -137,6 +137,10 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	} else {
 		conn, closer, respHS, errDial = e.ensureUpstreamConn(ctx, auth, sess, authID, wsURL, wsHeaders)
 	}
+	var upstreamHeaders http.Header
+	if respHS != nil {
+		upstreamHeaders = respHS.Header.Clone()
+	}
 	if errDial != nil {
 		bodyErr := websocketHandshakeBody(respHS)
 		if respHS != nil {
@@ -205,6 +209,9 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 			// execution session.
 			connRetry, closerRetry, respHSRetry, errDialRetry := e.ensureUpstreamConn(ctx, auth, sess, authID, wsURL, wsHeaders)
 			if errDialRetry == nil && connRetry != nil {
+				if respHSRetry != nil {
+					upstreamHeaders = respHSRetry.Header.Clone()
+				}
 				previousConn, previousReadCh := conn, readCh
 				conn = connRetry
 				closer = closerRetry
@@ -316,7 +323,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 			var param any
 			clientPayload := applyCodexIdentityExposeResponsePayload(payload, identityState)
 			out := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, originalPayload, clientBody, clientPayload, &param)
-			resp = cliproxyexecutor.Response{Payload: out}
+			resp = cliproxyexecutor.Response{Payload: out, Headers: upstreamHeaders}
 			return resp, nil
 		}
 	}

@@ -76,7 +76,7 @@ func TestSessionAffinitySnapshot_WindowFilter(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("snapshot len=%d, want 1", len(got))
 	}
-	if got[0].SessionID != "sess-observe-1" || got[0].AuthID != "auth-observe-1" {
+	if got[0].SessionID != "execution:sess-observe-1" || got[0].AuthID != "auth-observe-1" {
 		t.Fatalf("unexpected snapshot item: %+v", got[0])
 	}
 

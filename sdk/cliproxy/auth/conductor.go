@@ -56,6 +56,12 @@ type Result struct {
 	RetryAfter *time.Duration
 	// Error describes the failure when Success is false.
 	Error *Error
+	// ResponseHeaders carries the upstream HTTP response headers observed for this
+	// result, when available, for passive usage/rate-limit header extraction.
+	ResponseHeaders http.Header
+	// ObservedAt marks when ResponseHeaders was received; used to discard
+	// out-of-order updates from slower concurrent requests against the same auth.
+	ObservedAt time.Time
 }
 
 // Selector chooses an auth candidate for execution.
@@ -151,6 +157,9 @@ type Manager struct {
 	// Auto refresh state
 	refreshCancel context.CancelFunc
 	refreshLoop   *authAutoRefreshLoop
+
+	// usageRefreshCancel stops the background usage-refresh prober, if running.
+	usageRefreshCancel context.CancelFunc
 
 	requestPrepareLocks sync.Map
 	// refreshLocks serializes credential refresh per auth ID so concurrent
