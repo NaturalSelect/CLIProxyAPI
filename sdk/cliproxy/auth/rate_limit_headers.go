@@ -53,6 +53,19 @@ func applyRateLimitHeaders(auth *Auth, headers http.Header, observedAt time.Time
 	if !ok {
 		return false
 	}
+	return applyRateLimitSnapshot(auth, snapshot, observedAt)
+}
+
+// applyRateLimitSnapshot stamps observedAt onto snapshot and stores it as
+// auth.RateLimits, applying the same out-of-order protection documented on
+// applyRateLimitHeaders: a slower in-flight probe/request cannot clobber a
+// snapshot that was already refreshed more recently. Shared by the
+// header-based probe (applyRateLimitHeaders) and the antigravity quota probe
+// (SetAntigravityQuotaGroups in antigravity_quota.go).
+func applyRateLimitSnapshot(auth *Auth, snapshot map[string]any, observedAt time.Time) bool {
+	if auth == nil || len(snapshot) == 0 {
+		return false
+	}
 	if existingObservedAt, okObserved := parseRateLimitObservedAt(auth.RateLimits); okObserved && observedAt.Before(existingObservedAt) {
 		return false
 	}
