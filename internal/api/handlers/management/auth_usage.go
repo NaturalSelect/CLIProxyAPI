@@ -1,6 +1,7 @@
 package management
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,8 +11,12 @@ import (
 )
 
 // ListAuthFileUsage returns the most recently observed rate-limit/usage snapshot
-// for each auth credential, as reported by the upstream provider on its response
+// for each auth credential. Claude/Codex usage comes from upstream response
 // headers (Claude: Anthropic-Ratelimit-Unified-*; Codex: X-Codex-Primary/Secondary-*).
+// Antigravity usage comes from a dedicated retrieveUserQuotaSummary probe (see
+// sdk/cliproxy/auth/antigravity_quota.go) and, since that endpoint reports
+// independent quota groups (currently "gemini" and "3p"), yields one entry per
+// group for a single antigravity auth rather than one entry per auth.
 // The data is in-memory only (sdk/cliproxy/auth.Auth.RateLimits, not persisted to
 // disk) and reflects whatever was last observed since the process started; auths
 // with no recorded usage yet are omitted from the response.
@@ -27,9 +32,7 @@ func (h *Handler) ListAuthFileUsage(c *gin.Context) {
 	auths := h.authManager.List()
 	usage := make([]gin.H, 0, len(auths))
 	for _, auth := range auths {
-		if entry := buildAuthUsageEntry(auth); entry != nil {
-			usage = append(usage, entry)
-		}
+		usage = append(usage, buildAuthUsageEntries(auth)...)
 	}
 	sort.Slice(usage, func(i, j int) bool {
 		nameI, _ := usage[i]["name"].(string)
@@ -39,11 +42,10 @@ func (h *Handler) ListAuthFileUsage(c *gin.Context) {
 	c.JSON(200, gin.H{"usage": usage})
 }
 
-// buildAuthUsageEntry maps an auth's in-memory RateLimits snapshot (see
-// sdk/cliproxy/auth/rate_limit_headers.go) onto a provider-agnostic long/short
-// window shape ("usage_7d"/"usage_5h"). It returns nil when the provider is not
-// rate-limit tracked or the auth has no recorded usage yet.
-func buildAuthUsageEntry(auth *coreauth.Auth) gin.H {
+// buildAuthUsageEntries returns the usage entries for one auth: zero when it
+// has no recorded usage yet, one for Claude/Codex, or one per antigravity
+// quota group (see ListAuthFileUsage).
+func buildAuthUsageEntries(auth *coreauth.Auth) []gin.H {
 	if auth == nil || len(auth.RateLimits) == 0 {
 		return nil
 	}
@@ -55,23 +57,31 @@ func buildAuthUsageEntry(auth *coreauth.Auth) gin.H {
 		return nil
 	}
 
-	var window7d, window5h gin.H
 	switch strings.TrimSpace(auth.Provider) {
 	case "claude":
-		window7d = rateLimitWindow(auth.RateLimits, "7d_utilization", "7d_reset")
-		window5h = rateLimitWindow(auth.RateLimits, "5h_utilization", "5h_reset")
+		return authUsageEntrySlice(auth, name,
+			rateLimitWindow(auth.RateLimits, "7d_utilization", "7d_reset"),
+			rateLimitWindow(auth.RateLimits, "5h_utilization", "5h_reset"))
 	case "codex":
 		// Codex's "primary" window is the long/weekly window and "secondary" is
 		// the short window; both map onto the 7d/5h response shape for display.
-		window7d = rateLimitWindow(auth.RateLimits, "primary_used_percent", "primary_reset_at")
-		window5h = rateLimitWindow(auth.RateLimits, "secondary_used_percent", "secondary_reset_at")
+		return authUsageEntrySlice(auth, name,
+			rateLimitWindow(auth.RateLimits, "primary_used_percent", "primary_reset_at"),
+			rateLimitWindow(auth.RateLimits, "secondary_used_percent", "secondary_reset_at"))
+	case "antigravity":
+		return antigravityUsageEntries(auth, name)
 	default:
 		return nil
 	}
+}
+
+// authUsageEntrySlice builds the single Claude/Codex usage entry, wrapped in a
+// slice so callers can treat every provider's result uniformly. It returns nil
+// when neither window has data.
+func authUsageEntrySlice(auth *coreauth.Auth, name string, window7d, window5h gin.H) []gin.H {
 	if window7d == nil && window5h == nil {
 		return nil
 	}
-
 	entry := gin.H{
 		"id":   auth.ID,
 		"name": name,
@@ -86,7 +96,66 @@ func buildAuthUsageEntry(auth *coreauth.Auth) gin.H {
 	if observedAt, ok := auth.RateLimits["observed_at"].(string); ok && observedAt != "" {
 		entry["observed_at"] = observedAt
 	}
-	return entry
+	return []gin.H{entry}
+}
+
+// antigravityUsageEntries builds one usage entry per antigravity quota group
+// (see coreauth.AntigravityQuotaGroups), naming each "<name>-<GroupID>" (e.g.
+// "xxx.json-gemini", "xxx.json-3p") so the two independent quota tracks don't
+// collide under the same entry. Groups with neither window populated are
+// skipped.
+func antigravityUsageEntries(auth *coreauth.Auth, name string) []gin.H {
+	groups := coreauth.AntigravityQuotaGroups(auth)
+	if len(groups) == 0 {
+		return nil
+	}
+	observedAt, _ := auth.RateLimits["observed_at"].(string)
+
+	entries := make([]gin.H, 0, len(groups))
+	for _, group := range groups {
+		window7d := antigravityQuotaWindow(group.Long)
+		window5h := antigravityQuotaWindow(group.Short)
+		if window7d == nil && window5h == nil {
+			continue
+		}
+		entry := gin.H{
+			"id":    auth.ID,
+			"name":  fmt.Sprintf("%s (%s)", name, group.GroupID),
+			"type":  "antigravity",
+			"group": group.GroupID,
+		}
+		if window7d != nil {
+			entry["usage_7d"] = window7d
+		}
+		if window5h != nil {
+			entry["usage_5h"] = window5h
+		}
+		if observedAt != "" {
+			entry["observed_at"] = observedAt
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// antigravityQuotaWindow converts a typed antigravity quota window into the
+// same {percent, reset_at} shape rateLimitWindow produces for Claude/Codex. It
+// returns nil when w is nil or has neither field populated.
+func antigravityQuotaWindow(w *coreauth.AntigravityQuotaWindow) gin.H {
+	if w == nil {
+		return nil
+	}
+	window := gin.H{}
+	if w.Utilization != nil {
+		window["percent"] = *w.Utilization
+	}
+	if w.Reset != "" {
+		window["reset_at"] = w.Reset
+	}
+	if len(window) == 0 {
+		return nil
+	}
+	return window
 }
 
 // rateLimitWindow extracts a {percent, reset_at} pair from a rate-limit snapshot.

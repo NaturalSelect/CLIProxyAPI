@@ -1,7 +1,11 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -25,12 +29,16 @@ const (
 	usageRefreshBetweenProbes = 5 * time.Second
 )
 
-// usageRefreshProviders lists the providers with rate-limit header tracking
-// wired up in rate_limit_headers.go. Probing any other provider would send a
-// real API call for data that parseRateLimitHeaders can't parse anyway.
+// usageRefreshProviders lists the providers the prober will probe: claude and
+// codex have rate-limit header tracking wired up in rate_limit_headers.go,
+// and antigravity has a dedicated quota endpoint wired up in
+// antigravity_quota.go (its usage is not reported via response headers).
+// Probing any other provider would send a real API call for data the prober
+// has no parser for.
 var usageRefreshProviders = map[string]bool{
-	"claude": true,
-	"codex":  true,
+	"claude":      true,
+	"codex":       true,
+	"antigravity": true,
 }
 
 // StartUsageRefresh launches a background loop that periodically sends a
@@ -120,10 +128,10 @@ func (m *Manager) runUsageRefreshPass(ctx context.Context) {
 	}
 }
 
-// needsUsageProbe reports whether auth is a Claude/Codex credential whose
-// cached rate-limit snapshot is missing or stale, and is not currently
-// disabled, unauthorized, or cooling down (probing those would waste a call
-// and could surface an error with nothing useful to do about it).
+// needsUsageProbe reports whether auth is a credential from usageRefreshProviders
+// whose cached rate-limit snapshot is missing or stale, and is not currently
+// unauthorized (probing that would waste a call and could surface an error
+// with nothing useful to do about it).
 func needsUsageProbe(a *Auth, now time.Time) bool {
 	if a == nil {
 		return false
@@ -164,6 +172,11 @@ func (m *Manager) probeUsage(ctx context.Context, authID string) {
 		return
 	}
 
+	if a.Provider == "antigravity" {
+		m.probeAntigravityUsage(ctx, authID, a, exec)
+		return
+	}
+
 	req, opts, ok := buildUsageProbeRequest(a)
 	if !ok {
 		log.Debugf("usage-refresh prober: no probe model available for auth %s (%s)", authID, a.Provider)
@@ -182,6 +195,85 @@ func (m *Manager) probeUsage(ctx context.Context, authID string) {
 		applyRateLimitHeaders(current, headers, time.Now())
 	}
 	m.mu.Unlock()
+}
+
+// probeAntigravityUsage fetches a fresh quota snapshot for an antigravity auth
+// via the dedicated retrieveUserQuotaSummary endpoint: antigravity does not
+// report usage on response headers like Claude/Codex (see
+// usageRefreshProviders), so it needs its own request/response handling
+// instead of buildUsageProbeRequest's Execute()+headers path. Like the
+// Claude/Codex path, failures are silent aside from a debug log: a probe is
+// not "real" traffic and must not affect the auth's availability or cooldown
+// state.
+func (m *Manager) probeAntigravityUsage(ctx context.Context, authID string, a *Auth, exec ProviderExecutor) {
+	projectID := antigravityQuotaProjectID(a)
+	if projectID == "" {
+		log.Debugf("usage-refresh prober: antigravity auth %s has no project_id yet, skipping probe", authID)
+		return
+	}
+
+	body, errMarshal := json.Marshal(map[string]string{"project": projectID})
+	if errMarshal != nil {
+		log.Debugf("usage-refresh prober: antigravity auth %s: marshal quota request error: %v", authID, errMarshal)
+		return
+	}
+
+	var groups []AntigravityQuotaGroup
+	for _, base := range antigravityQuotaBaseURLCandidates(a) {
+		httpReq, errReq := http.NewRequestWithContext(ctx, http.MethodPost, base+antigravityQuotaPath, bytes.NewReader(body))
+		if errReq != nil {
+			log.Debugf("usage-refresh prober: antigravity auth %s: build quota request error: %v", authID, errReq)
+			continue
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, errDo := exec.HttpRequest(ctx, a, httpReq)
+		if errDo != nil {
+			log.Debugf("usage-refresh prober: antigravity auth %s: quota request to %s failed: %v", authID, base, errDo)
+			continue
+		}
+		respBody, ok := readAntigravityQuotaResponse(resp)
+		if !ok {
+			log.Debugf("usage-refresh prober: antigravity auth %s: quota response from %s not usable", authID, base)
+			continue
+		}
+		if g, parsed := parseAntigravityQuotaSummary(respBody); parsed {
+			groups = g
+			break
+		}
+	}
+
+	if len(groups) == 0 {
+		log.Debugf("usage-refresh prober: probe for auth %s (antigravity) returned no usage groups", authID)
+		return
+	}
+
+	m.mu.Lock()
+	if current := m.auths[authID]; current != nil {
+		SetAntigravityQuotaGroups(current, groups, time.Now())
+	}
+	m.mu.Unlock()
+}
+
+// readAntigravityQuotaResponse reads and closes resp's body, reporting
+// ok=false for a nil response, a non-2xx status, or a body read error.
+func readAntigravityQuotaResponse(resp *http.Response) ([]byte, bool) {
+	if resp == nil {
+		return nil, false
+	}
+	defer func() {
+		if errClose := resp.Body.Close(); errClose != nil {
+			log.Debugf("usage-refresh prober: close antigravity quota response body error: %v", errClose)
+		}
+	}()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, false
+	}
+	data, errRead := io.ReadAll(resp.Body)
+	if errRead != nil {
+		return nil, false
+	}
+	return data, true
 }
 
 // buildUsageProbeRequest constructs a minimal native-format request for the
