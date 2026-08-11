@@ -100,8 +100,8 @@ func authUsageEntrySlice(auth *coreauth.Auth, name string, window7d, window5h gi
 }
 
 // antigravityUsageEntries builds one usage entry per antigravity quota group
-// (see coreauth.AntigravityQuotaGroups), naming each "<name>-<GroupID>" (e.g.
-// "xxx.json-gemini", "xxx.json-3p") so the two independent quota tracks don't
+// (see coreauth.AntigravityQuotaGroups), naming each "<name> (<GroupID>)" (e.g.
+// "xxx.json (gemini)", "xxx.json (3p)") so the independent quota tracks don't
 // collide under the same entry. Groups with neither window populated are
 // skipped.
 func antigravityUsageEntries(auth *coreauth.Auth, name string) []gin.H {
