@@ -19,7 +19,6 @@ const (
 	ClaudePromptCacheMaxBreakpoints = 4
 
 	claudePromptCacheMaxScopes             = 256
-	claudePromptCacheMaxSequencesPerScope  = 8
 	claudePromptCacheMaxPrefixesPerScope   = 64
 	claudePromptCacheMaxTrackedTools       = 256
 	claudePromptCacheMaxActiveFlights      = 1024
@@ -33,7 +32,6 @@ const (
 	claudePromptCacheAutomaticControlJSON  = `{"type":"ephemeral"}`
 	claudePromptCacheFingerprintDomain     = "claude-prompt-cache-tool-v1"
 	claudePromptCachePrefixFingerprintV1   = "claude-prompt-cache-prefix-v1"
-	claudePromptCacheSequenceFingerprintV1 = "claude-prompt-cache-sequence-v1"
 )
 
 // ClaudePromptCacheCapabilities describes cache-control support for one upstream.
@@ -49,7 +47,6 @@ type ClaudePromptCachePlanSummary struct {
 	RemovedBreakpoints  int
 	FinalBreakpoints    int
 	CurrentToolCount    int
-	StableToolCut       int
 	AutomaticHistory    bool
 }
 
@@ -59,18 +56,15 @@ type ClaudePromptCachePrefix struct {
 	Kind      string
 	Depth     int
 	TTL       time.Duration
-	ToolCut   int
 	Added     bool
 	Confirmed bool
 }
 
 // ClaudePromptCachePlan describes the final cache layout for one request.
 type ClaudePromptCachePlan struct {
-	ScopeKey         string
-	ToolSequenceKey  string
-	ToolFingerprints [][32]byte
-	Prefixes         []ClaudePromptCachePrefix
-	Summary          ClaudePromptCachePlanSummary
+	ScopeKey string
+	Prefixes []ClaudePromptCachePrefix
+	Summary  ClaudePromptCachePlanSummary
 }
 
 type claudePromptCachePrefixState struct {
@@ -81,18 +75,8 @@ type claudePromptCachePrefixState struct {
 	lastTouched    time.Time
 }
 
-type claudePromptCacheWarmSequence struct {
-	sequenceKey      string
-	toolFingerprints [][32]byte
-	candidateCuts    map[int]string
-	validUntil       time.Time
-	lastSuccess      time.Time
-	lastUsed         time.Time
-}
-
 type claudePromptCacheScopeState struct {
 	prefixes   map[string]*claudePromptCachePrefixState
-	sequences  []*claudePromptCacheWarmSequence
 	lastAccess time.Time
 }
 
@@ -317,7 +301,6 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 
 	now := runtime.now()
 	toolFingerprints, toolPrefixKeys := fingerprintClaudeTools(payload)
-	stableToolCut := runtime.findStableToolCut(scopeKey, toolFingerprints, now)
 	existingLocations, invalidPaths := collectClaudeCacheBreakpoints(payload)
 
 	updatedPayload := payload
@@ -327,7 +310,17 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 		}
 	}
 
-	selectedExisting := selectExistingClaudeBreakpoints(existingLocations, ClaudePromptCacheMaxBreakpoints)
+	// Anthropic counts the top-level automatic-history marker against the
+	// same four-breakpoint budget as explicit in-body cache_control blocks,
+	// so reserve its slot up front (both for existing and newly added
+	// in-body breakpoints) instead of adding it on top of four already-
+	// placed in-body breakpoints (which would total 5 and trigger
+	// "A maximum of 4 blocks with cache_control may be provided").
+	existingBudget := ClaudePromptCacheMaxBreakpoints
+	if capabilities.AutomaticHistory {
+		existingBudget--
+	}
+	selectedExisting := selectExistingClaudeBreakpoints(existingLocations, existingBudget)
 	selectedPaths := make(map[string]struct{}, ClaudePromptCacheMaxBreakpoints)
 	for _, location := range selectedExisting {
 		selectedPaths[location.path] = struct{}{}
@@ -341,22 +334,9 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 		}
 	}
 
-	remainingSlots := ClaudePromptCacheMaxBreakpoints - len(selectedExisting)
+	remainingSlots := existingBudget - len(selectedExisting)
 	addedBreakpoints := 0
 	addedPaths := make(map[string]struct{}, ClaudePromptCacheMaxBreakpoints)
-	if remainingSlots > 0 && stableToolCut > 0 && stableToolCut <= len(toolFingerprints) {
-		path := fmt.Sprintf("tools.%d.cache_control", stableToolCut-1)
-		if _, exists := selectedPaths[path]; !exists {
-			if nextPayload, errSet := sjson.SetRawBytes(updatedPayload, path, []byte(claudePromptCacheAutomaticControlJSON)); errSet == nil {
-				updatedPayload = nextPayload
-				selectedPaths[path] = struct{}{}
-				addedPaths[path] = struct{}{}
-				remainingSlots--
-				addedBreakpoints++
-			}
-		}
-	}
-
 	if remainingSlots > 0 && len(toolFingerprints) > 0 {
 		path := fmt.Sprintf("tools.%d.cache_control", len(toolFingerprints)-1)
 		if _, exists := selectedPaths[path]; !exists {
@@ -428,19 +408,15 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 			now,
 		)...)
 	}
-	sequenceKey := fingerprintClaudeToolSequence(toolFingerprints)
 	plan := &ClaudePromptCachePlan{
-		ScopeKey:         scopeKey,
-		ToolSequenceKey:  sequenceKey,
-		ToolFingerprints: cloneClaudeToolFingerprints(toolFingerprints),
-		Prefixes:         prefixes,
+		ScopeKey: scopeKey,
+		Prefixes: prefixes,
 		Summary: ClaudePromptCachePlanSummary{
 			ExistingBreakpoints: len(existingLocations),
 			AddedBreakpoints:    addedBreakpoints,
 			RemovedBreakpoints:  len(invalidPaths) + len(existingLocations) - len(selectedExisting),
 			FinalBreakpoints:    len(finalLocations),
 			CurrentToolCount:    len(toolFingerprints),
-			StableToolCut:       stableToolCut,
 			AutomaticHistory:    automaticHistory,
 		},
 	}
@@ -654,13 +630,14 @@ func (attempt *ClaudePromptCacheAttempt) Fail() {
 	attempt.runtime.clearStartedPrefixes(attempt.flight, attempt.claimedKeys)
 }
 
-// Complete records aggregate cache evidence after a terminal successful response.
-func (attempt *ClaudePromptCacheAttempt) Complete(cacheReadTokens, cacheCreationTokens int64) {
+// Complete releases this attempt's claim on its prefixes after a terminal
+// successful response.
+func (attempt *ClaudePromptCacheAttempt) Complete() {
 	if attempt == nil || attempt.runtime == nil || attempt.plan == nil {
 		return
 	}
 	attempt.runtime.initialize()
-	attempt.runtime.completePlan(attempt.plan, attempt.flight, cacheReadTokens, cacheCreationTokens)
+	attempt.runtime.completePlan(attempt.plan, attempt.flight)
 }
 
 func (runtime *ClaudePromptCacheRuntime) acquireFlight(plan *ClaudePromptCachePlan) (*claudePromptCacheFlight, []string, *claudePromptCacheFlight) {
@@ -796,8 +773,6 @@ func (runtime *ClaudePromptCacheRuntime) extendStartedPrefixes(
 func (runtime *ClaudePromptCacheRuntime) completePlan(
 	plan *ClaudePromptCachePlan,
 	flight *claudePromptCacheFlight,
-	cacheReadTokens,
-	cacheCreationTokens int64,
 ) {
 	now := runtime.now()
 	runtime.mutex.Lock()
@@ -805,11 +780,6 @@ func (runtime *ClaudePromptCacheRuntime) completePlan(
 	runtime.cleanupLocked(now)
 	scopeState := runtime.ensureScopeLocked(plan.ScopeKey, now)
 
-	// Anthropic reports request-level cache totals, not per-breakpoint evidence.
-	// Use them only to learn short-lived candidate tool cuts; never mark every
-	// explicit prefix as confirmed from an aggregate value.
-	hasAggregateCacheEvidence := cacheReadTokens > 0 || cacheCreationTokens > 0
-	candidateCuts := make(map[int]string)
 	for _, prefix := range plan.Prefixes {
 		prefixState := scopeState.prefixes[prefix.Key]
 		if prefixState == nil {
@@ -820,69 +790,12 @@ func (runtime *ClaudePromptCacheRuntime) completePlan(
 		if prefixState.ttl <= 0 {
 			prefixState.ttl = prefix.TTL
 		}
-		if hasAggregateCacheEvidence && prefix.Kind == "tools" && prefix.ToolCut > 0 {
-			candidateCuts[prefix.ToolCut] = prefix.Key
-		}
 		if flight != nil && prefixState.startedBy == flight {
 			prefixState.startedUntil = time.Time{}
 			prefixState.startedBy = nil
 		}
 	}
-
-	if len(plan.ToolFingerprints) == 0 ||
-		len(plan.ToolFingerprints) > claudePromptCacheMaxTrackedTools ||
-		len(candidateCuts) == 0 {
-		return
-	}
-	sequence := findClaudeWarmSequence(scopeState.sequences, plan.ToolSequenceKey)
-	if sequence == nil {
-		sequence = &claudePromptCacheWarmSequence{
-			sequenceKey:      plan.ToolSequenceKey,
-			toolFingerprints: cloneClaudeToolFingerprints(plan.ToolFingerprints),
-			candidateCuts:    make(map[int]string),
-		}
-		scopeState.sequences = append(scopeState.sequences, sequence)
-	}
-	for cut, prefixKey := range candidateCuts {
-		sequence.candidateCuts[cut] = prefixKey
-	}
-	sequence.validUntil = now.Add(localClaudePromptCacheTTL(claudePromptCacheDefaultTTL))
-	sequence.lastSuccess = now
-	sequence.lastUsed = now
-	trimClaudeWarmSequences(scopeState)
 	trimClaudePrefixStates(scopeState, now, runtime.flights)
-}
-
-func (runtime *ClaudePromptCacheRuntime) findStableToolCut(scopeKey string, current [][32]byte, now time.Time) int {
-	if runtime == nil || len(current) == 0 || len(current) > claudePromptCacheMaxTrackedTools {
-		return 0
-	}
-	runtime.mutex.Lock()
-	defer runtime.mutex.Unlock()
-	runtime.cleanupLocked(now)
-	scopeState := runtime.scopes[scopeKey]
-	if scopeState == nil {
-		return 0
-	}
-	scopeState.lastAccess = now
-
-	bestCut := 0
-	for _, sequence := range scopeState.sequences {
-		if !sequence.validUntil.After(now) {
-			continue
-		}
-		lcpLength := longestCommonClaudeToolPrefix(current, sequence.toolFingerprints)
-		for cut := range sequence.candidateCuts {
-			if cut <= 0 || cut > lcpLength {
-				continue
-			}
-			if cut > bestCut {
-				bestCut = cut
-				sequence.lastUsed = now
-			}
-		}
-	}
-	return bestCut
 }
 
 func (runtime *ClaudePromptCacheRuntime) ensureScopeLocked(scopeKey string, now time.Time) *claudePromptCacheScopeState {
@@ -899,14 +812,7 @@ func (runtime *ClaudePromptCacheRuntime) cleanupLocked(now time.Time) {
 	runtime.cleanupDiagnosticsLocked(now)
 	for scopeKey, scopeState := range runtime.scopes {
 		trimClaudePrefixStates(scopeState, now, runtime.flights)
-		activeSequences := scopeState.sequences[:0]
-		for _, sequence := range scopeState.sequences {
-			if sequence.validUntil.After(now) && len(sequence.candidateCuts) > 0 {
-				activeSequences = append(activeSequences, sequence)
-			}
-		}
-		scopeState.sequences = activeSequences
-		if len(scopeState.prefixes) == 0 && len(scopeState.sequences) == 0 && now.Sub(scopeState.lastAccess) > claudePromptCacheExtendedTTL {
+		if len(scopeState.prefixes) == 0 && now.Sub(scopeState.lastAccess) > claudePromptCacheExtendedTTL {
 			delete(runtime.scopes, scopeKey)
 		}
 	}
@@ -1262,7 +1168,6 @@ func buildClaudePromptCachePrefixes(
 			Kind:      location.kind,
 			Depth:     location.depth,
 			TTL:       claudeCacheControlTTL(location.cacheControl),
-			ToolCut:   toolCut,
 			Added:     location.added,
 			Confirmed: runtime.prefixConfirmed(scopeKey, prefixKey, now),
 		})
@@ -1373,28 +1278,6 @@ func fingerprintClaudeTools(payload []byte) ([][32]byte, []string) {
 		return true
 	})
 	return fingerprints, prefixKeys
-}
-
-func fingerprintClaudeToolSequence(fingerprints [][32]byte) string {
-	hasher := sha256.New()
-	_, _ = hasher.Write([]byte(claudePromptCacheSequenceFingerprintV1))
-	for _, fingerprint := range fingerprints {
-		_, _ = hasher.Write(fingerprint[:])
-	}
-	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-func longestCommonClaudeToolPrefix(left, right [][32]byte) int {
-	limit := len(left)
-	if len(right) < limit {
-		limit = len(right)
-	}
-	for index := 0; index < limit; index++ {
-		if left[index] != right[index] {
-			return index
-		}
-	}
-	return limit
 }
 
 func hashClaudePromptCachePrefix(scopeKey, kind, material string) string {
@@ -1531,39 +1414,6 @@ func claudeCacheControlTTL(raw string) time.Duration {
 		return claudePromptCacheExtendedTTL
 	}
 	return claudePromptCacheDefaultTTL
-}
-
-func localClaudePromptCacheTTL(ttl time.Duration) time.Duration {
-	if ttl >= claudePromptCacheExtendedTTL {
-		return ttl - claudePromptCacheExtendedSafetyMargin
-	}
-	if ttl > claudePromptCacheDefaultSafetyMargin {
-		return ttl - claudePromptCacheDefaultSafetyMargin
-	}
-	return ttl
-}
-
-func cloneClaudeToolFingerprints(input [][32]byte) [][32]byte {
-	return append([][32]byte(nil), input...)
-}
-
-func findClaudeWarmSequence(sequences []*claudePromptCacheWarmSequence, sequenceKey string) *claudePromptCacheWarmSequence {
-	for _, sequence := range sequences {
-		if sequence.sequenceKey == sequenceKey {
-			return sequence
-		}
-	}
-	return nil
-}
-
-func trimClaudeWarmSequences(scopeState *claudePromptCacheScopeState) {
-	if scopeState == nil || len(scopeState.sequences) <= claudePromptCacheMaxSequencesPerScope {
-		return
-	}
-	sort.Slice(scopeState.sequences, func(left, right int) bool {
-		return scopeState.sequences[left].lastUsed.After(scopeState.sequences[right].lastUsed)
-	})
-	scopeState.sequences = scopeState.sequences[:claudePromptCacheMaxSequencesPerScope]
 }
 
 func trimClaudePrefixStates(

@@ -120,7 +120,6 @@ func (e *ClaudeExecutor) planAdaptiveClaudePromptCache(
 			"removed_breakpoints":  plan.Summary.RemovedBreakpoints,
 			"final_breakpoints":    plan.Summary.FinalBreakpoints,
 			"tool_count":           plan.Summary.CurrentToolCount,
-			"stable_tool_cut":      plan.Summary.StableToolCut,
 			"automatic_history":    plan.Summary.AutomaticHistory,
 		}).Debug("claude executor: planned prompt cache")
 	}

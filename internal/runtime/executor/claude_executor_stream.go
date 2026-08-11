@@ -315,7 +315,7 @@ func finalizeClaudeStreamUsage(
 		reporter.Publish(ctx, detail)
 	}
 	if promptCacheAttempt != nil {
-		promptCacheAttempt.Complete(detail.CacheReadTokens, detail.CacheCreationTokens)
+		promptCacheAttempt.Complete()
 	}
 	if executor != nil {
 		cacheMissReason, cacheMissedInputTokens := streamUsage.CacheMissReason()

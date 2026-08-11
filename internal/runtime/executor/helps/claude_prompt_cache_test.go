@@ -167,14 +167,26 @@ func TestPlanClaudePromptCacheDeterministicallyLimitsExplicitBreakpoints(t *test
 	if len(invalidPaths) != 0 {
 		t.Fatalf("invalid cache-control paths = %v, want none", invalidPaths)
 	}
-	if len(locations) != ClaudePromptCacheMaxBreakpoints {
-		t.Fatalf("explicit breakpoint count = %d, want %d", len(locations), ClaudePromptCacheMaxBreakpoints)
+	// AutomaticHistory reserves one of the four breakpoint slots for the
+	// top-level marker, so only 3 in-body locations survive selection.
+	const wantInBody = ClaudePromptCacheMaxBreakpoints - 1
+	if len(locations) != wantInBody {
+		t.Fatalf("explicit breakpoint count = %d, want %d", len(locations), wantInBody)
 	}
-	if firstPlan.Summary.RemovedBreakpoints != 2 {
-		t.Fatalf("removed breakpoints = %d, want 2", firstPlan.Summary.RemovedBreakpoints)
+	if firstPlan.Summary.RemovedBreakpoints != 3 {
+		t.Fatalf("removed breakpoints = %d, want 3", firstPlan.Summary.RemovedBreakpoints)
 	}
 	if gjson.GetBytes(firstPayload, "system.0.cache_control").Exists() {
 		t.Fatal("invalid system cache_control was not removed")
+	}
+	// In-body breakpoints plus the top-level automatic marker must never
+	// exceed Anthropic's four-block cap.
+	total := len(locations)
+	if isValidClaudeCacheControl(gjson.GetBytes(firstPayload, "cache_control")) {
+		total++
+	}
+	if total > ClaudePromptCacheMaxBreakpoints {
+		t.Fatalf("total cache_control blocks = %d, want <= %d", total, ClaudePromptCacheMaxBreakpoints)
 	}
 }
 
@@ -203,53 +215,46 @@ func TestPlanClaudePromptCacheNormalizesTTLAfterAddingEarlierBreakpoint(t *testi
 	}
 }
 
-func TestClaudePromptCacheLearnsStableAppendedToolPrefix(t *testing.T) {
+// TestPlanClaudePromptCacheReservesSlotForAutomaticHistory guards against a
+// regression where four in-body cache_control breakpoints (already at
+// Anthropic's per-request cap) were kept as-is before adding the top-level
+// automatic-history marker, yielding 5 total cache_control blocks and
+// triggering Anthropic's "A maximum of 4 blocks with cache_control may be
+// provided".
+func TestPlanClaudePromptCacheReservesSlotForAutomaticHistory(t *testing.T) {
 	runtime := NewClaudePromptCacheRuntime()
-	currentTime := time.Date(2026, time.July, 10, 12, 0, 0, 0, time.UTC)
-	runtime.now = func() time.Time { return currentTime }
+	payload := []byte(`{
+		"tools":[
+			{"name":"A","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}},
+			{"name":"B","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}},
+			{"name":"C","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}},
+			{"name":"D","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}}
+		],
+		"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]
+	}`)
 
-	initialPayload := buildClaudePromptCacheTestPayload([]string{"Read", "Bash", "Glob"}, false)
-	_, initialPlan := runtime.PlanClaudePromptCache(
-		"stable-tools-scope",
-		initialPayload,
-		ClaudePromptCacheCapabilities{AutomaticHistory: true},
-	)
-	initialAttempt, errAcquire := runtime.Acquire(context.Background(), initialPlan, time.Second)
-	if errAcquire != nil {
-		t.Fatalf("Acquire() error = %v", errAcquire)
-	}
-	if !initialAttempt.IsLeader() {
-		t.Fatal("initial attempt is not the cold-prefix leader")
-	}
-	initialAttempt.MarkResponseStarted()
-	initialAttempt.Complete(0, 100)
-	initialAttempt.Fail()
-
-	appendedPayload := buildClaudePromptCacheTestPayload([]string{"Read", "Bash", "Glob", "Task"}, false)
-	plannedPayload, appendedPlan := runtime.PlanClaudePromptCache(
-		"stable-tools-scope",
-		appendedPayload,
+	plannedPayload, plan := runtime.PlanClaudePromptCache(
+		"reserve-scope",
+		payload,
 		ClaudePromptCacheCapabilities{AutomaticHistory: true},
 	)
 
-	if appendedPlan.Summary.StableToolCut != 3 {
-		t.Fatalf("stable tool cut = %d, want 3", appendedPlan.Summary.StableToolCut)
+	if plan == nil {
+		t.Fatal("PlanClaudePromptCache() plan = nil")
 	}
-	if !gjson.GetBytes(plannedPayload, "tools.2.cache_control").Exists() {
-		t.Fatal("stable tool-prefix breakpoint tools.2.cache_control is missing")
+	locations, invalidPaths := collectClaudeCacheBreakpoints(plannedPayload)
+	if len(invalidPaths) != 0 {
+		t.Fatalf("invalid cache-control paths = %v, want none", invalidPaths)
 	}
-	if !gjson.GetBytes(plannedPayload, "tools.3.cache_control").Exists() {
-		t.Fatal("current tool-tail breakpoint tools.3.cache_control is missing")
+	total := len(locations)
+	if isValidClaudeCacheControl(gjson.GetBytes(plannedPayload, "cache_control")) {
+		total++
 	}
-
-	currentTime = currentTime.Add(claudePromptCacheDefaultTTL)
-	_, expiredPlan := runtime.PlanClaudePromptCache(
-		"stable-tools-scope",
-		appendedPayload,
-		ClaudePromptCacheCapabilities{AutomaticHistory: true},
-	)
-	if expiredPlan.Summary.StableToolCut != 0 {
-		t.Fatalf("expired stable tool cut = %d, want 0", expiredPlan.Summary.StableToolCut)
+	if total > ClaudePromptCacheMaxBreakpoints {
+		t.Fatalf(
+			"total cache_control blocks (in-body %d + top-level) = %d, want <= %d (payload: %s)",
+			len(locations), total, ClaudePromptCacheMaxBreakpoints, plannedPayload,
+		)
 	}
 }
 
@@ -268,20 +273,17 @@ func TestClaudePromptCacheAggregateUsageDoesNotConfirmEveryPrefix(t *testing.T) 
 		t.Fatalf("Acquire() error = %v", errAcquire)
 	}
 	attempt.MarkResponseStarted()
-	attempt.Complete(0, 100)
+	attempt.Complete()
 	attempt.Fail()
 
 	scopeState := runtime.scopes["aggregate-evidence-scope"]
 	if scopeState == nil {
-		t.Fatal("scope state was not retained for candidate tool learning")
+		t.Fatal("scope state was not retained for prefix bookkeeping")
 	}
 	for prefixKey, prefixState := range scopeState.prefixes {
 		if prefixState.confirmedUntil.After(currentTime) {
 			t.Fatalf("aggregate cache creation incorrectly confirmed prefix %s", prefixKey)
 		}
-	}
-	if len(scopeState.sequences) != 1 || len(scopeState.sequences[0].candidateCuts) == 0 {
-		t.Fatal("aggregate cache evidence did not produce a bounded candidate tool sequence")
 	}
 }
 

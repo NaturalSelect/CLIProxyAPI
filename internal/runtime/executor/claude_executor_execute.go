@@ -209,7 +209,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 			cacheMissedInputTokens,
 		)
 		if promptCacheAttempt != nil && streamUsage.CompletedSuccessfully() {
-			promptCacheAttempt.Complete(detail.CacheReadTokens, detail.CacheCreationTokens)
+			promptCacheAttempt.Complete()
 		}
 	} else {
 		detail := helps.ParseClaudeUsage(data)
@@ -222,7 +222,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 			gjson.GetBytes(data, "diagnostics.cache_miss_reason.cache_missed_input_tokens").Int(),
 		)
 		if promptCacheAttempt != nil {
-			promptCacheAttempt.Complete(detail.CacheReadTokens, detail.CacheCreationTokens)
+			promptCacheAttempt.Complete()
 		}
 		data = restoreClaudeOAuthToolNamesFromResponse(data, claudeToolPrefix, auth.ToolPrefixDisabled(), oauthToolNamesReverseMap)
 	}
