@@ -16,7 +16,8 @@ import (
 // Antigravity usage comes from a dedicated retrieveUserQuotaSummary probe (see
 // sdk/cliproxy/auth/antigravity_quota.go) and, since that endpoint reports
 // independent quota groups (currently "gemini" and "3p"), yields one entry per
-// group for a single antigravity auth rather than one entry per auth.
+// group for a single antigravity auth rather than one entry per auth, each
+// tagged with its own "type" (e.g. "antigravity-gemini", "antigravity-3p").
 // The data is in-memory only (sdk/cliproxy/auth.Auth.RateLimits, not persisted to
 // disk) and reflects whatever was last observed since the process started; auths
 // with no recorded usage yet are omitted from the response.
@@ -101,9 +102,10 @@ func authUsageEntrySlice(auth *coreauth.Auth, name string, window7d, window5h gi
 
 // antigravityUsageEntries builds one usage entry per antigravity quota group
 // (see coreauth.AntigravityQuotaGroups), naming each "<name> (<GroupID>)" (e.g.
-// "xxx.json (gemini)", "xxx.json (3p)") so the independent quota tracks don't
-// collide under the same entry. Groups with neither window populated are
-// skipped.
+// "xxx.json (gemini)", "xxx.json (3p)") and tagging each with its own
+// "type" ("antigravity-<GroupID>", e.g. "antigravity-gemini",
+// "antigravity-3p") so the independent quota tracks don't collide under the
+// same entry. Groups with neither window populated are skipped.
 func antigravityUsageEntries(auth *coreauth.Auth, name string) []gin.H {
 	groups := coreauth.AntigravityQuotaGroups(auth)
 	if len(groups) == 0 {
@@ -121,7 +123,7 @@ func antigravityUsageEntries(auth *coreauth.Auth, name string) []gin.H {
 		entry := gin.H{
 			"id":    auth.ID,
 			"name":  fmt.Sprintf("%s (%s)", name, group.GroupID),
-			"type":  "antigravity",
+			"type":  fmt.Sprintf("antigravity-%s", group.GroupID),
 			"group": group.GroupID,
 		}
 		if window7d != nil {

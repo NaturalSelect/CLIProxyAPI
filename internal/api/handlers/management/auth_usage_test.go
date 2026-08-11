@@ -86,7 +86,7 @@ func TestListAuthFileUsage_AntigravityReturnsTwoEntries(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing gemini entry, got names: %+v", byName)
 	}
-	if gemini["id"] != "auth-antigravity-1" || gemini["type"] != "antigravity" || gemini["group"] != "gemini" {
+	if gemini["id"] != "auth-antigravity-1" || gemini["type"] != "antigravity-gemini" || gemini["group"] != "gemini" {
 		t.Fatalf("gemini entry = %+v", gemini)
 	}
 	window7d, ok := gemini["usage_7d"].(map[string]any)
@@ -98,7 +98,7 @@ func TestListAuthFileUsage_AntigravityReturnsTwoEntries(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing 3p entry, got names: %+v", byName)
 	}
-	if thirdParty["id"] != "auth-antigravity-1" || thirdParty["group"] != "3p" {
+	if thirdParty["id"] != "auth-antigravity-1" || thirdParty["type"] != "antigravity-3p" || thirdParty["group"] != "3p" {
 		t.Fatalf("3p entry = %+v", thirdParty)
 	}
 }
