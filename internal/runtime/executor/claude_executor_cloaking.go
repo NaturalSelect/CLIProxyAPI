@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -972,6 +973,50 @@ func ensureModelMaxTokens(body []byte, modelID string) []byte {
 			body, _ = sjson.SetBytes(body, "max_tokens", maxTokens)
 			return body
 		}
+	}
+
+	return body
+}
+
+// claudeConversationTranscriptMarker tags an IDE-side history-compaction
+// request: the client wraps the entire conversation history in this element
+// and asks the model to produce a multi-section summary. These requests are
+// commonly sent with a small, fixed client max_tokens that is unrelated to
+// the model's configured completion limit, which truncates the summary
+// mid-section (stop_reason "max_tokens") and silently drops whatever
+// sections were not written yet, since the original history is not resent
+// afterward.
+const claudeConversationTranscriptMarker = "<conversation_transcript>"
+
+// raiseMaxTokensForConversationCompaction detects a history-compaction
+// request via claudeConversationTranscriptMarker and raises an explicit but
+// too-small client max_tokens up to the model's real completion limit, so
+// the summary is not cut short. Requests without the marker, or whose
+// max_tokens already meets or exceeds the model's limit, are left untouched.
+func raiseMaxTokensForConversationCompaction(body []byte, modelID string) []byte {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return body
+	}
+	requestedMaxTokens := gjson.GetBytes(body, "max_tokens").Int()
+	if requestedMaxTokens <= 0 {
+		return body
+	}
+	if !bytes.Contains(body, []byte(claudeConversationTranscriptMarker)) {
+		return body
+	}
+
+	for _, provider := range registry.GetGlobalRegistry().GetModelProviders(strings.TrimSpace(modelID)) {
+		if !strings.EqualFold(provider, "claude") {
+			continue
+		}
+		info := registry.GetGlobalRegistry().GetModelInfo(strings.TrimSpace(modelID), "claude")
+		if info == nil || info.MaxCompletionTokens <= 0 || int64(info.MaxCompletionTokens) <= requestedMaxTokens {
+			return body
+		}
+		if updated, errSet := sjson.SetBytes(body, "max_tokens", info.MaxCompletionTokens); errSet == nil {
+			body = updated
+		}
+		return body
 	}
 
 	return body

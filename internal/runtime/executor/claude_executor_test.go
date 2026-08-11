@@ -2147,6 +2147,107 @@ func TestEnsureModelMaxTokens_SkipsUnregisteredModel(t *testing.T) {
 	}
 }
 
+func TestRaiseMaxTokensForConversationCompaction_RaisesTooSmallClientValue(t *testing.T) {
+	reg := registry.GetGlobalRegistry()
+	clientID := "test-claude-compaction-raise-client"
+	modelID := "test-claude-compaction-raise-model"
+	reg.RegisterClient(clientID, "claude", []*registry.ModelInfo{{
+		ID:                  modelID,
+		Type:                "claude",
+		OwnedBy:             "anthropic",
+		Object:              "model",
+		Created:             time.Now().Unix(),
+		MaxCompletionTokens: 128000,
+		UserDefined:         true,
+	}})
+	defer reg.UnregisterClient(clientID)
+
+	input := []byte(`{"model":"test-claude-compaction-raise-model","max_tokens":8192,"messages":[{"role":"user","content":[{"type":"text","text":"<conversation_transcript>\nuser:\nhi\n</conversation_transcript>\nSummarize the above."}]}]}`)
+	out := raiseMaxTokensForConversationCompaction(input, modelID)
+
+	if got := gjson.GetBytes(out, "max_tokens").Int(); got != 128000 {
+		t.Fatalf("max_tokens = %d, want %d", got, 128000)
+	}
+}
+
+func TestRaiseMaxTokensForConversationCompaction_LeavesNonCompactionRequestUnchanged(t *testing.T) {
+	reg := registry.GetGlobalRegistry()
+	clientID := "test-claude-compaction-skip-client"
+	modelID := "test-claude-compaction-skip-model"
+	reg.RegisterClient(clientID, "claude", []*registry.ModelInfo{{
+		ID:                  modelID,
+		Type:                "claude",
+		OwnedBy:             "anthropic",
+		Object:              "model",
+		Created:             time.Now().Unix(),
+		MaxCompletionTokens: 128000,
+		UserDefined:         true,
+	}})
+	defer reg.UnregisterClient(clientID)
+
+	input := []byte(`{"model":"test-claude-compaction-skip-model","max_tokens":8192,"messages":[{"role":"user","content":"hi"}]}`)
+	out := raiseMaxTokensForConversationCompaction(input, modelID)
+
+	if got := gjson.GetBytes(out, "max_tokens").Int(); got != 8192 {
+		t.Fatalf("max_tokens = %d, want unchanged %d", got, 8192)
+	}
+}
+
+func TestRaiseMaxTokensForConversationCompaction_LeavesSufficientValueUnchanged(t *testing.T) {
+	reg := registry.GetGlobalRegistry()
+	clientID := "test-claude-compaction-sufficient-client"
+	modelID := "test-claude-compaction-sufficient-model"
+	reg.RegisterClient(clientID, "claude", []*registry.ModelInfo{{
+		ID:                  modelID,
+		Type:                "claude",
+		OwnedBy:             "anthropic",
+		Object:              "model",
+		Created:             time.Now().Unix(),
+		MaxCompletionTokens: 128000,
+		UserDefined:         true,
+	}})
+	defer reg.UnregisterClient(clientID)
+
+	input := []byte(`{"model":"test-claude-compaction-sufficient-model","max_tokens":128000,"messages":[{"role":"user","content":"<conversation_transcript>hi</conversation_transcript>"}]}`)
+	out := raiseMaxTokensForConversationCompaction(input, modelID)
+
+	if got := gjson.GetBytes(out, "max_tokens").Int(); got != 128000 {
+		t.Fatalf("max_tokens = %d, want unchanged %d", got, 128000)
+	}
+}
+
+func TestRaiseMaxTokensForConversationCompaction_SkipsUnregisteredModel(t *testing.T) {
+	input := []byte(`{"model":"test-claude-compaction-unregistered-model","max_tokens":8192,"messages":[{"role":"user","content":"<conversation_transcript>hi</conversation_transcript>"}]}`)
+	out := raiseMaxTokensForConversationCompaction(input, "test-claude-compaction-unregistered-model")
+
+	if got := gjson.GetBytes(out, "max_tokens").Int(); got != 8192 {
+		t.Fatalf("max_tokens = %d, want unchanged %d", got, 8192)
+	}
+}
+
+func TestRaiseMaxTokensForConversationCompaction_SkipsMissingMaxTokens(t *testing.T) {
+	reg := registry.GetGlobalRegistry()
+	clientID := "test-claude-compaction-missing-client"
+	modelID := "test-claude-compaction-missing-model"
+	reg.RegisterClient(clientID, "claude", []*registry.ModelInfo{{
+		ID:                  modelID,
+		Type:                "claude",
+		OwnedBy:             "anthropic",
+		Object:              "model",
+		Created:             time.Now().Unix(),
+		MaxCompletionTokens: 128000,
+		UserDefined:         true,
+	}})
+	defer reg.UnregisterClient(clientID)
+
+	input := []byte(`{"model":"test-claude-compaction-missing-model","messages":[{"role":"user","content":"<conversation_transcript>hi</conversation_transcript>"}]}`)
+	out := raiseMaxTokensForConversationCompaction(input, modelID)
+
+	if gjson.GetBytes(out, "max_tokens").Exists() {
+		t.Fatalf("max_tokens should remain unset, got %s", gjson.GetBytes(out, "max_tokens").Raw)
+	}
+}
+
 // TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding verifies that streaming
 // requests use Accept-Encoding: identity so the upstream cannot respond with a
 // compressed SSE body that would silently break the line scanner.
