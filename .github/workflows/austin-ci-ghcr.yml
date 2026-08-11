@@ -41,7 +41,25 @@ jobs:
         run: bash .github/scripts/refresh-model-catalogs.sh
 
       - name: Run unit tests
-        run: go test -p "$(nproc)" ./...
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -p "$(nproc)" ./... 2>&1 | tee "${RUNNER_TEMP}/go-test.log"
+
+      - name: Publish unit test failure details
+        if: failure()
+        shell: bash
+        run: |
+          if [[ ! -f "${RUNNER_TEMP}/go-test.log" ]]; then
+            exit 0
+          fi
+
+          test_output="$(tail -c 20000 "${RUNNER_TEMP}/go-test.log")"
+          test_output="${test_output//'%'/'%25'}"
+          test_output="${test_output//$'\r'/'%0D'}"
+          test_output="${test_output//$'\n'/'%0A'}"
+          echo "::error title=Go unit tests failed::${test_output}"
+          exit 1
 
       - name: Run Claude prompt-cache race tests
         env:
