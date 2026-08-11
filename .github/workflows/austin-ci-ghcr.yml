@@ -55,19 +55,23 @@ jobs:
             exit 0
           fi
 
-          failed_packages="$(jq -r 'select(.Action == "fail" and .Package != null and .Test == null) | .Package' "${test_log}" | sort -u)"
-          if [[ -n "${failed_packages}" ]]; then
+          failed_tests="$(jq -r 'select(.Action == "fail" and .Package != null and .Test != null) | [.Package, .Test] | @tsv' "${test_log}" | sort -u)"
+          if [[ -n "${failed_tests}" ]]; then
             test_output="$(
-              while IFS= read -r failed_package; do
-                printf '=== FAILED PACKAGE: %s ===\n' "${failed_package}"
-                jq -r --arg package "${failed_package}" 'select(.Package == $package and .Action == "output") | .Output' "${test_log}" | tail -n 80
-              done <<< "${failed_packages}"
+              while IFS=$'\t' read -r failed_package failed_test; do
+                printf '=== FAILED: %s / %s ===\n' "${failed_package}" "${failed_test}"
+                jq -r \
+                  --arg package "${failed_package}" \
+                  --arg test "${failed_test}" \
+                  'select(.Package == $package and .Test == $test and .Action == "output") | .Output' \
+                  "${test_log}" | tail -n 40
+              done <<< "${failed_tests}"
             )"
           else
             test_output="$(tail -n 80 "${test_log}")"
           fi
 
-          test_output="$(printf '%s' "${test_output}" | tail -c 3500)"
+          test_output="$(printf '%s' "${test_output}" | head -c 3500)"
           test_output="${test_output//'%'/'%25'}"
           test_output="${test_output//$'\r'/'%0D'}"
           test_output="${test_output//$'\n'/'%0A'}"
