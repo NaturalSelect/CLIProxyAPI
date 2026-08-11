@@ -44,17 +44,30 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -p "$(nproc)" ./... 2>&1 | tee "${RUNNER_TEMP}/go-test.log"
+          go test -json -p "$(nproc)" ./... 2>&1 | tee "${RUNNER_TEMP}/go-test.json"
 
       - name: Publish unit test failure details
         if: failure()
         shell: bash
         run: |
-          if [[ ! -f "${RUNNER_TEMP}/go-test.log" ]]; then
+          test_log="${RUNNER_TEMP}/go-test.json"
+          if [[ ! -f "${test_log}" ]]; then
             exit 0
           fi
 
-          test_output="$(tail -c 20000 "${RUNNER_TEMP}/go-test.log")"
+          failed_packages="$(jq -r 'select(.Action == "fail" and .Package != null and .Test == null) | .Package' "${test_log}" | sort -u)"
+          if [[ -n "${failed_packages}" ]]; then
+            test_output="$(
+              while IFS= read -r failed_package; do
+                printf '=== FAILED PACKAGE: %s ===\n' "${failed_package}"
+                jq -r --arg package "${failed_package}" 'select(.Package == $package and .Action == "output") | .Output' "${test_log}" | tail -n 80
+              done <<< "${failed_packages}"
+            )"
+          else
+            test_output="$(tail -n 80 "${test_log}")"
+          fi
+
+          test_output="$(printf '%s' "${test_output}" | tail -c 3500)"
           test_output="${test_output//'%'/'%25'}"
           test_output="${test_output//$'\r'/'%0D'}"
           test_output="${test_output//$'\n'/'%0A'}"
