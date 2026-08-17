@@ -466,7 +466,8 @@ type CodexKey struct {
 	BaseURL string `yaml:"base-url" json:"base-url"`
 
 	// Websockets enables the Responses API websocket transport for this credential.
-	Websockets bool `yaml:"websockets,omitempty" json:"websockets,omitempty"`
+	// An omitted value enables the transport; set it to false to force HTTP/SSE.
+	Websockets *bool `yaml:"websockets,omitempty" json:"websockets,omitempty"`
 
 	// AlphaSearch allows this Codex API key to serve the Alpha Search endpoint.
 	AlphaSearch bool `yaml:"alpha-search,omitempty" json:"alpha-search,omitempty"`

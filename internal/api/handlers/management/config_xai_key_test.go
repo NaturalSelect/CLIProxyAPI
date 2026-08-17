@@ -10,13 +10,15 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
+func boolPtr(value bool) *bool { return &value }
+
 func TestPatchXAIKeyUpdatesExecutionFields(t *testing.T) {
 	h := &Handler{
 		cfg: &config.Config{XAIKey: []config.XAIKey{{
 			APIKey:         "xai-key",
 			Priority:       1,
 			BaseURL:        "https://api.x.ai/v1",
-			Websockets:     true,
+			Websockets:     boolPtr(true),
 			DisableCooling: false,
 		}}},
 		configFilePath: writeTestConfigFile(t),
@@ -43,8 +45,8 @@ func TestPatchXAIKeyUpdatesExecutionFields(t *testing.T) {
 	if entry.Priority != 7 {
 		t.Fatalf("priority = %d, want 7", entry.Priority)
 	}
-	if entry.Websockets {
-		t.Fatal("websockets = true, want false")
+	if entry.Websockets == nil || *entry.Websockets {
+		t.Fatalf("websockets = %v, want false", entry.Websockets)
 	}
 	if !entry.DisableCooling {
 		t.Fatal("disable-cooling = false, want true")

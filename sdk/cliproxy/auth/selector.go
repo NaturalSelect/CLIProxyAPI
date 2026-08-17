@@ -192,36 +192,48 @@ func canonicalModelKey(model string) string {
 	return modelName
 }
 
+// WebsocketsCapability reports the credential's declared websocket transport preference.
+// The second return value is false when neither attributes nor metadata declare a usable
+// value, letting callers apply their own default.
+func WebsocketsCapability(attributes map[string]string, metadata map[string]any) (bool, bool) {
+	if len(attributes) > 0 {
+		if raw := strings.TrimSpace(attributes["websockets"]); raw != "" {
+			parsed, errParse := strconv.ParseBool(raw)
+			if errParse == nil {
+				return parsed, true
+			}
+		}
+	}
+	if len(metadata) == 0 {
+		return false, false
+	}
+	raw, ok := metadata["websockets"]
+	if !ok || raw == nil {
+		return false, false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v, true
+	case string:
+		parsed, errParse := strconv.ParseBool(strings.TrimSpace(v))
+		if errParse == nil {
+			return parsed, true
+		}
+	default:
+	}
+	return false, false
+}
+
+// authWebsocketsEnabled reports whether the credential may use the upstream websocket
+// transport. Credentials that do not declare the capability default to enabled.
 func authWebsocketsEnabled(auth *Auth) bool {
 	if auth == nil {
 		return false
 	}
-	if len(auth.Attributes) > 0 {
-		if raw := strings.TrimSpace(auth.Attributes["websockets"]); raw != "" {
-			parsed, errParse := strconv.ParseBool(raw)
-			if errParse == nil {
-				return parsed
-			}
-		}
+	if enabled, ok := WebsocketsCapability(auth.Attributes, auth.Metadata); ok {
+		return enabled
 	}
-	if len(auth.Metadata) == 0 {
-		return false
-	}
-	raw, ok := auth.Metadata["websockets"]
-	if !ok || raw == nil {
-		return false
-	}
-	switch v := raw.(type) {
-	case bool:
-		return v
-	case string:
-		parsed, errParse := strconv.ParseBool(strings.TrimSpace(v))
-		if errParse == nil {
-			return parsed
-		}
-	default:
-	}
-	return false
+	return true
 }
 
 func preferCodexWebsocketAuths(ctx context.Context, provider string, available []*Auth) []*Auth {

@@ -10,6 +10,8 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
+func boolPtr(value bool) *bool { return &value }
+
 func TestNewConfigSynthesizer(t *testing.T) {
 	synth := NewConfigSynthesizer()
 	if synth == nil {
@@ -310,7 +312,7 @@ func TestConfigSynthesizer_CodexKeys(t *testing.T) {
 					Prefix:         "dev",
 					BaseURL:        "https://api.openai.com",
 					ProxyURL:       "http://proxy.local",
-					Websockets:     true,
+					Websockets:     boolPtr(true),
 					AlphaSearch:    true,
 					DisableCooling: true,
 				},
@@ -357,7 +359,7 @@ func TestConfigSynthesizer_XAIKeys(t *testing.T) {
 				Prefix:         "grok",
 				BaseURL:        "https://api.x.ai/v1",
 				ProxyURL:       "http://proxy.local",
-				Websockets:     true,
+				Websockets:     boolPtr(true),
 				AlphaSearch:    true,
 				DisableCooling: true,
 				Headers:        map[string]string{"X-Custom": "value"},

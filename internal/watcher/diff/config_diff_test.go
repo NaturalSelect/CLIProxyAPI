@@ -8,6 +8,8 @@ import (
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
+func boolPtr(value bool) *bool { return &value }
+
 func TestBuildConfigChangeDetails(t *testing.T) {
 	oldCfg := &config.Config{
 		Port:    8080,
@@ -243,7 +245,7 @@ func TestBuildConfigChangeDetails_XAIKeys(t *testing.T) {
 		Prefix:         "old",
 		BaseURL:        "https://old.example.com/v1",
 		ProxyURL:       "http://old-proxy",
-		Websockets:     false,
+		Websockets:     boolPtr(false),
 		DisableCooling: false,
 		Headers:        map[string]string{"X-Test": "old"},
 		Models:         []config.XAIModel{{Name: "grok-old", Alias: "grok"}},
@@ -255,7 +257,7 @@ func TestBuildConfigChangeDetails_XAIKeys(t *testing.T) {
 		Prefix:         "new",
 		BaseURL:        "https://new.example.com/v1",
 		ProxyURL:       "http://new-proxy",
-		Websockets:     true,
+		Websockets:     boolPtr(true),
 		DisableCooling: true,
 		Headers:        map[string]string{"X-Test": "new"},
 		Models:         []config.XAIModel{{Name: "grok-new", Alias: "grok"}},

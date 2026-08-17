@@ -506,7 +506,8 @@ func TestCodexAutoExecutorRequiredUpstreamWebsocketRejectsHTTPFallback(t *testin
 		ID:       "codex-http-only",
 		Provider: "codex",
 		Attributes: map[string]string{
-			"api_key": "sk-test",
+			"api_key":    "sk-test",
+			"websockets": "false",
 		},
 	}
 	ctx := cliproxyexecutor.WithRequiredUpstreamWebsocket(

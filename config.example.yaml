@@ -332,6 +332,7 @@ nonstream-keepalive-interval: 0
 #     prefix: "test" # optional: require calls like "test/gpt-5-codex" to target this credential
 #     disable-cooling: false # optional: per-auth override for auth/model cooldown scheduling
 #     base-url: "https://www.example.com" # use the custom codex API endpoint
+#     websockets: true # optional: use the Codex upstream websocket transport for downstream websocket requests; omit to enable, set false to force HTTP/SSE
 #     alpha-search: false # optional: allow this key to serve /v1/alpha/search via base-url + /alpha/search
 #     headers:
 #       X-Custom-Header: "custom-value"
@@ -358,7 +359,7 @@ nonstream-keepalive-interval: 0
 #     prefix: "xai" # optional: require calls like "xai/grok-4.5" to target this credential
 #     disable-cooling: false # optional: per-auth override for auth/model cooldown scheduling
 #     base-url: "https://api.x.ai/v1" # xAI-compatible Responses API endpoint
-#     websockets: true # optional: use the xAI upstream websocket transport for downstream websocket requests
+#     websockets: true # optional: use the xAI upstream websocket transport for downstream websocket requests; omit to enable, set false to force HTTP/SSE
 #     headers:
 #       X-Custom-Header: "custom-value"
 #     proxy-url: "socks5://proxy.example.com:1080" # optional: per-key proxy override

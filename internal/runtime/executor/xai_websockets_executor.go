@@ -1661,34 +1661,14 @@ func (e *XAIAutoExecutor) UpstreamDisconnectChan(sessionID string) <-chan error 
 	return e.wsExec.UpstreamDisconnectChan(sessionID)
 }
 
+// xaiWebsocketsEnabled reports whether the credential may use the upstream websocket
+// transport. Credentials that do not declare the capability default to enabled.
 func xaiWebsocketsEnabled(auth *cliproxyauth.Auth) bool {
 	if auth == nil {
 		return false
 	}
-	if len(auth.Attributes) > 0 {
-		if raw := strings.TrimSpace(auth.Attributes["websockets"]); raw != "" {
-			parsed, errParse := strconv.ParseBool(raw)
-			if errParse == nil {
-				return parsed
-			}
-		}
+	if enabled, ok := cliproxyauth.WebsocketsCapability(auth.Attributes, auth.Metadata); ok {
+		return enabled
 	}
-	if len(auth.Metadata) == 0 {
-		return false
-	}
-	raw, ok := auth.Metadata["websockets"]
-	if !ok || raw == nil {
-		return false
-	}
-	switch v := raw.(type) {
-	case bool:
-		return v
-	case string:
-		parsed, errParse := strconv.ParseBool(strings.TrimSpace(v))
-		if errParse == nil {
-			return parsed
-		}
-	default:
-	}
-	return false
+	return true
 }

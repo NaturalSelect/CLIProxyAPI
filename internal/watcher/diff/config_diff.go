@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -295,8 +296,8 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 			if strings.TrimSpace(o.Prefix) != strings.TrimSpace(n.Prefix) {
 				changes = append(changes, fmt.Sprintf("codex[%d].prefix: %s -> %s", i, strings.TrimSpace(o.Prefix), strings.TrimSpace(n.Prefix)))
 			}
-			if o.Websockets != n.Websockets {
-				changes = append(changes, fmt.Sprintf("codex[%d].websockets: %t -> %t", i, o.Websockets, n.Websockets))
+			if formatOptionalBool(o.Websockets) != formatOptionalBool(n.Websockets) {
+				changes = append(changes, fmt.Sprintf("codex[%d].websockets: %s -> %s", i, formatOptionalBool(o.Websockets), formatOptionalBool(n.Websockets)))
 			}
 			if o.AlphaSearch != n.AlphaSearch {
 				changes = append(changes, fmt.Sprintf("codex[%d].alpha-search: %t -> %t", i, o.AlphaSearch, n.AlphaSearch))
@@ -339,8 +340,8 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 			if o.Priority != n.Priority {
 				changes = append(changes, fmt.Sprintf("xai[%d].priority: %d -> %d", i, o.Priority, n.Priority))
 			}
-			if o.Websockets != n.Websockets {
-				changes = append(changes, fmt.Sprintf("xai[%d].websockets: %t -> %t", i, o.Websockets, n.Websockets))
+			if formatOptionalBool(o.Websockets) != formatOptionalBool(n.Websockets) {
+				changes = append(changes, fmt.Sprintf("xai[%d].websockets: %s -> %s", i, formatOptionalBool(o.Websockets), formatOptionalBool(n.Websockets)))
 			}
 			if o.DisableCooling != n.DisableCooling {
 				changes = append(changes, fmt.Sprintf("xai[%d].disable-cooling: %t -> %t", i, o.DisableCooling, n.DisableCooling))
@@ -492,6 +493,13 @@ func displayOptionalValue(raw string) string {
 		return "<none>"
 	}
 	return trimmed
+}
+
+func formatOptionalBool(value *bool) string {
+	if value == nil {
+		return "<unset>"
+	}
+	return strconv.FormatBool(*value)
 }
 
 func formatProxyURL(raw string) string {

@@ -3128,9 +3128,10 @@ func TestResponsesWebsocketRollsBackCanonicalTranscriptAfterNonRetryableError(t 
 	manager := coreauth.NewManager(nil, nil, nil)
 	manager.RegisterExecutor(executor)
 	auth := &coreauth.Auth{
-		ID:       "auth-xai-rollback",
-		Provider: "xai",
-		Status:   coreauth.StatusActive,
+		ID:         "auth-xai-rollback",
+		Provider:   "xai",
+		Status:     coreauth.StatusActive,
+		Attributes: map[string]string{"websockets": "false"},
 	}
 	if _, err := manager.Register(context.Background(), auth); err != nil {
 		t.Fatalf("Register auth: %v", err)
@@ -3223,12 +3224,10 @@ func TestResponsesWebsocketSwitchesPinnedAuthAcrossProviders(t *testing.T) {
 			codexExecutor := &websocketDirectCaptureExecutor{provider: "codex"}
 
 			xaiAuth := &coreauth.Auth{
-				ID:       "auth-" + xaiModel,
-				Provider: "xai",
-				Status:   coreauth.StatusActive,
-			}
-			if testCase.xaiWebsockets {
-				xaiAuth.Attributes = map[string]string{"websockets": "true"}
+				ID:         "auth-" + xaiModel,
+				Provider:   "xai",
+				Status:     coreauth.StatusActive,
+				Attributes: map[string]string{"websockets": strconv.FormatBool(testCase.xaiWebsockets)},
 			}
 			codexAuth := &coreauth.Auth{
 				ID:         "auth-" + codexModel,
@@ -3943,7 +3942,12 @@ func TestResponsesWebsocketUsesNativeIncrementalAfterPinningWebsocketAuthFromMix
 	executor := &websocketDirectCaptureExecutor{provider: "xai"}
 	manager := coreauth.NewManager(nil, selector, nil)
 	manager.RegisterExecutor(executor)
-	authHTTP := &coreauth.Auth{ID: "auth-http", Provider: "xai", Status: coreauth.StatusActive}
+	authHTTP := &coreauth.Auth{
+		ID:         "auth-http",
+		Provider:   "xai",
+		Status:     coreauth.StatusActive,
+		Attributes: map[string]string{"websockets": "false"},
+	}
 	if _, err := manager.Register(context.Background(), authHTTP); err != nil {
 		t.Fatalf("Register HTTP auth: %v", err)
 	}

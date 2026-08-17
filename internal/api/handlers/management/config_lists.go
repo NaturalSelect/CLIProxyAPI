@@ -1476,7 +1476,7 @@ func (h *Handler) PatchXAIKey(c *gin.Context) {
 		entry.BaseURL = trimmed
 	}
 	if body.Value.Websockets != nil {
-		entry.Websockets = *body.Value.Websockets
+		entry.Websockets = body.Value.Websockets
 	}
 	if body.Value.ProxyURL != nil {
 		entry.ProxyURL = strings.TrimSpace(*body.Value.ProxyURL)

@@ -40,7 +40,8 @@ func TestXAIAutoExecutorRequiredUpstreamWebsocketRejectsHTTPFallback(t *testing.
 		ID:       "xai-http-only",
 		Provider: "xai",
 		Attributes: map[string]string{
-			"api_key": "xai-key",
+			"api_key":    "xai-key",
+			"websockets": "false",
 		},
 	}
 	ctx := cliproxyexecutor.WithRequiredUpstreamWebsocket(
