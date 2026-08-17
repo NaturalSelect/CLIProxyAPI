@@ -533,6 +533,47 @@ func TestCodexAutoExecutorRequiredUpstreamWebsocketRejectsHTTPFallback(t *testin
 	}
 }
 
+const codexWebsocketTransportTestTimeout = 5 * time.Second
+
+func preferredCodexWebsocketTestContext(t *testing.T) context.Context {
+	t.Helper()
+	requestContext, cancelRequest := context.WithTimeout(context.Background(), codexWebsocketTransportTestTimeout)
+	t.Cleanup(cancelRequest)
+	return cliproxyexecutor.WithPreferUpstreamWebsocket(requestContext)
+}
+
+func setCodexWebsocketTestReadDeadline(t *testing.T, connection *websocket.Conn) {
+	t.Helper()
+	if errSetDeadline := connection.SetReadDeadline(time.Now().Add(codexWebsocketTransportTestTimeout)); errSetDeadline != nil {
+		t.Fatalf("set websocket test read deadline: %v", errSetDeadline)
+	}
+}
+
+func collectCodexWebsocketTestStream(t *testing.T, result *cliproxyexecutor.StreamResult) []byte {
+	t.Helper()
+	if result == nil || result.Chunks == nil {
+		t.Fatal("stream result or chunk channel is nil")
+	}
+
+	timeout := time.NewTimer(codexWebsocketTransportTestTimeout)
+	defer timeout.Stop()
+	var streamedPayload []byte
+	for {
+		select {
+		case chunk, ok := <-result.Chunks:
+			if !ok {
+				return streamedPayload
+			}
+			if chunk.Err != nil {
+				t.Fatalf("stream chunk error = %v", chunk.Err)
+			}
+			streamedPayload = append(streamedPayload, chunk.Payload...)
+		case <-timeout.C:
+			t.Fatal("timed out waiting for Codex websocket test stream to close")
+		}
+	}
+}
+
 func TestCodexAutoExecutorUsesWebsocketForPreferredHTTPNonStream(t *testing.T) {
 	var websocketAttempts atomic.Int32
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
@@ -549,6 +590,7 @@ func TestCodexAutoExecutorUsesWebsocketForPreferredHTTPNonStream(t *testing.T) {
 			return
 		}
 		defer func() { _ = connection.Close() }()
+		setCodexWebsocketTestReadDeadline(t, connection)
 
 		if _, _, errRead := connection.ReadMessage(); errRead != nil {
 			t.Errorf("read websocket request: %v", errRead)
@@ -578,7 +620,7 @@ func TestCodexAutoExecutorUsesWebsocketForPreferredHTTPNonStream(t *testing.T) {
 		SourceFormat:   sdktranslator.FromString("openai-response"),
 		ResponseFormat: sdktranslator.FromString("openai-response"),
 	}
-	ctx := cliproxyexecutor.WithPreferUpstreamWebsocket(context.Background())
+	ctx := preferredCodexWebsocketTestContext(t)
 
 	response, errExecute := exec.Execute(ctx, auth, request, options)
 	if errExecute != nil {
@@ -608,6 +650,7 @@ func TestCodexAutoExecutorUsesWebsocketForPreferredHTTPStream(t *testing.T) {
 			return
 		}
 		defer func() { _ = connection.Close() }()
+		setCodexWebsocketTestReadDeadline(t, connection)
 
 		if _, _, errRead := connection.ReadMessage(); errRead != nil {
 			t.Errorf("read websocket request: %v", errRead)
@@ -642,19 +685,13 @@ func TestCodexAutoExecutorUsesWebsocketForPreferredHTTPStream(t *testing.T) {
 		SourceFormat:   sdktranslator.FromString("openai-response"),
 		ResponseFormat: sdktranslator.FromString("openai-response"),
 	}
-	ctx := cliproxyexecutor.WithPreferUpstreamWebsocket(context.Background())
+	ctx := preferredCodexWebsocketTestContext(t)
 
 	result, errExecute := exec.ExecuteStream(ctx, auth, request, options)
 	if errExecute != nil {
 		t.Fatalf("ExecuteStream() error = %v", errExecute)
 	}
-	var streamedPayload []byte
-	for chunk := range result.Chunks {
-		if chunk.Err != nil {
-			t.Fatalf("stream chunk error = %v", chunk.Err)
-		}
-		streamedPayload = append(streamedPayload, chunk.Payload...)
-	}
+	streamedPayload := collectCodexWebsocketTestStream(t, result)
 	if websocketAttempts.Load() != 1 {
 		t.Fatalf("websocket attempts = %d, want 1", websocketAttempts.Load())
 	}
@@ -691,7 +728,7 @@ func TestCodexAutoExecutorExplicitWebsocketFalseKeepsPreferredHTTPStreamOnHTTP(t
 			"websockets": "false",
 		},
 	}
-	ctx := cliproxyexecutor.WithPreferUpstreamWebsocket(context.Background())
+	ctx := preferredCodexWebsocketTestContext(t)
 	result, errExecute := exec.ExecuteStream(ctx, auth, cliproxyexecutor.Request{
 		Model:   "gpt-5.4",
 		Payload: []byte(`{"model":"gpt-5.4","stream":true,"input":"hello"}`),
@@ -702,11 +739,7 @@ func TestCodexAutoExecutorExplicitWebsocketFalseKeepsPreferredHTTPStreamOnHTTP(t
 	if errExecute != nil {
 		t.Fatalf("ExecuteStream() error = %v", errExecute)
 	}
-	for chunk := range result.Chunks {
-		if chunk.Err != nil {
-			t.Fatalf("stream chunk error = %v", chunk.Err)
-		}
-	}
+	_ = collectCodexWebsocketTestStream(t, result)
 	if websocketAttempts.Load() != 0 {
 		t.Fatalf("websocket attempts = %d, want 0", websocketAttempts.Load())
 	}
@@ -715,13 +748,13 @@ func TestCodexAutoExecutorExplicitWebsocketFalseKeepsPreferredHTTPStreamOnHTTP(t
 	}
 }
 
-func TestCodexPreferredWebsocketHandshakeFailureFallsBackToHTTPStream(t *testing.T) {
+func TestCodexPreferredWebsocketUpgradeRequiredFallsBackToHTTPStream(t *testing.T) {
 	var websocketAttempts atomic.Int32
 	var httpAttempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 		if strings.EqualFold(request.Header.Get("Upgrade"), "websocket") {
 			websocketAttempts.Add(1)
-			responseWriter.WriteHeader(http.StatusUnauthorized)
+			responseWriter.WriteHeader(http.StatusUpgradeRequired)
 			_, _ = responseWriter.Write([]byte(`{"error":{"message":"websocket unavailable"}}`))
 			return
 		}
@@ -740,7 +773,7 @@ func TestCodexPreferredWebsocketHandshakeFailureFallsBackToHTTPStream(t *testing
 			"base_url": server.URL,
 		},
 	}
-	ctx := cliproxyexecutor.WithPreferUpstreamWebsocket(context.Background())
+	ctx := preferredCodexWebsocketTestContext(t)
 	result, errExecute := exec.ExecuteStream(ctx, auth, cliproxyexecutor.Request{
 		Model:   "gpt-5.4",
 		Payload: []byte(`{"model":"gpt-5.4","stream":true,"input":"hello"}`),
@@ -751,13 +784,7 @@ func TestCodexPreferredWebsocketHandshakeFailureFallsBackToHTTPStream(t *testing
 	if errExecute != nil {
 		t.Fatalf("ExecuteStream() error = %v", errExecute)
 	}
-	var streamedPayload []byte
-	for chunk := range result.Chunks {
-		if chunk.Err != nil {
-			t.Fatalf("stream chunk error = %v", chunk.Err)
-		}
-		streamedPayload = append(streamedPayload, chunk.Payload...)
-	}
+	streamedPayload := collectCodexWebsocketTestStream(t, result)
 	if websocketAttempts.Load() != 1 {
 		t.Fatalf("websocket attempts = %d, want 1", websocketAttempts.Load())
 	}
@@ -766,6 +793,164 @@ func TestCodexPreferredWebsocketHandshakeFailureFallsBackToHTTPStream(t *testing
 	}
 	if !bytes.Contains(streamedPayload, []byte("resp-http-fallback")) {
 		t.Fatalf("fallback stream payload = %s, want HTTP completion", streamedPayload)
+	}
+}
+
+func TestCodexAutoExecutorExplicitWebsocketFalseKeepsPreferredHTTPNonStreamOnHTTP(t *testing.T) {
+	var websocketAttempts atomic.Int32
+	var httpAttempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		if strings.EqualFold(request.Header.Get("Upgrade"), "websocket") {
+			websocketAttempts.Add(1)
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		httpAttempts.Add(1)
+		responseWriter.Header().Set("Content-Type", "text/event-stream")
+		_, _ = responseWriter.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-http-only-nonstream\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"))
+	}))
+	defer server.Close()
+
+	exec := NewCodexAutoExecutor(&config.Config{SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll}})
+	auth := &cliproxyauth.Auth{
+		ID:       "codex-http-only-nonstream",
+		Provider: "codex",
+		Attributes: map[string]string{
+			"api_key":    "sk-test",
+			"base_url":   server.URL,
+			"websockets": "false",
+		},
+	}
+	response, errExecute := exec.Execute(preferredCodexWebsocketTestContext(t), auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.4",
+		Payload: []byte(`{"model":"gpt-5.4","input":"hello"}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FromString("openai-response"),
+		ResponseFormat: sdktranslator.FromString("openai-response"),
+	})
+	if errExecute != nil {
+		t.Fatalf("Execute() error = %v", errExecute)
+	}
+	if websocketAttempts.Load() != 0 {
+		t.Fatalf("websocket attempts = %d, want 0", websocketAttempts.Load())
+	}
+	if httpAttempts.Load() != 1 {
+		t.Fatalf("HTTP attempts = %d, want 1", httpAttempts.Load())
+	}
+	if len(response.Payload) == 0 {
+		t.Fatal("HTTP-only Execute() returned an empty response payload")
+	}
+}
+
+func TestCodexPreferredWebsocketUpgradeRequiredFallsBackToHTTPNonStream(t *testing.T) {
+	var websocketAttempts atomic.Int32
+	var httpAttempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		if strings.EqualFold(request.Header.Get("Upgrade"), "websocket") {
+			websocketAttempts.Add(1)
+			responseWriter.WriteHeader(http.StatusUpgradeRequired)
+			_, _ = responseWriter.Write([]byte(`{"error":{"message":"websocket unavailable"}}`))
+			return
+		}
+		httpAttempts.Add(1)
+		responseWriter.Header().Set("Content-Type", "text/event-stream")
+		_, _ = responseWriter.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-http-fallback-nonstream\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"))
+	}))
+	defer server.Close()
+
+	exec := NewCodexAutoExecutor(&config.Config{SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll}})
+	auth := &cliproxyauth.Auth{
+		ID:       "codex-preferred-fallback-nonstream",
+		Provider: "codex",
+		Attributes: map[string]string{
+			"api_key":  "sk-test",
+			"base_url": server.URL,
+		},
+	}
+	response, errExecute := exec.Execute(preferredCodexWebsocketTestContext(t), auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.4",
+		Payload: []byte(`{"model":"gpt-5.4","input":"hello"}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FromString("openai-response"),
+		ResponseFormat: sdktranslator.FromString("openai-response"),
+	})
+	if errExecute != nil {
+		t.Fatalf("Execute() error = %v", errExecute)
+	}
+	if websocketAttempts.Load() != 1 {
+		t.Fatalf("websocket attempts = %d, want 1", websocketAttempts.Load())
+	}
+	if httpAttempts.Load() != 1 {
+		t.Fatalf("HTTP attempts = %d, want 1", httpAttempts.Load())
+	}
+	if len(response.Payload) == 0 {
+		t.Fatal("fallback Execute() returned an empty response payload")
+	}
+}
+
+func TestCodexPreferredWebsocketUnauthorizedDoesNotFallbackToHTTP(t *testing.T) {
+	tests := []struct {
+		name      string
+		streaming bool
+	}{
+		{name: "non-stream", streaming: false},
+		{name: "stream", streaming: true},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			var websocketAttempts atomic.Int32
+			var httpAttempts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+				if strings.EqualFold(request.Header.Get("Upgrade"), "websocket") {
+					websocketAttempts.Add(1)
+					responseWriter.WriteHeader(http.StatusUnauthorized)
+					_, _ = responseWriter.Write([]byte(`{"error":{"message":"invalid websocket credentials"}}`))
+					return
+				}
+				httpAttempts.Add(1)
+				responseWriter.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+
+			exec := NewCodexAutoExecutor(&config.Config{SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll}})
+			auth := &cliproxyauth.Auth{
+				ID:       "codex-unauthorized-" + testCase.name,
+				Provider: "codex",
+				Attributes: map[string]string{
+					"api_key":  "sk-test",
+					"base_url": server.URL,
+				},
+			}
+			request := cliproxyexecutor.Request{
+				Model:   "gpt-5.4",
+				Payload: []byte(`{"model":"gpt-5.4","stream":true,"input":"hello"}`),
+			}
+			options := cliproxyexecutor.Options{
+				SourceFormat:   sdktranslator.FromString("openai-response"),
+				ResponseFormat: sdktranslator.FromString("openai-response"),
+			}
+
+			var errExecute error
+			if testCase.streaming {
+				_, errExecute = exec.ExecuteStream(preferredCodexWebsocketTestContext(t), auth, request, options)
+			} else {
+				_, errExecute = exec.Execute(preferredCodexWebsocketTestContext(t), auth, request, options)
+			}
+			if errExecute == nil {
+				t.Fatal("websocket authentication error = nil, want status 401")
+			}
+			statusError, okStatus := errExecute.(interface{ StatusCode() int })
+			if !okStatus || statusError.StatusCode() != http.StatusUnauthorized {
+				t.Fatalf("websocket authentication error = %T %v, want status 401", errExecute, errExecute)
+			}
+			if websocketAttempts.Load() != 1 {
+				t.Fatalf("websocket attempts = %d, want 1", websocketAttempts.Load())
+			}
+			if httpAttempts.Load() != 0 {
+				t.Fatalf("HTTP attempts = %d, want 0", httpAttempts.Load())
+			}
+		})
 	}
 }
 

@@ -130,9 +130,3 @@ func shouldUseCodexWebsockets(ctx context.Context, auth *cliproxyauth.Auth) bool
 	requestSupportsWebsockets := cliproxyexecutor.DownstreamWebsocket(ctx) || cliproxyexecutor.PreferUpstreamWebsocket(ctx)
 	return requestSupportsWebsockets && codexWebsocketsEnabled(auth)
 }
-
-func shouldFallbackPreferredCodexWebsocketToHTTP(ctx context.Context) bool {
-	return cliproxyexecutor.PreferUpstreamWebsocket(ctx) &&
-		!cliproxyexecutor.DownstreamWebsocket(ctx) &&
-		!cliproxyexecutor.RequiredUpstreamWebsocket(ctx)
-}
