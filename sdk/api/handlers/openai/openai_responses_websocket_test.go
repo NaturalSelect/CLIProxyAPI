@@ -2970,9 +2970,10 @@ func TestResponsesWebsocketClosesForHTTPReplayWhenWebsocketEligibilityChanges(t 
 	}
 
 	updatedAuth := &coreauth.Auth{
-		ID:       auth.ID,
-		Provider: auth.Provider,
-		Status:   coreauth.StatusActive,
+		ID:         auth.ID,
+		Provider:   auth.Provider,
+		Status:     coreauth.StatusActive,
+		Attributes: map[string]string{"websockets": "false"},
 	}
 	if _, errUpdate := manager.Update(context.Background(), updatedAuth); errUpdate != nil {
 		t.Fatalf("Update auth: %v", errUpdate)
@@ -3760,7 +3761,12 @@ func TestResponsesWebsocketStripsGenerateWhenWebsocketAttemptFallsBackToHTTP(t *
 	if _, err := manager.Register(context.Background(), authWS); err != nil {
 		t.Fatalf("Register websocket auth: %v", err)
 	}
-	authHTTP := &coreauth.Auth{ID: "auth-http", Provider: executor.Identifier(), Status: coreauth.StatusActive}
+	authHTTP := &coreauth.Auth{
+		ID:         "auth-http",
+		Provider:   executor.Identifier(),
+		Status:     coreauth.StatusActive,
+		Attributes: map[string]string{"websockets": "false"},
+	}
 	if _, err := manager.Register(context.Background(), authHTTP); err != nil {
 		t.Fatalf("Register HTTP auth: %v", err)
 	}
