@@ -19,9 +19,11 @@ import (
 )
 
 type compactCaptureExecutor struct {
-	alt          string
-	sourceFormat string
-	calls        int
+	alt                     string
+	sourceFormat            string
+	calls                   int
+	streamCalls             int
+	preferUpstreamWebsocket bool
 }
 
 func (e *compactCaptureExecutor) Identifier() string { return "test-provider" }
@@ -30,11 +32,17 @@ func (e *compactCaptureExecutor) Execute(ctx context.Context, auth *coreauth.Aut
 	e.calls++
 	e.alt = opts.Alt
 	e.sourceFormat = opts.SourceFormat.String()
+	e.preferUpstreamWebsocket = coreexecutor.PreferUpstreamWebsocket(ctx)
 	return coreexecutor.Response{Payload: []byte(`{"ok":true}`)}, nil
 }
 
-func (e *compactCaptureExecutor) ExecuteStream(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (*coreexecutor.StreamResult, error) {
-	return nil, errors.New("not implemented")
+func (e *compactCaptureExecutor) ExecuteStream(ctx context.Context, _ *coreauth.Auth, _ coreexecutor.Request, _ coreexecutor.Options) (*coreexecutor.StreamResult, error) {
+	e.streamCalls++
+	e.preferUpstreamWebsocket = coreexecutor.PreferUpstreamWebsocket(ctx)
+	chunks := make(chan coreexecutor.StreamChunk, 1)
+	chunks <- coreexecutor.StreamChunk{Payload: []byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-test\",\"output\":[]}}\n\n")}
+	close(chunks)
+	return &coreexecutor.StreamResult{Chunks: chunks}, nil
 }
 
 func (e *compactCaptureExecutor) Refresh(ctx context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
@@ -115,6 +123,9 @@ func TestOpenAIResponsesCompactExecute(t *testing.T) {
 	}
 	if executor.sourceFormat != "openai-response" {
 		t.Fatalf("source format = %q, want %q", executor.sourceFormat, "openai-response")
+	}
+	if executor.preferUpstreamWebsocket {
+		t.Fatal("compact request unexpectedly preferred an upstream websocket")
 	}
 	if strings.TrimSpace(resp.Body.String()) != `{"ok":true}` {
 		t.Fatalf("body = %s", resp.Body.String())

@@ -240,7 +240,8 @@ func preferCodexWebsocketAuths(ctx context.Context, provider string, available [
 	if len(available) == 0 {
 		return available
 	}
-	if !cliproxyexecutor.DownstreamWebsocket(ctx) {
+	requestPrefersWebsockets := cliproxyexecutor.DownstreamWebsocket(ctx) || cliproxyexecutor.PreferUpstreamWebsocket(ctx)
+	if !requestPrefersWebsockets {
 		return available
 	}
 	if !strings.EqualFold(strings.TrimSpace(provider), "codex") {

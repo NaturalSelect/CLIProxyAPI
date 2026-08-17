@@ -332,7 +332,7 @@ nonstream-keepalive-interval: 0
 #     prefix: "test" # optional: require calls like "test/gpt-5-codex" to target this credential
 #     disable-cooling: false # optional: per-auth override for auth/model cooldown scheduling
 #     base-url: "https://www.example.com" # use the custom codex API endpoint
-#     websockets: true # optional: use the Codex upstream websocket transport for downstream websocket requests; omit to enable, set false to force HTTP/SSE
+#     websockets: true # optional: prefer the Codex upstream websocket transport for Responses requests; omit to enable, set false to force an HTTP upstream
 #     alpha-search: false # optional: allow this key to serve /v1/alpha/search via base-url + /alpha/search
 #     headers:
 #       X-Custom-Header: "custom-value"

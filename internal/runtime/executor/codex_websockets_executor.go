@@ -29,11 +29,9 @@ func NewCodexWebsocketsExecutor(cfg *config.Config) *CodexWebsocketsExecutor {
 	}
 }
 
-// CodexAutoExecutor routes Codex requests to the websocket transport only when:
-//  1. The downstream transport is websocket, and
-//  2. The selected auth enables websockets.
-//
-// For non-websocket downstream requests, it always uses the legacy HTTP implementation.
+// CodexAutoExecutor routes Codex requests to the websocket transport when the
+// request either originates from a downstream websocket or explicitly prefers
+// an upstream websocket, and the selected auth enables websockets.
 type CodexAutoExecutor struct {
 	httpExec *CodexExecutor
 	wsExec   *CodexWebsocketsExecutor
@@ -66,7 +64,7 @@ func (e *CodexAutoExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth
 	if e == nil || e.httpExec == nil || e.wsExec == nil {
 		return cliproxyexecutor.Response{}, fmt.Errorf("codex auto executor: executor is nil")
 	}
-	if cliproxyexecutor.DownstreamWebsocket(ctx) && codexWebsocketsEnabled(auth) {
+	if shouldUseCodexWebsockets(ctx, auth) {
 		return e.wsExec.Execute(ctx, auth, req, opts)
 	}
 	if cliproxyexecutor.RequiredUpstreamWebsocket(ctx) {
@@ -79,7 +77,7 @@ func (e *CodexAutoExecutor) ExecuteStream(ctx context.Context, auth *cliproxyaut
 	if e == nil || e.httpExec == nil || e.wsExec == nil {
 		return nil, fmt.Errorf("codex auto executor: executor is nil")
 	}
-	if cliproxyexecutor.DownstreamWebsocket(ctx) && codexWebsocketsEnabled(auth) {
+	if shouldUseCodexWebsockets(ctx, auth) {
 		return e.wsExec.ExecuteStream(ctx, auth, req, opts)
 	}
 	if cliproxyexecutor.RequiredUpstreamWebsocket(ctx) {
@@ -126,4 +124,15 @@ func codexWebsocketsEnabled(auth *cliproxyauth.Auth) bool {
 		return enabled
 	}
 	return true
+}
+
+func shouldUseCodexWebsockets(ctx context.Context, auth *cliproxyauth.Auth) bool {
+	requestSupportsWebsockets := cliproxyexecutor.DownstreamWebsocket(ctx) || cliproxyexecutor.PreferUpstreamWebsocket(ctx)
+	return requestSupportsWebsockets && codexWebsocketsEnabled(auth)
+}
+
+func shouldFallbackPreferredCodexWebsocketToHTTP(ctx context.Context) bool {
+	return cliproxyexecutor.PreferUpstreamWebsocket(ctx) &&
+		!cliproxyexecutor.DownstreamWebsocket(ctx) &&
+		!cliproxyexecutor.RequiredUpstreamWebsocket(ctx)
 }

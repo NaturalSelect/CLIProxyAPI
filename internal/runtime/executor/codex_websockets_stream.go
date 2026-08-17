@@ -144,31 +144,30 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 		if respHS != nil {
 			helps.RecordAPIWebsocketUpgradeRejection(ctx, e.cfg, websocketUpgradeRequestLog(wsReqLog), respHS.StatusCode, respHS.Header.Clone(), bodyErr)
 		}
-		if respHS != nil && respHS.StatusCode == http.StatusUpgradeRequired {
-			if sess != nil {
-				sess.reqMu.Unlock()
+		if shouldFallbackPreferredCodexWebsocketToHTTP(ctx) {
+			if respHS == nil {
+				helps.RecordAPIWebsocketError(ctx, e.cfg, "dial", errDial)
 			}
+			unlockStreamSession()
+			return e.CodexExecutor.ExecuteStream(ctx, auth, req, opts)
+		}
+		if respHS != nil && respHS.StatusCode == http.StatusUpgradeRequired {
+			unlockStreamSession()
 			if opts.ExecutionLifecycle != nil || cliproxyexecutor.DownstreamWebsocket(ctx) {
 				return nil, statusErr{code: respHS.StatusCode, msg: string(bodyErr)}
 			}
 			return e.CodexExecutor.ExecuteStream(ctx, auth, req, opts)
 		}
 		if respHS != nil && respHS.StatusCode > 0 {
-			if sess != nil {
-				sess.reqMu.Unlock()
-			}
+			unlockStreamSession()
 			return nil, statusErr{code: respHS.StatusCode, msg: string(bodyErr)}
 		}
 		helps.RecordAPIWebsocketError(ctx, e.cfg, "dial", errDial)
-		if sess != nil {
-			sess.reqMu.Unlock()
-		}
+		unlockStreamSession()
 		return nil, errDial
 	}
 	if errBind := sess.bindExecutionLifecycle(opts, conn, closer, req.Model); errBind != nil {
-		if sess != nil {
-			sess.reqMu.Unlock()
-		}
+		unlockStreamSession()
 		closeWebsocketAfterBindFailure(sess, conn, closer)
 		return nil, errBind
 	}

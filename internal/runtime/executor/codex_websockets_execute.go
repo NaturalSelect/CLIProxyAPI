@@ -146,6 +146,13 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		if respHS != nil {
 			helps.RecordAPIWebsocketUpgradeRejection(ctx, e.cfg, websocketUpgradeRequestLog(wsReqLog), respHS.StatusCode, respHS.Header.Clone(), bodyErr)
 		}
+		if shouldFallbackPreferredCodexWebsocketToHTTP(ctx) {
+			if respHS == nil {
+				helps.RecordAPIWebsocketError(ctx, e.cfg, "dial", errDial)
+			}
+			unlockSession()
+			return e.CodexExecutor.Execute(ctx, auth, req, opts)
+		}
 		if respHS != nil && respHS.StatusCode == http.StatusUpgradeRequired {
 			if opts.ExecutionLifecycle != nil || cliproxyexecutor.DownstreamWebsocket(ctx) {
 				return resp, statusErr{code: respHS.StatusCode, msg: string(bodyErr)}
