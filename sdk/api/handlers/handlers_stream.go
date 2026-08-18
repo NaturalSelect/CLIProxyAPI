@@ -236,6 +236,9 @@ func (h *BaseAPIHandler) executeStreamWithAuthManager(ctx context.Context, handl
 
 func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context, entryProtocol, exitProtocol, modelName string, rawJSON []byte, alt string, allowImageModel bool, execOptions modelExecutionOptions) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
 	originalRequestedModel := modelName
+	if errMsg := h.validateClientModelAccess(ctx, originalRequestedModel); errMsg != nil {
+		return clientModelAccessDeniedStream(errMsg)
+	}
 	routeDecision, preparedRoute := preparedModelRouteFromContext(ctx)
 	if !preparedRoute {
 		routeDecision = h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, true, execOptions)
@@ -256,6 +259,9 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		errChan <- errMsg
 		close(errChan)
 		return nil, nil, errChan
+	}
+	if errMsg := h.validateClientModelAccess(ctx, originalRequestedModel, normalizedModel); errMsg != nil {
+		return clientModelAccessDeniedStream(errMsg)
 	}
 	providers = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
 	reqMeta := requestExecutionMetadata(ctx)

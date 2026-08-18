@@ -275,6 +275,38 @@ func NormalizeExcludedModels(models []string) []string {
 	return out
 }
 
+// SanitizeAPIKeyModelRules normalizes client API key model rules: it trims each api-key,
+// normalizes excluded model patterns via NormalizeExcludedModels, drops entries that end up
+// empty, and merges multiple rules that target the same api-key.
+func (cfg *Config) SanitizeAPIKeyModelRules() {
+	if cfg == nil || len(cfg.APIKeyModelRules) == 0 {
+		return
+	}
+
+	ruleIndexes := make(map[string]int, len(cfg.APIKeyModelRules))
+	normalizedRules := make([]APIKeyModelRule, 0, len(cfg.APIKeyModelRules))
+	for _, rule := range cfg.APIKeyModelRules {
+		apiKey := strings.TrimSpace(rule.APIKey)
+		excludedModels := NormalizeExcludedModels(rule.ExcludedModels)
+		if apiKey == "" || len(excludedModels) == 0 {
+			continue
+		}
+
+		if ruleIndex, exists := ruleIndexes[apiKey]; exists {
+			mergedModels := append(normalizedRules[ruleIndex].ExcludedModels, excludedModels...)
+			normalizedRules[ruleIndex].ExcludedModels = NormalizeExcludedModels(mergedModels)
+			continue
+		}
+
+		ruleIndexes[apiKey] = len(normalizedRules)
+		normalizedRules = append(normalizedRules, APIKeyModelRule{
+			APIKey:         apiKey,
+			ExcludedModels: excludedModels,
+		})
+	}
+	cfg.APIKeyModelRules = normalizedRules
+}
+
 // NormalizeOAuthExcludedModels cleans provider -> excluded models mappings by normalizing provider keys
 // and applying model exclusion normalization to each entry.
 func NormalizeOAuthExcludedModels(entries map[string][]string) map[string][]string {

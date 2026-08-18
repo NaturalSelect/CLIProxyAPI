@@ -51,6 +51,11 @@ type SDKConfig struct {
 	// APIKeys is a list of keys for authenticating clients to this proxy server.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
 
+	// APIKeyModelRules defines model exclusions for individual client API keys.
+	// The api-key referenced here must also be present in APIKeys to authenticate requests;
+	// this list only restricts which models an already-authenticated key may request.
+	APIKeyModelRules []APIKeyModelRule `yaml:"api-key-model-rules,omitempty" json:"api-key-model-rules,omitempty"`
+
 	// PassthroughHeaders controls whether upstream response headers are forwarded to downstream clients.
 	// Default is false (disabled).
 	PassthroughHeaders bool `yaml:"passthrough-headers" json:"passthrough-headers"`
@@ -79,4 +84,17 @@ type StreamingConfig struct {
 	// to allow auth rotation / transient recovery.
 	// <= 0 disables bootstrap retries. Default is 0.
 	BootstrapRetries int `yaml:"bootstrap-retries,omitempty" json:"bootstrap-retries,omitempty"`
+}
+
+// APIKeyModelRule defines models that a specific client API key is not allowed to request.
+// It only restricts model access for a key that is already present in APIKeys; it does not
+// grant authentication on its own.
+type APIKeyModelRule struct {
+	// APIKey identifies the client credential exactly as configured in APIKeys.
+	APIKey string `yaml:"api-key" json:"api-key"`
+
+	// ExcludedModels lists case-insensitive model patterns this key cannot request.
+	// An asterisk ('*') matches any substring, matching the semantics of the
+	// existing per-provider excluded-models fields.
+	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
 }

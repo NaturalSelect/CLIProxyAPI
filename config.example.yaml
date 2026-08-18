@@ -41,6 +41,16 @@ api-keys:
   - "your-api-key-2"
   - "your-api-key-3"
 
+# Per-client model restrictions. Each api-key here must also exist in api-keys above;
+# this only restricts which models an already-authenticated key may request.
+# Model patterns are case-insensitive; '*' matches any substring, matching the semantics
+# of the existing per-provider excluded-models fields.
+# api-key-model-rules:
+#   - api-key: "your-api-key-1"
+#     excluded-models:
+#       - "gpt-5"
+#       - "claude-opus-*"
+
 # Enable debug logging
 debug: false
 
