@@ -743,7 +743,6 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 			if len(payload) == 0 {
 				continue
 			}
-			reporter.MarkFirstResponseByte()
 			helps.AppendAPIWebsocketResponse(ctx, e.cfg, payload)
 
 			if wsErr, ok := parseXAIWebsocketError(payload); ok {
@@ -764,6 +763,7 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 				if len(payload) == 0 {
 					continue
 				}
+				reporter.ObserveSemanticResponse(prepared.to, payload)
 				eventType := gjson.GetBytes(payload, "type").String()
 				isTerminalEvent := eventType == "response.completed" || eventType == "response.done" || eventType == "error"
 				warmupCompletedPayload := []byte(nil)
@@ -781,11 +781,13 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 					xaiCollectOutputItemDone(payload, outputItemsByIndex, &outputItemsFallback)
 				case "response.completed":
 					logXAIWebsocketTerminalResponse(executionSessionID, authID, wsURL, eventType, payload)
-					if detail, ok := helps.ParseCodexUsage(payload); ok {
-						reporter.Publish(ctx, detail)
-					}
+					detail, hasDetail := helps.ParseCodexUsage(payload)
 					payload = xaiPatchCompletedOutput(payload, outputItemsByIndex, outputItemsFallback)
 					payload = xaiNormalizeReasoningSummaryData(payload)
+					reporter.ObserveSemanticResponse(prepared.to, payload)
+					if hasDetail {
+						reporter.Publish(ctx, detail)
+					}
 					cacheXAIReasoningReplayFromCompleted(ctx, prepared.replayScope, payload)
 					if !warmupRequest && idMapper != nil && idMapper.state != nil && !recordedTranscript {
 						idMapper.state.recordTranscriptTurn(wsReqBody, payload, transcriptReset)
@@ -800,6 +802,9 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 						idMapper.state.recordTranscriptTurn(wsReqBody, payload, transcriptReset)
 						recordedTranscript = true
 					}
+				}
+				if eventType == "response.completed" || eventType == "response.done" {
+					reporter.EnsurePublished(ctx)
 				}
 
 				if cliproxyexecutor.DownstreamWebsocket(ctx) {
@@ -822,6 +827,7 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 							terminateErr = ctx.Err()
 							return
 						}
+						reporter.EnsurePublished(ctx)
 						return
 					}
 					if isTerminalEvent {
@@ -850,6 +856,7 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 							return
 						}
 					}
+					reporter.EnsurePublished(ctx)
 					return
 				}
 				if eventType == "response.completed" || eventType == "response.done" {

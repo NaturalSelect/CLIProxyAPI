@@ -177,12 +177,12 @@ func (e *AIStudioExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth,
 	helps.RecordAPIResponseMetadata(ctx, e.cfg, wsResp.Status, wsResp.Headers.Clone())
 	reporter.StartResponseTTFT()
 	if len(wsResp.Body) > 0 {
-		reporter.MarkFirstResponseByte()
 		helps.AppendAPIResponseChunk(ctx, e.cfg, wsResp.Body)
 	}
 	if wsResp.Status < 200 || wsResp.Status >= 300 {
 		return resp, statusErr{code: wsResp.Status, msg: string(wsResp.Body)}
 	}
+	reporter.ObserveSemanticResponse(body.toFormat, wsResp.Body)
 	reporter.Publish(ctx, helps.ParseGeminiUsage(wsResp.Body))
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 	var param any
@@ -256,7 +256,6 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		}
 		var body bytes.Buffer
 		if len(firstEvent.Payload) > 0 {
-			reporter.MarkFirstResponseByte()
 			helps.AppendAPIResponseChunk(ctx, e.cfg, firstEvent.Payload)
 			body.Write(firstEvent.Payload)
 		}
@@ -277,7 +276,6 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 				metadataLogged = true
 			}
 			if len(event.Payload) > 0 {
-				reporter.MarkFirstResponseByte()
 				helps.AppendAPIResponseChunk(ctx, e.cfg, event.Payload)
 				body.Write(event.Payload)
 			}
@@ -298,6 +296,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		claudeInputTokens := helps.NewClaudeInputTokenState(opts.SourceFormat, body.toFormat, responseFormat, originalRequest)
 		var param any
 		metadataLogged := false
+		var streamUsage helps.StreamUsageBuffer
 		processEvent := func(event wsrelay.StreamEvent) bool {
 			if event.Err != nil {
 				helps.RecordAPIResponseError(ctx, e.cfg, event.Err)
@@ -317,11 +316,11 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 				}
 			case wsrelay.MessageTypeStreamChunk:
 				if len(event.Payload) > 0 {
-					reporter.MarkFirstResponseByte()
 					helps.AppendAPIResponseChunk(ctx, e.cfg, event.Payload)
 					filtered := helps.FilterSSEUsageMetadata(event.Payload)
+					reporter.ObserveSemanticResponse(body.toFormat, filtered)
 					if detail, ok := helps.ParseGeminiStreamUsage(filtered); ok {
-						reporter.Publish(ctx, detail)
+						streamUsage.Observe(detail, true)
 					}
 					lines := helps.TranslateStreamWithClaudeInputTokens(ctx, body.toFormat, responseFormat, req.Model, opts.OriginalRequest, translatedReq, filtered, &param, claudeInputTokens)
 					for i := range lines {
@@ -334,6 +333,8 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 					break
 				}
 			case wsrelay.MessageTypeStreamEnd:
+				streamUsage.Publish(ctx, reporter)
+				reporter.EnsurePublished(ctx)
 				return false
 			case wsrelay.MessageTypeHTTPResp:
 				if !metadataLogged && event.Status > 0 {
@@ -342,9 +343,19 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 					metadataLogged = true
 				}
 				if len(event.Payload) > 0 {
-					reporter.MarkFirstResponseByte()
 					helps.AppendAPIResponseChunk(ctx, e.cfg, event.Payload)
 				}
+				if event.Status > 0 && (event.Status < http.StatusOK || event.Status >= http.StatusMultipleChoices) {
+					streamErr := statusErr{code: event.Status, msg: string(event.Payload)}
+					helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
+					reporter.PublishFailure(ctx, streamErr)
+					select {
+					case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
+					case <-ctx.Done():
+					}
+					return false
+				}
+				reporter.ObserveSemanticResponse(body.toFormat, event.Payload)
 				lines := helps.TranslateStreamWithClaudeInputTokens(ctx, body.toFormat, responseFormat, req.Model, opts.OriginalRequest, translatedReq, event.Payload, &param, claudeInputTokens)
 				for i := range lines {
 					select {
@@ -354,6 +365,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 					}
 				}
 				reporter.Publish(ctx, helps.ParseGeminiUsage(event.Payload))
+				reporter.EnsurePublished(ctx)
 				return false
 			case wsrelay.MessageTypeError:
 				helps.RecordAPIResponseError(ctx, e.cfg, event.Err)
@@ -373,6 +385,13 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 			if !processEvent(event) {
 				return
 			}
+		}
+		streamErr := io.ErrUnexpectedEOF
+		helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
+		reporter.PublishFailure(ctx, streamErr)
+		select {
+		case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
+		case <-ctx.Done():
 		}
 	}(firstEvent)
 	return &cliproxyexecutor.StreamResult{Headers: firstEvent.Headers.Clone(), Chunks: out}, nil

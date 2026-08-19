@@ -249,6 +249,7 @@ attemptLoop:
 				scanner.Buffer(nil, streamScannerBuffer)
 				claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 				var param any
+				var streamUsage helps.StreamUsageBuffer
 				for scanner.Scan() {
 					line := scanner.Bytes()
 					helps.AppendAPIResponseChunk(ctx, e.cfg, line)
@@ -265,11 +266,11 @@ attemptLoop:
 						continue
 					}
 
-					if detail, ok := helps.ParseAntigravityStreamUsage(payload); ok {
-						reporter.Publish(ctx, detail)
-					}
-
 					payload = e.resolveWebSearchGroundingURLs(ctx, auth, from, originalPayload, translated, payload)
+					reporter.ObserveSemanticResponse(to, payload)
+					if detail, ok := helps.ParseAntigravityStreamUsage(payload); ok {
+						streamUsage.Observe(detail, true)
+					}
 					chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, bytes.Clone(payload), &param, claudeInputTokens)
 					for i := range chunks {
 						select {
@@ -279,6 +280,15 @@ attemptLoop:
 						}
 					}
 				}
+				if errScan := scanner.Err(); errScan != nil {
+					helps.RecordAPIResponseError(ctx, e.cfg, errScan)
+					reporter.PublishFailure(ctx, errScan)
+					select {
+					case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
+					case <-ctx.Done():
+					}
+					return
+				}
 				tail := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("[DONE]"), &param, claudeInputTokens)
 				for i := range tail {
 					select {
@@ -287,19 +297,11 @@ attemptLoop:
 						return
 					}
 				}
-				if errScan := scanner.Err(); errScan != nil {
-					helps.RecordAPIResponseError(ctx, e.cfg, errScan)
-					reporter.PublishFailure(ctx, errScan)
-					select {
-					case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
-					case <-ctx.Done():
-					}
-				} else {
-					if replayAccumulator != nil {
-						replayAccumulator.Commit(ctx)
-					}
-					reporter.EnsurePublished(ctx)
+				streamUsage.Publish(ctx, reporter)
+				if replayAccumulator != nil {
+					replayAccumulator.Commit(ctx)
 				}
+				reporter.EnsurePublished(ctx)
 			}(httpResp)
 			return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: out}, nil
 		}

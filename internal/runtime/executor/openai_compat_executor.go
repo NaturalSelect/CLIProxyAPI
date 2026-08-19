@@ -198,6 +198,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		return resp, err
 	}
 	helps.AppendAPIResponseChunk(ctx, e.cfg, body)
+	reporter.ObserveSemanticResponse(to, body)
 	reporter.Publish(ctx, helps.ParseOpenAIUsage(body))
 	// Ensure we at least record the request even if upstream doesn't return usage
 	reporter.EnsurePublished(ctx)
@@ -291,6 +292,7 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 		return resp, err
 	}
 
+	reporter.ObserveSemanticResponse(sdktranslator.FormatOpenAI, body)
 	reporter.Publish(ctx, helps.ParseOpenAIUsage(body))
 	reporter.EnsurePublished(ctx)
 	resp = cliproxyexecutor.Response{Payload: body, Headers: httpResp.Header.Clone()}
@@ -439,6 +441,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 			}
 
 			// OpenAI-compatible streams must use SSE data lines.
+			reporter.ObserveSemanticResponse(to, trimmedLine)
 			chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, bytes.Clone(trimmedLine), &param, claudeInputTokens)
 			for i := range chunks {
 				select {
@@ -564,11 +567,27 @@ func (e *OpenAICompatExecutor) executeImagesStream(ctx context.Context, auth *cl
 			}
 			reporter.EnsurePublished(ctx)
 		}()
+		contentType := strings.ToLower(strings.TrimSpace(httpResp.Header.Get("Content-Type")))
+		structuredStream := strings.Contains(contentType, "event-stream") || strings.Contains(contentType, "json")
+		var semanticBuffer []byte
 		buffer := make([]byte, 32*1024)
 		for {
 			n, errRead := httpResp.Body.Read(buffer)
 			if n > 0 {
 				chunk := bytes.Clone(buffer[:n])
+				if structuredStream {
+					semanticBuffer = append(semanticBuffer, chunk...)
+					for {
+						lineEnd := bytes.IndexByte(semanticBuffer, '\n')
+						if lineEnd < 0 {
+							break
+						}
+						reporter.ObserveSemanticResponse(sdktranslator.FormatOpenAI, semanticBuffer[:lineEnd])
+						semanticBuffer = semanticBuffer[lineEnd+1:]
+					}
+				} else {
+					reporter.MarkFirstResponseContent()
+				}
 				helps.AppendAPIResponseChunk(ctx, e.cfg, chunk)
 				select {
 				case out <- cliproxyexecutor.StreamChunk{Payload: chunk}:
@@ -577,6 +596,9 @@ func (e *OpenAICompatExecutor) executeImagesStream(ctx context.Context, auth *cl
 				}
 			}
 			if errRead != nil {
+				if structuredStream && len(bytes.TrimSpace(semanticBuffer)) > 0 {
+					reporter.ObserveSemanticResponse(sdktranslator.FormatOpenAI, semanticBuffer)
+				}
 				if errRead != io.EOF {
 					helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 					reporter.PublishFailure(ctx, errRead)

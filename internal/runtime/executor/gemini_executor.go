@@ -228,6 +228,7 @@ func (e *GeminiExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 		return resp, err
 	}
 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
+	reporter.ObserveSemanticResponse(to, data)
 	reporter.Publish(ctx, helps.ParseGeminiUsage(data))
 	var param any
 	out := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, opts.OriginalRequest, body, data, &param)
@@ -341,6 +342,7 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		scanner.Buffer(nil, streamScannerBuffer)
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var param any
+		var streamUsage helps.StreamUsageBuffer
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			helps.AppendAPIResponseChunk(ctx, e.cfg, line)
@@ -349,8 +351,9 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			if len(payload) == 0 {
 				continue
 			}
+			reporter.ObserveSemanticResponse(to, payload)
 			if detail, ok := helps.ParseGeminiStreamUsage(payload); ok {
-				reporter.Publish(ctx, detail)
+				streamUsage.Observe(detail, true)
 			}
 			lines := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, body, bytes.Clone(payload), &param, claudeInputTokens)
 			for i := range lines {
@@ -361,6 +364,15 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 				}
 			}
 		}
+		if errScan := scanner.Err(); errScan != nil {
+			helps.RecordAPIResponseError(ctx, e.cfg, errScan)
+			reporter.PublishFailure(ctx, errScan)
+			select {
+			case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
+			case <-ctx.Done():
+			}
+			return
+		}
 		lines := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, opts.OriginalRequest, body, []byte("[DONE]"), &param, claudeInputTokens)
 		for i := range lines {
 			select {
@@ -369,14 +381,8 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 				return
 			}
 		}
-		if errScan := scanner.Err(); errScan != nil {
-			helps.RecordAPIResponseError(ctx, e.cfg, errScan)
-			reporter.PublishFailure(ctx, errScan)
-			select {
-			case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
-			case <-ctx.Done():
-			}
-		}
+		streamUsage.Publish(ctx, reporter)
+		reporter.EnsurePublished(ctx)
 	}()
 	return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: out}, nil
 }
@@ -451,6 +457,7 @@ func (e *GeminiExecutor) executeInteractions(ctx context.Context, auth *cliproxy
 		err = statusErr{code: httpResp.StatusCode, msg: string(data)}
 		return resp, err
 	}
+	reporter.ObserveSemanticResponse(sdktranslator.FormatInteractions, data)
 	reporter.Publish(ctx, helps.ParseInteractionsUsage(data))
 	var param any
 	out := sdktranslator.TranslateNonStream(ctx, sdktranslator.FormatInteractions, cliproxyexecutor.ResponseFormatOrSource(opts), req.Model, opts.OriginalRequest, body, data, &param)
@@ -538,6 +545,7 @@ func (e *GeminiExecutor) executeInteractionsStream(ctx context.Context, auth *cl
 		claudeInputTokens := helps.NewClaudeInputTokenState(opts.SourceFormat, sdktranslator.FormatInteractions, responseFormat, originalRequest)
 		var param any
 		var frame []byte
+		var streamUsage helps.StreamUsageBuffer
 		emitFrame := func() bool {
 			rawFrame := bytes.Clone(frame)
 			trimmed := bytes.TrimSpace(rawFrame)
@@ -553,8 +561,9 @@ func (e *GeminiExecutor) executeInteractionsStream(ctx context.Context, auth *cl
 				payload = trimmed
 			}
 			if len(payload) > 0 {
+				reporter.ObserveSemanticResponse(sdktranslator.FormatInteractions, payload)
 				if detail, ok := helps.ParseInteractionsStreamUsage(payload); ok {
-					reporter.Publish(ctx, detail)
+					streamUsage.Observe(detail, true)
 				}
 			}
 			if responseFormat == sdktranslator.FormatInteractions {
@@ -605,7 +614,10 @@ func (e *GeminiExecutor) executeInteractionsStream(ctx context.Context, auth *cl
 			case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
 			case <-ctx.Done():
 			}
+			return
 		}
+		streamUsage.Publish(ctx, reporter)
+		reporter.EnsurePublished(ctx)
 	}()
 	return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: out}, nil
 }

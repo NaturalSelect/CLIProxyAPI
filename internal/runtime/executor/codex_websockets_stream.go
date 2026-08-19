@@ -325,7 +325,6 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			if len(payload) == 0 {
 				continue
 			}
-			reporter.MarkFirstResponseByte()
 			payload = applyCodexIdentityConfuseResponsePayload(payload, identityState)
 			helps.AppendAPIWebsocketResponse(ctx, e.cfg, payload)
 			payload = helps.RestoreCodexMultiAgentV2Response(payload, optimizeMultiAgentV2)
@@ -378,12 +377,20 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 				completedPayload = normalizeCodexWebsocketCompletion(completedPayload)
 				completedPayload = patchCodexCompletedOutput(completedPayload, outputItemsByIndex, outputItemsFallback)
 				cacheCodexReasoningReplayFromCompleted(replayScope, completedPayload)
+			}
+			semanticPayload := payload
+			if eventType == "response.completed" || eventType == "response.done" {
+				semanticPayload = completedPayload
+			}
+			reporter.ObserveSemanticResponse(to, semanticPayload)
+			if eventType == "response.completed" || eventType == "response.done" {
 				if detail, ok := helps.ParseCodexUsage(completedPayload); ok {
 					reporter.Publish(ctx, detail)
 				}
+				reporter.EnsurePublished(ctx)
 			}
 
-			clientPayload := applyCodexIdentityExposeResponsePayload(payload, identityState)
+			clientPayload := applyCodexIdentityExposeResponsePayload(semanticPayload, identityState)
 			if cliproxyexecutor.DownstreamWebsocket(ctx) {
 				if !send(cliproxyexecutor.StreamChunk{Payload: clientPayload}) {
 					terminateReason = "context_done"

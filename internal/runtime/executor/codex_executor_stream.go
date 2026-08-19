@@ -174,16 +174,19 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 					collectCodexOutputItemDone(data, outputItemsByIndex, &outputItemsFallback)
 				case "response.completed", "response.incomplete":
 					terminalSuccess = true
-					if detail, ok := helps.ParseCodexUsage(data); ok {
+					detail, hasDetail := helps.ParseCodexUsage(data)
+					data = patchCodexCompletedOutput(data, outputItemsByIndex, outputItemsFallback)
+					reporter.ObserveSemanticResponse(to, data)
+					if hasDetail {
 						reporter.Publish(ctx, detail)
 					}
 					publishCodexImageToolUsage(ctx, reporter, body, data)
-					data = patchCodexCompletedOutput(data, outputItemsByIndex, outputItemsFallback)
 					if eventType == "response.completed" {
 						cacheCodexReasoningReplayFromCompleted(replayScope, data)
 					}
 					translatedLine = append([]byte("data: "), data...)
 				}
+				reporter.ObserveSemanticResponse(to, data)
 			}
 
 			translatedLine = applyCodexIdentityExposeResponsePayload(translatedLine, identityState)
@@ -196,6 +199,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				}
 			}
 			if terminalSuccess {
+				reporter.EnsurePublished(ctx)
 				return
 			}
 		}

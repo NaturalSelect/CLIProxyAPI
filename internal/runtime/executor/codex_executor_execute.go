@@ -124,6 +124,16 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		return resp, err
 	}
 	data, errRead := io.ReadAll(httpResp.Body)
+	if errRead != nil {
+		if errCtx := ctx.Err(); errCtx != nil {
+			helps.RecordAPIResponseError(ctx, e.cfg, errCtx)
+			err = errCtx
+			return resp, err
+		}
+		helps.RecordAPIResponseError(ctx, e.cfg, errRead)
+		err = errRead
+		return resp, err
+	}
 	upstreamData := applyCodexIdentityConfuseResponsePayload(data, identityState)
 	helps.AppendAPIResponseChunk(ctx, e.cfg, upstreamData)
 
@@ -146,6 +156,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 			err = streamErr
 			return resp, err
 		}
+		reporter.ObserveSemanticResponse(to, eventData)
 
 		if eventType == "response.output_item.done" {
 			itemResult := gjson.GetBytes(eventData, "item")
@@ -165,12 +176,13 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 			continue
 		}
 
-		if detail, ok := helps.ParseCodexUsage(eventData); ok {
+		detail, hasDetail := helps.ParseCodexUsage(eventData)
+		completedData := patchCodexCompletedOutput(eventData, outputItemsByIndex, outputItemsFallback)
+		reporter.ObserveSemanticResponse(to, completedData)
+		if hasDetail {
 			reporter.Publish(ctx, detail)
 		}
-		publishCodexImageToolUsage(ctx, reporter, body, eventData)
-
-		completedData := patchCodexCompletedOutput(eventData, outputItemsByIndex, outputItemsFallback)
+		publishCodexImageToolUsage(ctx, reporter, body, completedData)
 		if eventType == "response.completed" {
 			cacheCodexReasoningReplayFromCompleted(replayScope, completedData)
 		}
@@ -179,15 +191,8 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		clientCompletedData := applyCodexIdentityExposeResponsePayload(completedData, identityState)
 		out := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, originalPayload, body, clientCompletedData, &param)
 		resp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
+		reporter.EnsurePublished(ctx)
 		return resp, nil
-	}
-	if errRead != nil {
-		if errCtx := ctx.Err(); errCtx != nil {
-			helps.RecordAPIResponseError(ctx, e.cfg, errCtx)
-			err = errCtx
-			return resp, err
-		}
-		helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 	}
 	err = newCodexIncompleteStreamError()
 	return resp, err
@@ -298,6 +303,7 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 	upstreamData := applyCodexIdentityConfuseResponsePayload(data, identityState)
 	helps.AppendAPIResponseChunk(ctx, e.cfg, upstreamData)
 	upstreamData = helps.RestoreCodexMultiAgentV2Response(upstreamData, optimizeMultiAgentV2)
+	reporter.ObserveSemanticResponse(to, upstreamData)
 	reporter.Publish(ctx, helps.ParseOpenAIUsage(upstreamData))
 	reporter.EnsurePublished(ctx)
 	var param any

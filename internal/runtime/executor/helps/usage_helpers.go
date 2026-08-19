@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -132,12 +132,6 @@ func (r *UsageReporter) ObserveResponse(resp *http.Response) {
 		return
 	}
 	r.StartResponseTTFT()
-	resp.Body = &usageTTFTReadCloser{
-		ReadCloser: resp.Body,
-		mark: func() {
-			r.MarkFirstResponseByte()
-		},
-	}
 }
 
 func (r *UsageReporter) StartResponseTTFT() {
@@ -151,22 +145,40 @@ func (r *UsageReporter) StartResponseTTFT() {
 	r.ttftMu.Unlock()
 }
 
-func (r *UsageReporter) MarkFirstResponseByte() {
+// ObserveSemanticResponse completes TTFT measurement when payload contains the
+// first non-empty upstream model output for the specified provider format.
+func (r *UsageReporter) ObserveSemanticResponse(format sdktranslator.Format, payload []byte) bool {
+	if r == nil || !HasSemanticResponseContent(format, payload) {
+		return false
+	}
+	r.MarkFirstResponseContent()
+	return true
+}
+
+// MarkFirstResponseContent completes TTFT measurement at the first validated
+// upstream text, reasoning, tool-call, or media output.
+func (r *UsageReporter) MarkFirstResponseContent() {
 	if r == nil {
 		return
 	}
 	r.ttftMu.Lock()
-	if r.ttftSet {
-		r.ttftMu.Unlock()
+	defer r.ttftMu.Unlock()
+	if r.ttftSet || r.ttftStart.IsZero() {
 		return
 	}
-	start := r.ttftStart
+	ttft := time.Since(r.ttftStart)
+	if ttft < 0 {
+		ttft = 0
+	}
+	r.ttft = ttft
+	r.ttftSet = true
 	r.ttftStart = time.Time{}
-	r.ttftMu.Unlock()
-	if start.IsZero() {
-		return
-	}
-	r.setTTFT(time.Since(start))
+}
+
+// MarkFirstResponseByte is retained for source compatibility.
+// Deprecated: use MarkFirstResponseContent after semantic validation.
+func (r *UsageReporter) MarkFirstResponseByte() {
+	r.MarkFirstResponseContent()
 }
 
 func (r *UsageReporter) buildAdditionalModelRecord(model string, detail usage.Detail) (usage.Record, bool) {
@@ -346,23 +358,6 @@ func (t usageTTFTRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 	}
 	t.reporter.ObserveResponse(resp)
 	return resp, nil
-}
-
-type usageTTFTReadCloser struct {
-	io.ReadCloser
-	once sync.Once
-	mark func()
-}
-
-func (r *usageTTFTReadCloser) Read(p []byte) (int, error) {
-	if r == nil || r.ReadCloser == nil {
-		return 0, io.ErrClosedPipe
-	}
-	n, errRead := r.ReadCloser.Read(p)
-	if n > 0 && r.mark != nil {
-		r.once.Do(r.mark)
-	}
-	return n, errRead
 }
 
 func APIKeyFromContext(ctx context.Context) string {

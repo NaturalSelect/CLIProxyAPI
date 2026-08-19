@@ -155,11 +155,14 @@ func (e *CodexExecutor) executeOpenAIImage(ctx context.Context, auth *cliproxyau
 		case "response.output_item.done":
 			collectCodexOutputItemDone(eventData, outputItemsByIndex, &outputItemsFallback)
 		case "response.completed":
-			if detail, ok := helps.ParseCodexUsage(eventData); ok {
+			detail, hasDetail := helps.ParseCodexUsage(eventData)
+			completedData := patchCodexCompletedOutput(eventData, outputItemsByIndex, outputItemsFallback)
+			reporter.ObserveSemanticResponse(sdktranslator.FormatCodex, completedData)
+			if hasDetail {
 				reporter.Publish(ctx, detail)
 			}
-			publishCodexImageToolUsage(ctx, reporter, body, eventData)
-			results, createdAt, usageRaw, firstMeta, errExtract := codexExtractImageResults(eventData, outputItemsByIndex, outputItemsFallback)
+			publishCodexImageToolUsage(ctx, reporter, body, completedData)
+			results, createdAt, usageRaw, firstMeta, errExtract := codexExtractImageResults(completedData, outputItemsByIndex, outputItemsFallback)
 			if errExtract != nil {
 				return resp, errExtract
 			}
@@ -170,6 +173,7 @@ func (e *CodexExecutor) executeOpenAIImage(ctx context.Context, auth *cliproxyau
 			if errOutput != nil {
 				return resp, errOutput
 			}
+			reporter.EnsurePublished(ctx)
 			return cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}, nil
 		}
 	}
@@ -241,6 +245,7 @@ func (e *CodexExecutor) executeOpenAIImageStream(ctx context.Context, auth *clip
 	out := make(chan cliproxyexecutor.StreamChunk)
 	go func() {
 		defer close(out)
+		defer reporter.EnsurePublished(ctx)
 		defer func() {
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("codex executor: close response body error: %v", errClose)
@@ -275,6 +280,7 @@ func (e *CodexExecutor) executeOpenAIImageStream(ctx context.Context, auth *clip
 				continue
 			}
 			eventData := bytes.TrimSpace(line[len(dataTag):])
+			reporter.ObserveSemanticResponse(sdktranslator.FormatCodex, eventData)
 			switch gjson.GetBytes(eventData, "type").String() {
 			case "response.output_item.done":
 				collectCodexOutputItemDone(eventData, outputItemsByIndex, &outputItemsFallback)
@@ -284,11 +290,14 @@ func (e *CodexExecutor) executeOpenAIImageStream(ctx context.Context, auth *clip
 					return
 				}
 			case "response.completed":
-				if detail, ok := helps.ParseCodexUsage(eventData); ok {
+				detail, hasDetail := helps.ParseCodexUsage(eventData)
+				completedData := patchCodexCompletedOutput(eventData, outputItemsByIndex, outputItemsFallback)
+				reporter.ObserveSemanticResponse(sdktranslator.FormatCodex, completedData)
+				if hasDetail {
 					reporter.Publish(ctx, detail)
 				}
-				publishCodexImageToolUsage(ctx, reporter, body, eventData)
-				results, _, usageRaw, _, errExtract := codexExtractImageResults(eventData, outputItemsByIndex, outputItemsFallback)
+				publishCodexImageToolUsage(ctx, reporter, body, completedData)
+				results, _, usageRaw, _, errExtract := codexExtractImageResults(completedData, outputItemsByIndex, outputItemsFallback)
 				if errExtract != nil {
 					sendError(errExtract)
 					return
@@ -371,6 +380,7 @@ func (e *CodexExecutor) executeDirectOpenAIImage(ctx context.Context, auth *clip
 		return resp, err
 	}
 
+	reporter.ObserveSemanticResponse(sdktranslator.FormatOpenAI, data)
 	reporter.Publish(ctx, helps.ParseOpenAIUsage(data))
 	reporter.EnsurePublished(ctx)
 	return cliproxyexecutor.Response{Payload: data, Headers: httpResp.Header.Clone()}, nil
@@ -441,12 +451,28 @@ func (e *CodexExecutor) executeDirectOpenAIImageStream(ctx context.Context, auth
 			reporter.EnsurePublished(ctx)
 		}()
 
+		contentType := strings.ToLower(strings.TrimSpace(httpResp.Header.Get("Content-Type")))
+		structuredStream := strings.Contains(contentType, "event-stream") || strings.Contains(contentType, "json")
+		var semanticBuffer []byte
 		buffer := make([]byte, 32*1024)
 		for {
 			n, errRead := httpResp.Body.Read(buffer)
 			if n > 0 {
 				chunk := bytes.Clone(buffer[:n])
 				chunk = applyCodexIdentityConfuseResponsePayload(chunk, identityState)
+				if structuredStream {
+					semanticBuffer = append(semanticBuffer, chunk...)
+					for {
+						lineEnd := bytes.IndexByte(semanticBuffer, '\n')
+						if lineEnd < 0 {
+							break
+						}
+						reporter.ObserveSemanticResponse(sdktranslator.FormatOpenAI, semanticBuffer[:lineEnd])
+						semanticBuffer = semanticBuffer[lineEnd+1:]
+					}
+				} else {
+					reporter.MarkFirstResponseContent()
+				}
 				helps.AppendAPIResponseChunk(ctx, e.cfg, chunk)
 				for _, line := range bytes.Split(chunk, []byte("\n")) {
 					streamUsage.ObserveOpenAIStream(bytes.TrimSpace(line))
@@ -458,6 +484,9 @@ func (e *CodexExecutor) executeDirectOpenAIImageStream(ctx context.Context, auth
 				}
 			}
 			if errRead != nil {
+				if structuredStream && len(bytes.TrimSpace(semanticBuffer)) > 0 {
+					reporter.ObserveSemanticResponse(sdktranslator.FormatOpenAI, semanticBuffer)
+				}
 				if errRead != io.EOF {
 					helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 					reporter.PublishFailure(ctx, errRead)

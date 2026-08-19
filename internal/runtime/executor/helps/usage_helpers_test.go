@@ -6,10 +6,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
 func TestParseOpenAIUsageChatCompletions(t *testing.T) {
@@ -550,7 +552,7 @@ func TestUsageReporterBuildRecordIncludesLatency(t *testing.T) {
 	}
 }
 
-func TestUsageReporterTrackHTTPClientStartsTTFTBeforeRoundTrip(t *testing.T) {
+func TestUsageReporterTrackHTTPClientWaitsForSemanticResponse(t *testing.T) {
 	delay := 40 * time.Millisecond
 	reporter := NewUsageReporter(context.Background(), "openai", "gpt-5.4", nil)
 	client := reporter.TrackHTTPClient(&http.Client{
@@ -580,8 +582,61 @@ func TestUsageReporterTrackHTTPClientStartsTTFTBeforeRoundTrip(t *testing.T) {
 	if errClose := resp.Body.Close(); errClose != nil {
 		t.Fatalf("response body close error = %v", errClose)
 	}
+	if got := reporter.ttftDuration(); got != 0 {
+		t.Fatalf("ttft after body read = %v, want 0", got)
+	}
+	if observed := reporter.ObserveSemanticResponse(sdktranslator.FormatOpenAI, []byte(`{"choices":[{"message":{"content":"ok"}}]}`)); !observed {
+		t.Fatal("ObserveSemanticResponse() = false, want true")
+	}
 	if got := reporter.ttftDuration(); got < delay {
 		t.Fatalf("ttft = %v, want >= %v", got, delay)
+	}
+}
+
+func TestUsageReporterSemanticResponseIgnoresControlEvents(t *testing.T) {
+	reporter := NewUsageReporter(context.Background(), "codex", "gpt-5.4", nil)
+	reporter.StartResponseTTFT()
+
+	if observed := reporter.ObserveSemanticResponse(sdktranslator.FormatCodex, []byte(`{"type":"response.created","response":{"id":"resp_1"}}`)); observed {
+		t.Fatal("ObserveSemanticResponse(control) = true, want false")
+	}
+	if got := reporter.ttftDuration(); got != 0 {
+		t.Fatalf("ttft after control event = %v, want 0", got)
+	}
+	if observed := reporter.ObserveSemanticResponse(sdktranslator.FormatCodex, []byte(`{"type":"response.output_text.delta","delta":"hello"}`)); !observed {
+		t.Fatal("ObserveSemanticResponse(content) = false, want true")
+	}
+	if got := reporter.ttftDuration(); got <= 0 {
+		t.Fatalf("ttft after content = %v, want > 0", got)
+	}
+	record := reporter.buildRecord(usage.Detail{}, false)
+	if record.TTFT != reporter.ttftDuration() {
+		t.Fatalf("record TTFT = %v, want %v", record.TTFT, reporter.ttftDuration())
+	}
+}
+
+func TestUsageReporterMarkFirstResponseContentIsConcurrentAndIdempotent(t *testing.T) {
+	reporter := NewUsageReporter(context.Background(), "codex", "gpt-5.4", nil)
+	reporter.StartResponseTTFT()
+
+	var waitGroup sync.WaitGroup
+	for workerIndex := 0; workerIndex < 32; workerIndex++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			reporter.MarkFirstResponseContent()
+		}()
+	}
+	waitGroup.Wait()
+
+	firstTTFT := reporter.ttftDuration()
+	if firstTTFT <= 0 {
+		t.Fatalf("first TTFT = %v, want > 0", firstTTFT)
+	}
+	time.Sleep(time.Millisecond)
+	reporter.MarkFirstResponseContent()
+	if got := reporter.ttftDuration(); got != firstTTFT {
+		t.Fatalf("TTFT after repeated mark = %v, want %v", got, firstTTFT)
 	}
 }
 
