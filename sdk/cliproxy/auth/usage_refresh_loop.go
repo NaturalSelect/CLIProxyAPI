@@ -277,10 +277,11 @@ func readAntigravityQuotaResponse(resp *http.Response) ([]byte, bool) {
 }
 
 // buildUsageProbeRequest constructs a minimal native-format request for the
-// auth's provider, using the first model currently registered for this auth
-// (see internal/registry, the same source GET /v0/management/auth-files/models
-// reads from). It reports ok=false when no model is known for this auth yet,
-// in which case the caller should skip this probe cycle and retry later.
+// auth's provider, using only a provider-specific low-cost probe model from
+// the models currently registered for this auth (see internal/registry, the
+// same source GET /v0/management/auth-files/models reads from). It reports
+// ok=false when no safe probe model is registered, in which case the caller
+// skips the probe rather than falling back to an arbitrary business model.
 //
 // Both branches use a real, un-cached provider call (not a token-count/local
 // endpoint): Claude's count_tokens endpoint is not confirmed to return the
@@ -327,10 +328,9 @@ func buildUsageProbeRequest(a *Auth) (cliproxyexecutor.Request, cliproxyexecutor
 	}
 }
 
-// pickProbeModel prefers a model whose ID contains preferred (case-insensitive
-// substring match, e.g. Claude's cheaper "haiku" family or Codex's "luna" fast
-// model), falling back to the first model in the auth's registered list when
-// no match is found.
+// pickProbeModel returns a model whose ID contains preferred using a
+// case-insensitive substring match. It returns an empty string when no safe
+// probe model is registered instead of falling back to an arbitrary model.
 func pickProbeModel(models []*registry.ModelInfo, preferred string) string {
 	for _, m := range models {
 		if m == nil || m.ID == "" {
@@ -339,9 +339,6 @@ func pickProbeModel(models []*registry.ModelInfo, preferred string) string {
 		if strings.Contains(strings.ToLower(m.ID), preferred) {
 			return m.ID
 		}
-	}
-	if models[0] != nil {
-		return models[0].ID
 	}
 	return ""
 }
