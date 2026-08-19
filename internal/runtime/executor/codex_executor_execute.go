@@ -124,16 +124,6 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		return resp, err
 	}
 	data, errRead := io.ReadAll(httpResp.Body)
-	if errRead != nil {
-		if errCtx := ctx.Err(); errCtx != nil {
-			helps.RecordAPIResponseError(ctx, e.cfg, errCtx)
-			err = errCtx
-			return resp, err
-		}
-		helps.RecordAPIResponseError(ctx, e.cfg, errRead)
-		err = errRead
-		return resp, err
-	}
 	upstreamData := applyCodexIdentityConfuseResponsePayload(data, identityState)
 	helps.AppendAPIResponseChunk(ctx, e.cfg, upstreamData)
 
@@ -193,6 +183,14 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		resp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
 		reporter.EnsurePublished(ctx)
 		return resp, nil
+	}
+	if errRead != nil {
+		if errCtx := ctx.Err(); errCtx != nil {
+			helps.RecordAPIResponseError(ctx, e.cfg, errCtx)
+			err = errCtx
+			return resp, err
+		}
+		helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 	}
 	err = newCodexIncompleteStreamError()
 	return resp, err

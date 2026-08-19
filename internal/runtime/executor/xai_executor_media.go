@@ -147,7 +147,10 @@ func (e *XAIExecutor) executeVideos(ctx context.Context, auth *cliproxyauth.Auth
 		return resp, xaiStatusErr(httpResp.StatusCode, data)
 	}
 
-	reporter.ObserveSemanticResponse(sdktranslator.FormatOpenAI, data)
+	if !reporter.ObserveSemanticResponse(sdktranslator.FormatOpenAI, data) && len(bytes.TrimSpace(data)) > 0 {
+		// A successful video create/status payload is the first meaningful media workflow result.
+		reporter.MarkFirstResponseContent()
+	}
 	reporter.EnsurePublished(ctx)
 	return cliproxyexecutor.Response{Payload: data, Headers: httpResp.Header.Clone()}, nil
 }
