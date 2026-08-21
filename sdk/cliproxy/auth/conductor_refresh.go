@@ -459,7 +459,7 @@ func (m *Manager) refreshAuthForRequest(ctx context.Context, id, failedAccessTok
 				current.NextRefreshAfter = time.Time{}
 				current.Unavailable = true
 				current.Status = StatusError
-				current.StatusMessage = "unauthorized"
+				current.StatusMessage = statusReasonWithDetail("unauthorized", current.LastError)
 			} else {
 				current.NextRefreshAfter = now.Add(refreshFailureBackoff)
 			}

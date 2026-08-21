@@ -769,9 +769,9 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 					} else if isCloudflareChallengeResultError(result.Error) {
 						next, backoffLevel := nextCloudflareCooldown(state.Quota.BackoffLevel, disableCooling, now)
 						state.NextRetryAfter = next
-						state.StatusMessage = "cloudflare challenge"
+						state.StatusMessage = statusReasonWithDetail("cloudflare challenge", result.Error)
 						if auth.LastError != nil {
-							auth.StatusMessage = "cloudflare challenge"
+							auth.StatusMessage = state.StatusMessage
 						}
 						state.Quota = QuotaState{
 							Exceeded:      true,
@@ -1136,6 +1136,25 @@ func statusCodeFromError(err error) int {
 		return sc.StatusCode()
 	}
 	return 0
+}
+
+// NOTE: appends the upstream error detail to a status reason so operators can
+// tell why a credential was marked (e.g. "unauthorized: session expired").
+// Detail comes from upstream payloads and may contain user input, so it is
+// truncated to a fixed budget.
+func statusReasonWithDetail(reason string, err *Error) string {
+	if err == nil {
+		return reason
+	}
+	detail := strings.TrimSpace(err.Message)
+	if detail == "" || strings.EqualFold(detail, reason) {
+		return reason
+	}
+	const maxDetailRunes = 200
+	if r := []rune(detail); len(r) > maxDetailRunes {
+		detail = string(r[:maxDetailRunes]) + "..."
+	}
+	return reason + ": " + detail
 }
 
 func isRequestScopedError(err error) bool {
@@ -1676,7 +1695,7 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 	}
 	statusCode := statusCodeFromResult(resultErr)
 	if isCredentialScopedResultError(resultErr) {
-		auth.StatusMessage = "credential billing unavailable"
+		auth.StatusMessage = statusReasonWithDetail("credential billing unavailable", resultErr)
 		if disableCooling {
 			auth.NextRetryAfter = time.Time{}
 		} else {
@@ -1685,7 +1704,7 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 		return
 	}
 	if isCloudflareChallengeResultError(resultErr) {
-		auth.StatusMessage = "cloudflare challenge"
+		auth.StatusMessage = statusReasonWithDetail("cloudflare challenge", resultErr)
 		next, backoffLevel := nextCloudflareCooldown(auth.Quota.BackoffLevel, disableCooling, now)
 		auth.Quota = QuotaState{
 			Exceeded:      true,
@@ -1697,7 +1716,7 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 		return
 	}
 	if isInvalidGrantResultError(resultErr) {
-		auth.StatusMessage = "invalid_grant"
+		auth.StatusMessage = statusReasonWithDetail("invalid_grant", resultErr)
 		if disableCooling {
 			auth.NextRetryAfter = time.Time{}
 		} else {
@@ -1707,21 +1726,21 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 	}
 	switch statusCode {
 	case 401:
-		auth.StatusMessage = "unauthorized"
+		auth.StatusMessage = statusReasonWithDetail("unauthorized", resultErr)
 		if disableCooling {
 			auth.NextRetryAfter = time.Time{}
 		} else {
 			auth.NextRetryAfter = now.Add(30 * time.Minute)
 		}
 	case 402, 403:
-		auth.StatusMessage = "payment_required"
+		auth.StatusMessage = statusReasonWithDetail("payment_required", resultErr)
 		if disableCooling {
 			auth.NextRetryAfter = time.Time{}
 		} else {
 			auth.NextRetryAfter = now.Add(30 * time.Minute)
 		}
 	case 404:
-		auth.StatusMessage = "not_found"
+		auth.StatusMessage = statusReasonWithDetail("not_found", resultErr)
 		if disableCooling {
 			auth.NextRetryAfter = time.Time{}
 		} else {

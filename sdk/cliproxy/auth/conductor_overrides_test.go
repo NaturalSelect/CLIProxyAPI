@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1025,7 +1026,7 @@ func TestManager_CredentialBillingErrorFailsOverAndPreservesSessionAffinity(t *t
 	if !updatedBad.Unavailable || updatedBad.NextRetryAfter.IsZero() {
 		t.Fatalf("expected billing auth cooldown, got unavailable=%v retry_after=%v", updatedBad.Unavailable, updatedBad.NextRetryAfter)
 	}
-	if updatedBad.Status != StatusError || updatedBad.StatusMessage != "credential billing unavailable" {
+	if updatedBad.Status != StatusError || !strings.HasPrefix(updatedBad.StatusMessage, "credential billing unavailable") {
 		t.Fatalf("unexpected billing auth status: status=%q message=%q", updatedBad.Status, updatedBad.StatusMessage)
 	}
 	if updatedBad.LastError == nil || updatedBad.LastError.Code != credentialScopedErrorCode || updatedBad.LastError.HTTPStatus != http.StatusBadRequest {
@@ -1107,7 +1108,7 @@ func TestManager_CredentialBillingErrorFailsOverAndPreservesSessionAffinity(t *t
 	if !reloadedBad.NextRetryAfter.Equal(originalRetryAfter) {
 		t.Fatalf("reloaded retry deadline = %v, want %v", reloadedBad.NextRetryAfter, originalRetryAfter)
 	}
-	if reloadedBad.LastError == nil || reloadedBad.LastError.Code != credentialScopedErrorCode || reloadedBad.LastError.HTTPStatus != http.StatusBadRequest || reloadedBad.LastError.Message != billingMessage || reloadedBad.StatusMessage != "credential billing unavailable" {
+	if reloadedBad.LastError == nil || reloadedBad.LastError.Code != credentialScopedErrorCode || reloadedBad.LastError.HTTPStatus != http.StatusBadRequest || reloadedBad.LastError.Message != billingMessage || !strings.HasPrefix(reloadedBad.StatusMessage, "credential billing unavailable") {
 		t.Fatalf("expected reload to preserve billing error details, got %#v", reloadedBad)
 	}
 
@@ -1228,8 +1229,8 @@ func TestManager_MarkResult_CloudflareChallenge_On403(t *testing.T) {
 	if diff < 5*time.Second || diff > 25*time.Second {
 		t.Fatalf("expected NextRetryAfter to be ~10 seconds, got %v", diff)
 	}
-	if state.StatusMessage != "cloudflare challenge" {
-		t.Fatalf("expected StatusMessage to be 'cloudflare challenge', got %s", state.StatusMessage)
+	if !strings.HasPrefix(state.StatusMessage, "cloudflare challenge") {
+		t.Fatalf("expected StatusMessage to have 'cloudflare challenge' prefix, got %s", state.StatusMessage)
 	}
 
 	// Because Cloudflare Challenge is treated as transient (no suspension),

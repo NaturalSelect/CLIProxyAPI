@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -306,5 +307,64 @@ func TestJitteredCooldownWaitBounds(t *testing.T) {
 	}
 	if got := jitteredCooldownWait(3, 0); got != 3 {
 		t.Fatalf("expected sub-4ns wait to stay unchanged, got %v", got)
+	}
+}
+
+func TestStatusReasonWithDetail(t *testing.T) {
+	cases := []struct {
+		name   string
+		reason string
+		err    *Error
+		want   string
+	}{
+		{name: "nil error keeps reason", reason: "unauthorized", err: nil, want: "unauthorized"},
+		{name: "empty message keeps reason", reason: "unauthorized", err: &Error{HTTPStatus: http.StatusUnauthorized}, want: "unauthorized"},
+		{name: "identical message keeps reason", reason: "unauthorized", err: &Error{Message: "unauthorized"}, want: "unauthorized"},
+		{
+			name:   "detail appended",
+			reason: "unauthorized",
+			err:    &Error{Message: "Your authentication token has been invalidated. Please try signing in again."},
+			want:   "unauthorized: Your authentication token has been invalidated. Please try signing in again.",
+		},
+		{
+			name:   "whitespace trimmed",
+			reason: "invalid_grant",
+			err:    &Error{Message: "  refresh_token_reused  "},
+			want:   "invalid_grant: refresh_token_reused",
+		},
+	}
+	for _, tc := range cases {
+		if got := statusReasonWithDetail(tc.reason, tc.err); got != tc.want {
+			t.Fatalf("%s: statusReasonWithDetail = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	longErr := &Error{Message: strings.Repeat("x", 500)}
+	got := statusReasonWithDetail("unauthorized", longErr)
+	want := "unauthorized: " + strings.Repeat("x", 200) + "..."
+	if got != want {
+		t.Fatalf("long detail truncation = %q, want %q", got, want)
+	}
+}
+
+func TestApplyAuthFailureStateUnauthorizedIncludesReasonDetail(t *testing.T) {
+	now := time.Now()
+	auth := &Auth{ID: "auth-unauthorized-detail"}
+	resultErr := &Error{
+		HTTPStatus: http.StatusUnauthorized,
+		Message:    "session invalid or expired",
+	}
+
+	applyAuthFailureState(auth, resultErr, nil, now, false)
+
+	want := "unauthorized: session invalid or expired"
+	if auth.StatusMessage != want {
+		t.Fatalf("StatusMessage = %q, want %q", auth.StatusMessage, want)
+	}
+	if !auth.Unavailable || auth.Status != StatusError {
+		t.Fatalf("expected auth to be unavailable with error status, got unavailable=%v status=%q", auth.Unavailable, auth.Status)
+	}
+	if auth.NextRetryAfter.Before(now.Add(29*time.Minute)) || auth.NextRetryAfter.After(now.Add(31*time.Minute)) {
+		t.Fatalf("expected ~30min cooldown, got %v", auth.NextRetryAfter)
 	}
 }

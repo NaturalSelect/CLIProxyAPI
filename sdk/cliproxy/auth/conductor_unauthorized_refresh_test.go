@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -253,7 +254,7 @@ func TestManager_Execute_UnauthorizedRefreshFailureFallsBackToNextAuth(t *testin
 	if state == nil || !state.Unavailable {
 		t.Fatalf("expected primary model to be suspended after refresh failure")
 	}
-	if state.StatusMessage != "unauthorized" && (state.LastError == nil || state.LastError.StatusCode() != http.StatusUnauthorized) {
+	if !strings.HasPrefix(state.StatusMessage, "unauthorized") && (state.LastError == nil || state.LastError.StatusCode() != http.StatusUnauthorized) {
 		t.Fatalf("expected unauthorized suspension, got state=%+v", state)
 	}
 }
