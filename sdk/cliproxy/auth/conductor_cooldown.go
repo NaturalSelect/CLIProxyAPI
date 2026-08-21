@@ -1507,7 +1507,10 @@ func isCredentialScopedError(err error) bool {
 		IsCredentialScoped() bool
 	}
 	var csp credentialScopedProvider
-	return errors.As(err, &csp) && csp != nil && csp.IsCredentialScoped()
+	if errors.As(err, &csp) && csp != nil && csp.IsCredentialScoped() {
+		return true
+	}
+	return statusCodeFromError(err) == http.StatusBadRequest && isCredentialScopedErrorMessage(err.Error())
 }
 
 func statusCodeFromResult(err *Error) int {
@@ -1641,13 +1644,6 @@ func isCredentialScopedErrorMessage(message string) bool {
 	}
 	return strings.Contains(lower, "third-party apps now draw from extra usage") ||
 		strings.Contains(lower, "claim credit at console.anthropic.com/settings/usage")
-}
-
-func isCredentialScopedError(err error) bool {
-	if err == nil || statusCodeFromError(err) != http.StatusBadRequest {
-		return false
-	}
-	return isCredentialScopedErrorMessage(err.Error())
 }
 
 func isCredentialScopedResultError(err *Error) bool {
