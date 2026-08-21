@@ -58,12 +58,12 @@ func TestApplyClaudeHeadersWithSessionOverridesConflictingAuthHeader(t *testing.
 func TestClaudeExecutorExecuteStreamRetainsStartedCacheStateUntilStreamEnds(t *testing.T) {
 	configuredWaitSeconds := 1
 	streamReader, streamWriter := io.Pipe()
+	initialStreamData := []byte(`data: {"type":"message_start","message":{"id":"msg_stream","model":"claude-sonnet-4-5","usage":{"input_tokens":1,"output_tokens":0,"cache_creation_input_tokens":10}}}` + "\n\n")
 	var releaseOnce sync.Once
 	release := func() {
 		releaseOnce.Do(func() {
 			go func() {
 				_, _ = streamWriter.Write([]byte(strings.Join([]string{
-					`data: {"type":"message_start","message":{"id":"msg_stream","model":"claude-sonnet-4-5","usage":{"input_tokens":1,"output_tokens":0,"cache_creation_input_tokens":10}}}`,
 					`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`,
 					`data: {"type":"message_stop"}`,
 				}, "\n\n") + "\n\n"))
@@ -106,7 +106,7 @@ func TestClaudeExecutorExecuteStreamRetainsStartedCacheStateUntilStreamEnds(t *t
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       streamReader,
+			Body:       io.NopCloser(io.MultiReader(bytes.NewReader(initialStreamData), streamReader)),
 			Request:    request,
 		}, nil
 	}))
