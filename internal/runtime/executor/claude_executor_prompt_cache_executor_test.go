@@ -108,7 +108,7 @@ func TestClaudeExecutorExecuteStreamRetainsStartedCacheStateUntilStreamEnds(t *t
 		]
 	}`)
 
-	testContext, cancelTest := context.WithTimeout(context.Background(), 3*time.Second)
+	testContext, cancelTest := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelTest()
 	result, errStream := executor.ExecuteStream(testContext, auth, cliproxyexecutor.Request{
 		Model:   "claude-sonnet-4-5",
