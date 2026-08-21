@@ -1,6 +1,7 @@
 package helps
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func TestPlanClaudePromptCacheUsesAutomaticHistoryForOfficialAnthropic(t *testing.T) {
@@ -51,6 +53,73 @@ func TestPlanClaudePromptCacheUsesAutomaticHistoryForOfficialAnthropic(t *testin
 	}
 	if !foundAutomaticPrefix {
 		t.Fatal("automatic history is present in the payload but absent from the runtime plan")
+	}
+}
+
+func TestRebuildClaudePromptCachePlanUsesFinalWirePayload(t *testing.T) {
+	runtime := NewClaudePromptCacheRuntime()
+	payload := buildClaudePromptCacheTestPayload([]string{"Read"}, false)
+	plannedPayload, originalPlan := runtime.PlanClaudePromptCache(
+		"final-wire-scope",
+		payload,
+		ClaudePromptCacheCapabilities{AutomaticHistory: true, ExplicitHistory: true},
+	)
+	if originalPlan == nil {
+		t.Fatal("PlanClaudePromptCache() plan = nil")
+	}
+
+	originalSystem := gjson.GetBytes(plannedPayload, "system").Raw
+	finalSystem := append(
+		[]byte(`[{"type":"text","text":"x-anthropic-billing-header: cch=abcde; signed wire body"},`),
+		[]byte(originalSystem[1:])...,
+	)
+	finalPayload, errSet := sjson.SetRawBytes(plannedPayload, "system", finalSystem)
+	if errSet != nil {
+		t.Fatalf("set final system body: %v", errSet)
+	}
+	finalPayloadSnapshot := bytes.Clone(finalPayload)
+	rebuiltPlan := runtime.RebuildClaudePromptCachePlan(finalPayload, originalPlan)
+	if rebuiltPlan == nil {
+		t.Fatal("RebuildClaudePromptCachePlan() plan = nil")
+	}
+	if !bytes.Equal(finalPayload, finalPayloadSnapshot) {
+		t.Fatal("RebuildClaudePromptCachePlan() modified the final wire payload")
+	}
+
+	prefixKeyForKind := func(plan *ClaudePromptCachePlan, kind string) string {
+		for _, prefix := range plan.Prefixes {
+			if prefix.Kind == kind {
+				return prefix.Key
+			}
+		}
+		return ""
+	}
+	originalSystemKey := prefixKeyForKind(originalPlan, "system")
+	rebuiltSystemKey := prefixKeyForKind(rebuiltPlan, "system")
+	if originalSystemKey == "" || rebuiltSystemKey == "" {
+		t.Fatalf("system prefix missing: original=%q rebuilt=%q", originalSystemKey, rebuiltSystemKey)
+	}
+	if originalSystemKey == rebuiltSystemKey {
+		t.Fatal("system prefix key did not change after final wire system content changed")
+	}
+	systemBreakpointAdded := false
+	for _, prefix := range rebuiltPlan.Prefixes {
+		if prefix.Kind == "system" && prefix.Added {
+			systemBreakpointAdded = true
+			break
+		}
+	}
+	if !systemBreakpointAdded {
+		t.Fatal("system breakpoint lost its Added state after a billing block shifted its array index")
+	}
+
+	originalToolKey := prefixKeyForKind(originalPlan, "tools")
+	rebuiltToolKey := prefixKeyForKind(rebuiltPlan, "tools")
+	if originalToolKey == "" || rebuiltToolKey == "" {
+		t.Fatalf("tool prefix missing: original=%q rebuilt=%q", originalToolKey, rebuiltToolKey)
+	}
+	if originalToolKey != rebuiltToolKey {
+		t.Fatal("tool prefix key changed even though final wire tools were unchanged")
 	}
 }
 

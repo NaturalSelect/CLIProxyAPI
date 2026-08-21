@@ -46,6 +46,7 @@ docs/*
 AGENTS.md
 CLAUDE.md
 GEMINI.md
+AGENTS.override.md
 
 # Tooling metadata
 .vscode/*
@@ -57,6 +58,7 @@ GEMINI.md
 .serena/*
 .agent/*
 .agents
+.pi
 .agents/*
 .opencode/*
 .idea/*
@@ -64,8 +66,16 @@ GEMINI.md
 .bmad/*
 _bmad/*
 _bmad-output/*
+.gocache/
+.gitnexus/
 
 # macOS
 .DS_Store
 ._*
-.gocache/
+
+# docker
+docker-compose.override.yml
+
+
+# Local LLM Wiki vault
+.llm-wiki

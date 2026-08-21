@@ -106,6 +106,7 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	cfg.SanitizeAPIKeyModelRules()
 	cfg.OAuthExcludedModels = NormalizeOAuthExcludedModels(cfg.OAuthExcludedModels)
 	cfg.SanitizeOAuthModelAlias()
+	cfg.SanitizeOAuthRequestScopedErrors()
 	cfg.SanitizePayloadRules()
 
 	return &cfg, nil

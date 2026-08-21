@@ -29,7 +29,7 @@ func TestGetRoutingInsights_ReturnsHashPreview(t *testing.T) {
 	h := &Handler{authManager: manager}
 	rec := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(rec)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/v0/management/routing/insights?window=5m&provider=claude&model=claude-sonnet-4-6&idempotency_key=test-key", nil)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v0/management/routing-insights?window=5m&provider=claude&model=claude-sonnet-4-6&idempotency_key=test-key", nil)
 	h.GetRoutingInsights(ctx)
 
 	if rec.Code != http.StatusOK {

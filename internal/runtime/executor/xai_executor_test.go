@@ -656,6 +656,96 @@ func TestXAIExecutorExecuteFiltersInternalXSearchCalls(t *testing.T) {
 	}
 }
 
+func TestXAIExecutorExecuteAcceptsResponseIncomplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"output\":[],\"usage\":{\"input_tokens\":8,\"output_tokens\":1,\"total_tokens\":9}}}\n\n"))
+	}))
+	defer server.Close()
+
+	exec := NewXAIExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		Provider:   "xai",
+		Attributes: map[string]string{"base_url": server.URL},
+		Metadata:   map[string]any{"access_token": "xai-token"},
+	}
+	resp, err := exec.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "grok-4.5",
+		Payload: []byte(`{"model":"grok-4.5","input":"hi","max_output_tokens":1}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FormatOpenAIResponse,
+		Stream:       false,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got := gjson.GetBytes(resp.Payload, "status").String(); got != "incomplete" {
+		t.Fatalf("status = %q, want incomplete; payload=%s", got, resp.Payload)
+	}
+	if got := gjson.GetBytes(resp.Payload, "incomplete_details.reason").String(); got != "max_output_tokens" {
+		t.Fatalf("incomplete reason = %q, want max_output_tokens; payload=%s", got, resp.Payload)
+	}
+	if got := gjson.GetBytes(resp.Payload, "output.#").Int(); got != 1 {
+		t.Fatalf("output length = %d, want 1; payload=%s", got, resp.Payload)
+	}
+}
+
+func TestXAIExecutorExecuteStreamAcceptsResponseIncomplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n")
+		_, _ = fmt.Fprint(w, "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"output\":[],\"usage\":{\"input_tokens\":8,\"output_tokens\":1,\"total_tokens\":9}}}\n\n")
+	}))
+	defer server.Close()
+
+	exec := NewXAIExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		Provider:   "xai",
+		Attributes: map[string]string{"base_url": server.URL},
+		Metadata:   map[string]any{"access_token": "xai-token"},
+	}
+	result, err := exec.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "grok-4.5",
+		Payload: []byte(`{"model":"grok-4.5","input":"hi","max_output_tokens":1}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FormatOpenAIResponse,
+		Stream:       true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStream() error = %v", err)
+	}
+
+	var stream bytes.Buffer
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("stream chunk error = %v", chunk.Err)
+		}
+		stream.Write(chunk.Payload)
+		stream.WriteByte('\n')
+	}
+
+	var incomplete gjson.Result
+	for _, line := range strings.Split(stream.String(), "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if !gjson.Valid(line) {
+			continue
+		}
+		if event := gjson.Parse(line); event.Get("type").String() == "response.incomplete" {
+			incomplete = event
+		}
+	}
+	if !incomplete.Exists() {
+		t.Fatalf("no response.incomplete chunk forwarded: %s", stream.String())
+	}
+	if got := incomplete.Get("response.output.#").Int(); got != 1 {
+		t.Fatalf("incomplete output length = %d, want 1; event=%s", got, incomplete.Raw)
+	}
+	if got := incomplete.Get("response.usage.total_tokens").Int(); got != 9 {
+		t.Fatalf("incomplete usage total_tokens = %d, want 9; event=%s", got, incomplete.Raw)
+	}
+}
+
 func TestXAIExecutorPrepareHonorsInjectXSearchConfig(t *testing.T) {
 	t.Parallel()
 
@@ -799,6 +889,46 @@ func TestEnsureXAINativeXSearchTool(t *testing.T) {
 	}
 	if xSearchAllowed != 1 {
 		t.Fatalf("allowed_tools x_search count = %d, want 1; body=%s", xSearchAllowed, out)
+	}
+}
+
+func TestXAIExecutorPrepareNormalizesClaudeWebSearchToolChoice(t *testing.T) {
+	t.Parallel()
+
+	exec := NewXAIExecutor(&config.Config{})
+	prepared, errPrepare := exec.prepareResponsesRequest(context.Background(), cliproxyexecutor.Request{
+		Model: "grok-4.5",
+		Payload: []byte(`{
+			"model":"grok-4.5",
+			"max_tokens":4096,
+			"stream":true,
+			"output_config":{"effort":"high"},
+			"thinking":{"type":"disabled"},
+			"messages":[{"role":"user","content":[{"type":"text","text":"Perform a web search"}]}],
+			"tool_choice":{"type":"tool","name":"web_search"},
+			"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":8}]
+		}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FormatClaude,
+		Stream:       true,
+	}, true)
+	if errPrepare != nil {
+		t.Fatalf("prepareResponsesRequest() error = %v", errPrepare)
+	}
+
+	choice := gjson.GetBytes(prepared.body, "tool_choice")
+	if got := choice.Get("type").String(); got != "allowed_tools" {
+		t.Fatalf("tool_choice.type = %q, want allowed_tools; body=%s", got, prepared.body)
+	}
+	if got := choice.Get("mode").String(); got != "required" {
+		t.Fatalf("tool_choice.mode = %q, want required; body=%s", got, prepared.body)
+	}
+	allowed := choice.Get("tools").Array()
+	if len(allowed) != 1 {
+		t.Fatalf("tool_choice.tools length = %d, want 1; body=%s", len(allowed), prepared.body)
+	}
+	if got := allowed[0].Get("type").String(); got != "web_search" {
+		t.Fatalf("tool_choice.tools.0.type = %q, want web_search; body=%s", got, prepared.body)
 	}
 }
 
@@ -2156,11 +2286,14 @@ func TestXAIExecutorExecuteStreamCompactionTriggerUsesCompactEndpoint(t *testing
 			t.Fatalf("missing %s event in stream: %s", eventName, output)
 		}
 	}
+	if strings.Count(output, `"model":"grok-4.3"`) < 2 {
+		t.Fatalf("response.model missing from created/in_progress events: %s", output)
+	}
 	if !strings.Contains(output, `"type":"compaction"`) || !strings.Contains(output, `"encrypted_content":"opaque"`) {
 		t.Fatalf("compaction output missing from stream: %s", output)
 	}
-	if !strings.Contains(output, `"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}`) {
-		t.Fatalf("usage missing from completed stream: %s", output)
+	if !strings.Contains(output, `"output_tokens_details":{"reasoning_tokens":0}`) || !strings.Contains(output, `"input_tokens_details":{"cached_tokens":0}`) {
+		t.Fatalf("usage details missing from completed stream: %s", output)
 	}
 }
 
@@ -3800,6 +3933,47 @@ func TestXAIExecutorComposerReusesClaudeCodeSession(t *testing.T) {
 	}
 }
 
+func TestApplyXAIHeaders_EmptyAPIKey_OmitsAuthorization(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer preexisting-bearer")
+	auth := &cliproxyauth.Auth{
+		Provider: "xai",
+		Attributes: map[string]string{
+			"auth_kind":           "apikey",
+			"base_url":            "https://custom-xai.example.com",
+			"header:Custom-Token": "xai-custom",
+		},
+	}
+	applyXAIHeaders(req, auth, "", false, "session-123")
+
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want empty for empty API key", got)
+	}
+	if got := req.Header.Get("x-grok-conv-id"); got != "session-123" {
+		t.Fatalf("x-grok-conv-id = %q, want session-123", got)
+	}
+	if got := req.Header.Get("Custom-Token"); got != "xai-custom" {
+		t.Fatalf("Custom-Token = %q, want xai-custom", got)
+	}
+
+	// Also verify PrepareRequest
+	req2, _ := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", nil)
+	req2.Header.Set("Authorization", "Bearer preexisting-bearer")
+	exec := &XAIExecutor{}
+	if errPrep := exec.PrepareRequest(req2, auth); errPrep != nil {
+		t.Fatalf("PrepareRequest() error = %v", errPrep)
+	}
+	if got := req2.Header.Get("Authorization"); got != "" {
+		t.Fatalf("PrepareRequest Authorization = %q, want empty", got)
+	}
+	if got := req2.Header.Get("Custom-Token"); got != "xai-custom" {
+		t.Fatalf("PrepareRequest Custom-Token = %q, want xai-custom", got)
+	}
+}
+
 func TestSanitizeXAIInputEncryptedContent_DropsInvalidReasoningBlob(t *testing.T) {
 	body := []byte(`{"model":"grok-4.3","input":[{"type":"reasoning","summary":[],"encrypted_content":"bad"},{"type":"reasoning","summary":[],"encrypted_content":"gAAAAABinvalid-gpt-shape"},{"role":"user","content":"hi"}]}`)
 	got := sanitizeXAIInputEncryptedContent(body)
@@ -4828,6 +5002,11 @@ func TestApplyXAIChatHeaders(t *testing.T) {
 		if got := req.Header.Get(xaiClientVersionHeader); got != "" {
 			t.Fatalf("%s = %q, want empty for official API", xaiClientVersionHeader, got)
 		}
+		for _, header := range []string{"x-grok-client-identifier", "x-authenticateresponse"} {
+			if got := req.Header.Get(header); got != "" {
+				t.Fatalf("%s = %q, want empty for official API", header, got)
+			}
+		}
 		if got := req.Header.Get("User-Agent"); got != "" {
 			t.Fatalf("User-Agent = %q, want empty for official API", got)
 		}
@@ -4855,6 +5034,12 @@ func TestApplyXAIChatHeaders(t *testing.T) {
 		if got := req.Header.Get(xaiClientVersionHeader); got != xaiClientVersionValue {
 			t.Fatalf("%s = %q, want %q", xaiClientVersionHeader, got, xaiClientVersionValue)
 		}
+		if got := req.Header.Get("x-grok-client-identifier"); got != "grok-shell" {
+			t.Fatalf("x-grok-client-identifier = %q, want grok-shell", got)
+		}
+		if got := req.Header.Get("x-authenticateresponse"); got != "authenticate-response" {
+			t.Fatalf("x-authenticateresponse = %q, want authenticate-response", got)
+		}
 		if got := req.Header.Get("User-Agent"); got != "xai-grok-workspace/"+xaiClientVersionValue {
 			t.Fatalf("User-Agent = %q, want xai-grok-workspace/%s", got, xaiClientVersionValue)
 		}
@@ -4876,6 +5061,11 @@ func TestApplyXAIChatHeaders(t *testing.T) {
 		if got := req.Header.Get(xaiClientVersionHeader); got != "" {
 			t.Fatalf("%s = %q, want empty for custom gateway", xaiClientVersionHeader, got)
 		}
+		for _, header := range []string{"x-grok-client-identifier", "x-authenticateresponse"} {
+			if got := req.Header.Get(header); got != "" {
+				t.Fatalf("%s = %q, want empty for custom gateway", header, got)
+			}
+		}
 		if got := req.Header.Get("User-Agent"); got != "" {
 			t.Fatalf("User-Agent = %q, want empty for custom gateway", got)
 		}
@@ -4889,6 +5079,8 @@ func TestApplyXAIChatHeaders(t *testing.T) {
 				xaiUsingAPIAttr:                    "false",
 				"header:" + xaiTokenAuthHeader:     "custom-token-auth",
 				"header:" + xaiClientVersionHeader: "custom-client-version",
+				"header:x-grok-client-identifier":  "custom-client-identifier",
+				"header:x-authenticateresponse":    "custom-authenticate-response",
 			},
 		}
 		applyXAIChatHeaders(req, auth, "xai-token", true, "")
@@ -4898,6 +5090,12 @@ func TestApplyXAIChatHeaders(t *testing.T) {
 		}
 		if got := req.Header.Get(xaiClientVersionHeader); got != "custom-client-version" {
 			t.Fatalf("%s = %q, want custom-client-version", xaiClientVersionHeader, got)
+		}
+		if got := req.Header.Get("x-grok-client-identifier"); got != "custom-client-identifier" {
+			t.Fatalf("x-grok-client-identifier = %q, want custom-client-identifier", got)
+		}
+		if got := req.Header.Get("x-authenticateresponse"); got != "custom-authenticate-response" {
+			t.Fatalf("x-authenticateresponse = %q, want custom-authenticate-response", got)
 		}
 	})
 
@@ -4974,4 +5172,24 @@ func testValidGrokEncryptedContent() string {
 		buf = append(buf, sum[:]...)
 	}
 	return base64.RawStdEncoding.EncodeToString(buf[:256])
+}
+
+func TestXAIPatchCompletedOutput_EnsuresUsageDetails(t *testing.T) {
+	eventData := []byte(`{"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":10,"output_tokens":4,"total_tokens":14}}}`)
+	outputItemsByIndex := make(map[int64][]byte)
+	var outputItemsFallback [][]byte
+
+	got := xaiPatchCompletedOutput(eventData, outputItemsByIndex, outputItemsFallback)
+	if !gjson.GetBytes(got, "response.usage.output_tokens_details").Exists() {
+		t.Fatalf("expected output_tokens_details to exist, got %s", string(got))
+	}
+	if gjson.GetBytes(got, "response.usage.output_tokens_details.reasoning_tokens").Int() != 0 {
+		t.Fatalf("expected reasoning_tokens == 0, got %d", gjson.GetBytes(got, "response.usage.output_tokens_details.reasoning_tokens").Int())
+	}
+	if !gjson.GetBytes(got, "response.usage.input_tokens_details").Exists() {
+		t.Fatalf("expected input_tokens_details to exist, got %s", string(got))
+	}
+	if gjson.GetBytes(got, "response.usage.input_tokens_details.cached_tokens").Int() != 0 {
+		t.Fatalf("expected cached_tokens == 0, got %d", gjson.GetBytes(got, "response.usage.input_tokens_details.cached_tokens").Int())
+	}
 }

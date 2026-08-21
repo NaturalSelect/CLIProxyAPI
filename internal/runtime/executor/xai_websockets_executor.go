@@ -507,7 +507,7 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 	}
 	reporter.SetTranslatedReasoningEffort(prepared.body, e.Identifier())
 
-	wsHeaders := applyXAIWebsocketHeaders(http.Header{}, auth, token, prepared.sessionID)
+	wsHeaders := applyXAIWebsocketHeaders(http.Header{}, auth, token, prepared.sessionID, opts.Headers)
 	wsReqBody := buildXAIWebsocketRequestBody(prepared.body)
 	requestType := strings.TrimSpace(gjson.GetBytes(req.Payload, "type").String())
 	transcriptReset := strings.TrimSpace(gjson.GetBytes(wsReqBody, "previous_response_id").String()) == "" &&
@@ -808,12 +808,12 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 				}
 
 				if cliproxyexecutor.DownstreamWebsocket(ctx) {
-					downstreamPayload := payload
-					downstreamWarmupCompletedPayload := warmupCompletedPayload
+					downstreamPayload := helps.EnsureResponsesUsageDetails(payload)
+					downstreamWarmupCompletedPayload := helps.EnsureResponsesUsageDetails(warmupCompletedPayload)
 					if idMapper != nil {
-						downstreamPayload = idMapper.downstreamResponsePayload(payload)
+						downstreamPayload = idMapper.downstreamResponsePayload(downstreamPayload)
 						if len(warmupCompletedPayload) > 0 {
-							downstreamWarmupCompletedPayload = idMapper.downstreamResponsePayload(warmupCompletedPayload)
+							downstreamWarmupCompletedPayload = idMapper.downstreamResponsePayload(downstreamWarmupCompletedPayload)
 						}
 					}
 					if !send(cliproxyexecutor.StreamChunk{Payload: downstreamPayload}) {
@@ -967,7 +967,7 @@ func xaiWebsocketGenerateFalse(payload []byte) bool {
 }
 
 func buildXAIWebsocketWarmupCompletedPayload(createdPayload []byte) []byte {
-	completed := []byte(`{"type":"response.completed","response":{"output":[],"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`)
+	completed := []byte(`{"type":"response.completed","response":{"output":[],"usage":{"input_tokens":0,"input_tokens_details":{"cached_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":0}}}`)
 	if sequence := gjson.GetBytes(createdPayload, "sequence_number"); sequence.Exists() {
 		completed, _ = sjson.SetBytes(completed, "sequence_number", sequence.Int()+1)
 	}
@@ -978,17 +978,20 @@ func buildXAIWebsocketWarmupCompletedPayload(createdPayload []byte) []byte {
 			responsePayload, _ = sjson.SetRawBytes(responsePayload, "output", []byte("[]"))
 		}
 		if !gjson.GetBytes(responsePayload, "usage").Exists() {
-			responsePayload, _ = sjson.SetRawBytes(responsePayload, "usage", []byte(`{"input_tokens":0,"output_tokens":0,"total_tokens":0}`))
+			responsePayload, _ = sjson.SetRawBytes(responsePayload, "usage", []byte(`{"input_tokens":0,"input_tokens_details":{"cached_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":0}`))
 		}
 		completed, _ = sjson.SetRawBytes(completed, "response", responsePayload)
 	}
-	return completed
+	return helps.EnsureResponsesUsageDetails(completed)
 }
 
 func parseXAIWebsocketError(payload []byte) (error, bool) {
 	if wsErr, ok := parseCodexWebsocketError(payload); ok {
 		if statusError, okStatus := wsErr.(statusErrWithHeaders); okStatus {
 			xaiError := xaiStatusErr(statusError.code, payload)
+			// Apply normalized status (e.g. 403 bad-credentials -> 401) and any
+			// provider-specific retry hint while preserving websocket headers.
+			statusError.code = xaiError.code
 			if xaiError.retryAfter != nil {
 				statusError.retryAfter = xaiError.retryAfter
 			}
@@ -1446,13 +1449,15 @@ func buildXAIResponsesWebsocketURL(httpURL string) (string, error) {
 	return parsed.String(), nil
 }
 
-func applyXAIWebsocketHeaders(headers http.Header, auth *cliproxyauth.Auth, token string, sessionID string) http.Header {
+func applyXAIWebsocketHeaders(headers http.Header, auth *cliproxyauth.Auth, token string, sessionID string, clientHeaders ...http.Header) http.Header {
 	if headers == nil {
 		headers = http.Header{}
 	}
 	headers.Set("Content-Type", "application/json")
 	if strings.TrimSpace(token) != "" {
 		headers.Set("Authorization", "Bearer "+token)
+	} else {
+		headers.Del("Authorization")
 	}
 	if sessionID != "" {
 		headers.Set("x-grok-conv-id", sessionID)
@@ -1461,7 +1466,7 @@ func applyXAIWebsocketHeaders(headers http.Header, auth *cliproxyauth.Auth, toke
 	if auth != nil {
 		attrs = auth.Attributes
 	}
-	util.ApplyCustomHeadersFromAttrs(&http.Request{Header: headers}, attrs)
+	util.ApplyCustomHeadersFromAttrs(&http.Request{Header: headers}, attrs, clientHeaders...)
 	return headers
 }
 

@@ -41,7 +41,7 @@ func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth
 	if err != nil {
 		return nil, err
 	}
-	applyXAIChatHeaders(httpReq, auth, token, true, prepared.sessionID)
+	applyXAIChatHeaders(httpReq, auth, token, true, prepared.sessionID, opts.Headers)
 	e.recordXAIRequest(ctx, auth, url, httpReq.Header.Clone(), prepared.body)
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
@@ -123,7 +123,7 @@ func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth
 					switch normalizedEventName {
 					case "response.output_item.done":
 						xaiCollectOutputItemDone(eventData, outputItemsByIndex, &outputItemsFallback)
-					case "response.completed":
+					case "response.completed", "response.incomplete":
 						completed = true
 						detail, hasDetail := helps.ParseCodexUsage(eventData)
 						eventData = xaiPatchCompletedOutput(eventData, outputItemsByIndex, outputItemsFallback)
@@ -133,7 +133,11 @@ func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth
 							reporter.Publish(ctx, detail)
 						}
 						reporter.EnsurePublished(ctx)
-						cacheXAIReasoningReplayFromCompleted(ctx, prepared.replayScope, eventData)
+						if normalizedEventName == "response.completed" {
+							// A truncated turn carries no replayable terminal state, so only a
+							// completed response may refresh the reasoning replay cache.
+							cacheXAIReasoningReplayFromCompleted(ctx, prepared.replayScope, eventData)
+						}
 						normalizedEventName = gjson.GetBytes(eventData, "type").String()
 					}
 

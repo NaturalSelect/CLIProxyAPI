@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -21,6 +22,19 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+func claudeOAuthRequestCancellation(ctx context.Context, auth *Auth, err error) error {
+	if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "claude") || !strings.EqualFold(strings.TrimSpace(auth.Attributes["auth_kind"]), "oauth") {
+		return nil
+	}
+	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
+		return ctx.Err()
+	}
+	if errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
+}
+
 // Execute performs a non-streaming execution using the configured selector and executor.
 // It supports multiple providers for the same model and round-robins the starting provider per model.
 func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
@@ -30,7 +44,8 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 		return cliproxyexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
 	}
 	if m.HomeEnabled() {
-		return m.executeHome(ctx, normalized, req, opts, false)
+		resp, errHome := m.executeHome(ctx, normalized, req, opts, false)
+		return resp, unwrapRequestStopError(errHome)
 	}
 
 	_, maxRetryCredentials, maxWait := m.retrySettings()
@@ -42,8 +57,8 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 		if errExec == nil {
 			return resp, nil
 		}
-		if isRequestTerminatedError(errExec) {
-			return cliproxyexecutor.Response{}, errExec
+		if isRequestTerminatedError(errExec) || isRequestStopError(errExec) {
+			return cliproxyexecutor.Response{}, unwrapRequestStopError(errExec)
 		}
 		lastErr = errExec
 		wait, shouldRetry := m.shouldRetryAfterError(errExec, attempt, normalized, retryModel, maxWait)
@@ -55,6 +70,7 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 		}
 	}
 	if lastErr != nil {
+		lastErr = unwrapRequestStopError(lastErr)
 		if hasAntigravityProvider(normalized) && shouldAttemptAntigravityCreditsFallback(m, lastErr, normalized) {
 			if resp, ok, errCredits := m.tryAntigravityCreditsExecute(ctx, req, opts); errCredits != nil {
 				return cliproxyexecutor.Response{}, errCredits
@@ -75,7 +91,8 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 		return cliproxyexecutor.Response{}, &Error{Code: "provider_not_found", Message: "no provider supplied"}
 	}
 	if m.HomeEnabled() {
-		return m.executeHome(ctx, normalized, req, opts, true)
+		resp, errHome := m.executeHome(ctx, normalized, req, opts, true)
+		return resp, unwrapRequestStopError(errHome)
 	}
 
 	_, maxRetryCredentials, maxWait := m.retrySettings()
@@ -87,8 +104,8 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 		if errExec == nil {
 			return resp, nil
 		}
-		if isRequestTerminatedError(errExec) {
-			return cliproxyexecutor.Response{}, errExec
+		if isRequestTerminatedError(errExec) || isRequestStopError(errExec) {
+			return cliproxyexecutor.Response{}, unwrapRequestStopError(errExec)
 		}
 		lastErr = errExec
 		wait, shouldRetry := m.shouldRetryAfterError(errExec, attempt, normalized, retryModel, maxWait)
@@ -100,7 +117,7 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 		}
 	}
 	if lastErr != nil {
-		return cliproxyexecutor.Response{}, lastErr
+		return cliproxyexecutor.Response{}, unwrapRequestStopError(lastErr)
 	}
 	return cliproxyexecutor.Response{}, &Error{Code: "auth_not_found", Message: "no auth available"}
 }
@@ -128,8 +145,8 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 		if errStream == nil {
 			return result, nil
 		}
-		if isRequestTerminatedError(errStream) {
-			return nil, errStream
+		if isRequestTerminatedError(errStream) || isRequestStopError(errStream) {
+			return nil, unwrapRequestStopError(errStream)
 		}
 		lastErr = errStream
 		wait, shouldRetry := m.shouldRetryAfterError(errStream, attempt, normalized, retryModel, maxWait)
@@ -141,6 +158,7 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 		}
 	}
 	if lastErr != nil {
+		lastErr = unwrapRequestStopError(lastErr)
 		if hasAntigravityProvider(normalized) && shouldAttemptAntigravityCreditsFallback(m, lastErr, normalized) {
 			if result, ok, errCredits := m.tryAntigravityCreditsExecuteStream(ctx, req, opts); errCredits != nil {
 				return nil, errCredits
@@ -311,7 +329,10 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 		var errPrepare error
 		auth, errPrepare = m.prepareRequestAuth(execCtx, executor, auth)
 		if errPrepare != nil {
-			result := Result{AuthID: auth.ID, Provider: provider, Model: routeModel, Success: false, Error: resultErrorFromError(errPrepare)}
+			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errPrepare); errCancel != nil {
+				return cliproxyexecutor.Response{}, errCancel
+			}
+			result := Result{AuthID: auth.ID, Provider: provider, Model: routeModel, Success: false, Error: resultErrorFromError(errPrepare), Options: pickOpts}
 			m.MarkResult(execCtx, result)
 			lastErr = errPrepare
 			continue
@@ -334,7 +355,9 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			if !restoreExecutionModel {
 				execReq = attachResolvedAPIKeyModelInfo(routing, execReq, auth, routeModel, upstreamModel)
 			}
+			startExec := time.Now()
 			resp, errExec := executor.Execute(execCtx, auth, execReq, execOpts)
+			durationExec := time.Since(startExec)
 			if errExec != nil {
 				if errCtx := execCtx.Err(); errCtx != nil {
 					return cliproxyexecutor.Response{}, errCtx
@@ -342,13 +365,21 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				if refreshed, okRefresh := m.tryRefreshAfterUnauthorized(execCtx, auth, errExec, didRefreshOnUnauthorized); okRefresh {
 					auth = refreshed
 					didRefreshOnUnauthorized = true
+					startRetry := time.Now()
 					resp, errExec = executor.Execute(execCtx, auth, execReq, execOpts)
+					durationRetry := time.Since(startRetry)
 					if errExec != nil {
+						warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationRetry, errExec)
 						if errCtx := execCtx.Err(); errCtx != nil {
 							return cliproxyexecutor.Response{}, errCtx
 						}
 					}
+				} else {
+					warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationExec, errExec)
 				}
+			}
+			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errExec); errCancel != nil {
+				return cliproxyexecutor.Response{}, errCancel
 			}
 			result := Result{
 				AuthID:          auth.ID,
@@ -357,17 +388,40 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				Success:         errExec == nil,
 				ResponseHeaders: headersFromExecResult(resp, errExec),
 				ObservedAt:      time.Now(),
+				Options:         execOpts,
 			}
 			if errExec != nil {
 				result.Error = resultErrorFromError(errExec)
 				if ra := retryAfterFromError(errExec); ra != nil {
 					result.RetryAfter = ra
 				}
-				m.MarkResult(execCtx, result)
-				if isRequestInvalidError(errExec) {
+				if isCredentialScopedError(errExec) {
+					result.CredentialScope = true
+				}
+				action, okAction := matchRequestScopedErrorAction(auth, errExec, m.runtimeConfigSnapshot())
+				applyRequestScopedActionToResult(action, okAction, &result)
+				if isResponsesCompactAvailabilityNeutralError(execOpts, errExec, result.Error) {
+					m.recordAvailabilityNeutralResult(execCtx, result)
+				} else {
+					m.MarkResult(execCtx, result)
+				}
+				if okAction {
+					if isRequestScopedStop(action, okAction) {
+						return cliproxyexecutor.Response{}, wrapRequestStopError(errExec)
+					}
+					authErr = errExec
+					if result.CredentialScope {
+						break
+					}
+					continue
+				}
+				if isResponsesCompactRequestFaultError(execOpts, errExec) || isRequestInvalidError(errExec) {
 					return cliproxyexecutor.Response{}, errExec
 				}
 				authErr = errExec
+				if result.CredentialScope {
+					break
+				}
 				continue
 			}
 			m.MarkResult(execCtx, result)
@@ -376,7 +430,18 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			return resp, nil
 		}
 		if authErr != nil {
-			if isRequestInvalidError(authErr) {
+			action, okAction := matchRequestScopedErrorAction(auth, authErr, m.runtimeConfigSnapshot())
+			if okAction {
+				if isRequestScopedStop(action, okAction) {
+					return cliproxyexecutor.Response{}, wrapRequestStopError(authErr)
+				}
+				lastErr = authErr
+				if homeMode {
+					homeAuthCount++
+				}
+				continue
+			}
+			if isResponsesCompactRequestFaultError(opts, authErr) || isRequestInvalidError(authErr) {
 				return cliproxyexecutor.Response{}, authErr
 			}
 			lastErr = authErr
@@ -439,7 +504,10 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 		var errPrepare error
 		auth, errPrepare = m.prepareRequestAuth(execCtx, executor, auth)
 		if errPrepare != nil {
-			result := Result{AuthID: auth.ID, Provider: provider, Model: routeModel, Success: false, Error: resultErrorFromError(errPrepare)}
+			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errPrepare); errCancel != nil {
+				return cliproxyexecutor.Response{}, errCancel
+			}
+			result := Result{AuthID: auth.ID, Provider: provider, Model: routeModel, Success: false, Error: resultErrorFromError(errPrepare), Options: pickOpts}
 			m.MarkResult(execCtx, result)
 			lastErr = errPrepare
 			continue
@@ -462,7 +530,9 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			if !restoreExecutionModel {
 				execReq = attachResolvedAPIKeyModelInfo(routing, execReq, auth, routeModel, upstreamModel)
 			}
+			startExec := time.Now()
 			resp, errExec := executor.CountTokens(execCtx, auth, execReq, execOpts)
+			durationExec := time.Since(startExec)
 			if errExec != nil {
 				if errCtx := execCtx.Err(); errCtx != nil {
 					return cliproxyexecutor.Response{}, errCtx
@@ -470,13 +540,21 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				if refreshed, okRefresh := m.tryRefreshAfterUnauthorized(execCtx, auth, errExec, didRefreshOnUnauthorized); okRefresh {
 					auth = refreshed
 					didRefreshOnUnauthorized = true
+					startRetry := time.Now()
 					resp, errExec = executor.CountTokens(execCtx, auth, execReq, execOpts)
+					durationRetry := time.Since(startRetry)
 					if errExec != nil {
+						warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationRetry, errExec)
 						if errCtx := execCtx.Err(); errCtx != nil {
 							return cliproxyexecutor.Response{}, errCtx
 						}
 					}
+				} else {
+					warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationExec, errExec)
 				}
+			}
+			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errExec); errCancel != nil {
+				return cliproxyexecutor.Response{}, errCancel
 			}
 			result := Result{
 				AuthID:          auth.ID,
@@ -485,25 +563,44 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 				Success:         errExec == nil,
 				ResponseHeaders: headersFromExecResult(resp, errExec),
 				ObservedAt:      time.Now(),
+				Options:         execOpts,
 			}
 			if errExec != nil {
 				result.Error = resultErrorFromError(errExec)
 				if ra := retryAfterFromError(errExec); ra != nil {
 					result.RetryAfter = ra
 				}
+				action, okAction := matchRequestScopedErrorAction(auth, errExec, m.runtimeConfigSnapshot())
+				applyRequestScopedActionToResult(action, okAction, &result)
 				// Some Anthropic-compatible upstreams do not implement the
 				// count_tokens route and return a generic endpoint 404. Record
 				// the failure for hooks and metrics without suspending a model
 				// that remains usable through the messages endpoint.
-				if isCountTokensEndpointNotFoundError(errExec, execReq.Model) {
+				if isCountTokensEndpointNotFoundError(errExec, execReq.Model) && (result.Error == nil || result.Error.Code != ErrorCodeForceCooldown) {
 					m.recordAvailabilityNeutralResult(execCtx, result)
 				} else {
+					if isCredentialScopedError(errExec) {
+						result.CredentialScope = true
+					}
 					m.MarkResult(execCtx, result)
+				}
+				if okAction {
+					if isRequestScopedStop(action, okAction) {
+						return cliproxyexecutor.Response{}, wrapRequestStopError(errExec)
+					}
+					authErr = errExec
+					if result.CredentialScope {
+						break
+					}
+					continue
 				}
 				if isRequestInvalidError(errExec) {
 					return cliproxyexecutor.Response{}, errExec
 				}
 				authErr = errExec
+				if result.CredentialScope {
+					break
+				}
 				continue
 			}
 			m.MarkResult(execCtx, result)
@@ -512,6 +609,17 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			return resp, nil
 		}
 		if authErr != nil {
+			action, okAction := matchRequestScopedErrorAction(auth, authErr, m.runtimeConfigSnapshot())
+			if okAction {
+				if isRequestScopedStop(action, okAction) {
+					return cliproxyexecutor.Response{}, wrapRequestStopError(authErr)
+				}
+				lastErr = authErr
+				if homeMode {
+					homeAuthCount++
+				}
+				continue
+			}
 			if isRequestInvalidError(authErr) {
 				return cliproxyexecutor.Response{}, authErr
 			}
@@ -536,6 +644,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 	homeAuthCount := 1
 	tried := make(map[string]struct{})
 	attempted := make(map[string]struct{})
+	unauthorizedRefreshTried := make(map[string]struct{})
 	var lastErr error
 	for {
 		if !homeMode && maxRetryCredentials > 0 && len(attempted) >= maxRetryCredentials {
@@ -576,6 +685,15 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			}
 			return nil, &Error{Code: "executor_not_found", Message: "executor not registered"}
 		}
+		if selection != nil {
+			if _, refreshedAlready := unauthorizedRefreshTried[auth.ID]; refreshedAlready {
+				selection.End("repeated_refresh_auth")
+				if lastErr != nil {
+					return nil, lastErr
+				}
+				return nil, repeatedHomeAuthError()
+			}
+		}
 
 		entry := logEntryWithRequestID(ctx)
 		debugLogAuthSelection(entry, auth, provider, routeModel)
@@ -602,6 +720,8 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			execCtx = context.WithValue(execCtx, roundTripperContextKey{}, rt)
 			execCtx = context.WithValue(execCtx, "cliproxy.roundtripper", rt)
 		}
+		// Enrich before auth preparation so prepare-stage usage records observe the client request.
+		execCtx = contextWithRequestedModelAlias(execCtx, opts, routeModel)
 		models, pooled, aliasResult, routing := m.preparedExecutionModelsWithAlias(auth, routeModel)
 		if selection != nil && aliasResult.ForceMapping && responseAlias != "" {
 			aliasResult.OriginalAlias = responseAlias
@@ -623,7 +743,12 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			auth, errPrepare = m.prepareRequestAuth(execCtx, executor, auth)
 		}
 		if errPrepare != nil {
-			result := Result{AuthID: auth.ID, Provider: provider, Model: routeModel, Success: false, Error: resultErrorFromError(errPrepare)}
+			if selection == nil {
+				if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errPrepare); errCancel != nil {
+					return nil, errCancel
+				}
+			}
+			result := Result{AuthID: auth.ID, Provider: provider, Model: routeModel, Success: false, Error: resultErrorFromError(errPrepare), Options: pickOpts}
 			if selection != nil {
 				m.reportHomeResult(execCtx, result, auth)
 				releaseAttempt()
@@ -651,7 +776,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			models = models[:1]
 			pooled = false
 		}
-		streamResult, errStream := m.executeStreamWithModelPool(execCtx, executor, auth, provider, execReq, execOpts, routeModel, streamExecutionModel, models, pooled, aliasResult, routing, !homeMode, selection != nil)
+		streamResult, errStream := m.executeStreamWithModelPool(execCtx, executor, auth, provider, execReq, execOpts, routeModel, streamExecutionModel, models, pooled, aliasResult, routing, !homeMode || selection != nil, selection != nil, unauthorizedRefreshTried)
 		if errStream != nil {
 			if selection != nil {
 				releaseAttempt()
@@ -661,6 +786,17 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			}
 			if errCtx := execCtx.Err(); errCtx != nil && ctx != nil && ctx.Err() != nil {
 				return nil, errCtx
+			}
+			action, okAction := matchRequestScopedErrorAction(auth, errStream, m.runtimeConfigSnapshot())
+			if okAction {
+				if isRequestScopedStop(action, okAction) {
+					return nil, wrapRequestStopError(errStream)
+				}
+				lastErr = errStream
+				if homeMode {
+					homeAuthCount++
+				}
+				continue
 			}
 			if isRequestInvalidError(errStream) {
 				return nil, errStream
@@ -681,7 +817,19 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 	}
 }
 
+func cloneRequestMetadata(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return make(map[string]any, 4)
+	}
+	dst := make(map[string]any, len(src)+4)
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 func ensureRequestedModelMetadata(opts cliproxyexecutor.Options, requestedModel string) cliproxyexecutor.Options {
+	opts.Metadata = cloneRequestMetadata(opts.Metadata)
 	requestedModel = strings.TrimSpace(requestedModel)
 	if requestedModel == "" {
 		return opts
@@ -689,16 +837,7 @@ func ensureRequestedModelMetadata(opts cliproxyexecutor.Options, requestedModel 
 	if hasRequestedModelMetadata(opts.Metadata) {
 		return opts
 	}
-	if len(opts.Metadata) == 0 {
-		opts.Metadata = map[string]any{cliproxyexecutor.RequestedModelMetadataKey: requestedModel}
-		return opts
-	}
-	meta := make(map[string]any, len(opts.Metadata)+1)
-	for k, v := range opts.Metadata {
-		meta[k] = v
-	}
-	meta[cliproxyexecutor.RequestedModelMetadataKey] = requestedModel
-	opts.Metadata = meta
+	opts.Metadata[cliproxyexecutor.RequestedModelMetadataKey] = requestedModel
 	return opts
 }
 
@@ -794,12 +933,15 @@ type requestAuthPrepareLock struct {
 
 // prepareHomeRequestAuth prepares a dispatch auth without reading or updating local auth state.
 func (m *Manager) prepareHomeRequestAuth(ctx context.Context, executor ProviderExecutor, selection *HomeDispatchSelection) (*Auth, error) {
-	if m == nil || executor == nil || selection == nil {
+	if selection == nil {
 		return nil, nil
 	}
-	auth := selection.CloneAuth()
-	if auth == nil {
-		return nil, nil
+	return m.prepareHomeAuthSnapshot(ctx, executor, selection.CloneAuth())
+}
+
+func (m *Manager) prepareHomeAuthSnapshot(ctx context.Context, executor ProviderExecutor, auth *Auth) (*Auth, error) {
+	if m == nil || executor == nil || auth == nil {
+		return auth, nil
 	}
 	preparer, ok := executor.(RequestAuthPreparer)
 	if !ok || preparer == nil || !preparer.ShouldPrepareRequestAuth(auth) {
@@ -1170,6 +1312,68 @@ func formatOauthIdentity(auth *Auth, provider string, accountInfo string) string
 		return accountInfo
 	}
 	return strings.Join(parts, " ")
+}
+
+func formatAuthIdentity(auth *Auth, provider string) string {
+	if auth == nil {
+		return "auth=nil"
+	}
+	accountType, accountInfo := auth.AccountInfo()
+	switch accountType {
+	case "api_key":
+		return fmt.Sprintf("api_key=%s", util.HideAPIKey(accountInfo))
+	case "oauth":
+		return formatOauthIdentity(auth, provider, accountInfo)
+	default:
+		if auth.FileName != "" {
+			return fmt.Sprintf("auth_file=%s", filepath.Base(auth.FileName))
+		}
+		if auth.ID != "" {
+			return fmt.Sprintf("auth_id=%s", auth.ID)
+		}
+		if accountInfo != "" {
+			return accountInfo
+		}
+		return "unknown"
+	}
+}
+
+func summarizeErrorForLog(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.TrimSpace(err.Error())
+	const maxRunes = 300
+	runes := []rune(msg)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "..."
+	}
+	return msg
+}
+
+func warnLogUpstreamFailure(ctx context.Context, entry *log.Entry, provider, model string, auth *Auth, duration time.Duration, err error) {
+	if err == nil {
+		return
+	}
+	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
+		return
+	}
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	if isRequestInvalidError(err) {
+		return
+	}
+	if entry == nil {
+		if ctx != nil {
+			entry = logEntryWithRequestID(ctx)
+		} else {
+			entry = log.NewEntry(log.StandardLogger())
+		}
+	}
+	authIdent := formatAuthIdentity(auth, provider)
+	errSummary := summarizeErrorForLog(err)
+	entry.Warnf("upstream execution failed: provider=%s model=%s auth=%s duration=%s err=%s", provider, model, authIdent, duration.Round(time.Millisecond), errSummary)
 }
 
 // InjectCredentials delegates per-provider HTTP request preparation when supported.

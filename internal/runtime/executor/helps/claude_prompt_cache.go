@@ -423,6 +423,67 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 	return updatedPayload, plan
 }
 
+// RebuildClaudePromptCachePlan recalculates prefix keys from the final wire
+// payload without changing cache-control placement. Request pipelines use this
+// after final body signing or identity transforms that affect cacheable content.
+func (runtime *ClaudePromptCacheRuntime) RebuildClaudePromptCachePlan(
+	payload []byte,
+	plan *ClaudePromptCachePlan,
+) *ClaudePromptCachePlan {
+	if runtime == nil || plan == nil || strings.TrimSpace(plan.ScopeKey) == "" || len(payload) == 0 || !gjson.ValidBytes(payload) {
+		return plan
+	}
+	runtime.initialize()
+
+	addedByKind := make(map[string][]bool)
+	automaticHistoryAdded := false
+	for _, prefix := range plan.Prefixes {
+		if prefix.Kind == "automatic" {
+			automaticHistoryAdded = automaticHistoryAdded || prefix.Added
+			continue
+		}
+		addedByKind[prefix.Kind] = append(addedByKind[prefix.Kind], prefix.Added)
+	}
+
+	toolFingerprints, toolPrefixKeys := fingerprintClaudeTools(payload)
+	finalLocations, _ := collectClaudeCacheBreakpoints(payload)
+	locationIndexByKind := make(map[string]int)
+	addedBreakpoints := 0
+	for locationIndex := range finalLocations {
+		kind := finalLocations[locationIndex].kind
+		kindIndex := locationIndexByKind[kind]
+		if kindIndex < len(addedByKind[kind]) {
+			finalLocations[locationIndex].added = addedByKind[kind][kindIndex]
+		}
+		if finalLocations[locationIndex].added {
+			addedBreakpoints++
+		}
+		locationIndexByKind[kind] = kindIndex + 1
+	}
+
+	now := runtime.now()
+	prefixes := buildClaudePromptCachePrefixes(plan.ScopeKey, payload, finalLocations, toolPrefixKeys, runtime, now)
+	automaticHistory := plan.Summary.AutomaticHistory && isValidClaudeCacheControl(gjson.GetBytes(payload, "cache_control"))
+	if automaticHistory {
+		prefixes = append(prefixes, buildClaudeAutomaticHistoryPrefixes(
+			plan.ScopeKey,
+			payload,
+			claudeCacheControlTTL(gjson.GetBytes(payload, "cache_control").Raw),
+			automaticHistoryAdded,
+			runtime,
+			now,
+		)...)
+	}
+
+	rebuiltPlan := *plan
+	rebuiltPlan.Prefixes = prefixes
+	rebuiltPlan.Summary.AddedBreakpoints = addedBreakpoints
+	rebuiltPlan.Summary.FinalBreakpoints = len(finalLocations)
+	rebuiltPlan.Summary.CurrentToolCount = len(toolFingerprints)
+	rebuiltPlan.Summary.AutomaticHistory = automaticHistory
+	return &rebuiltPlan
+}
+
 // NormalizeClaudeCacheControlTTL enforces Anthropic's tools → system →
 // messages TTL ordering. Once a default 5-minute breakpoint appears, later
 // one-hour breakpoints are downgraded to the default TTL.
