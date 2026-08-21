@@ -65,6 +65,7 @@ jobs:
               .Output
             ' "${test_log}" | tail -n 160
           )"
+          failed_tests="$(jq -r 'select(.Action == "fail" and .Package != null and .Test != null) | [.Package, .Test] | @tsv' "${test_log}" | sort -u)"
           failed_packages="$(jq -r 'select(.Action == "fail" and .Package != null) | .Package' "${test_log}" | sort -u)"
           if [[ -n "${failed_packages}" ]]; then
             package_output="$(
@@ -77,8 +78,21 @@ jobs:
               done <<< "${failed_packages}"
             )"
             test_output="${package_output}"
+            if [[ -n "${failed_tests}" ]]; then
+              failed_test_output="$(
+                while IFS=$'\t' read -r failed_package failed_test; do
+                  printf '=== FAILED TEST: %s / %s ===\n' "${failed_package}" "${failed_test}"
+                  jq -r \
+                    --arg package "${failed_package}" \
+                    --arg test "${failed_test}" \
+                    'select(.Package == $package and .Test == $test and .Action == "output") | .Output' \
+                    "${test_log}" | tail -n 80
+                done <<< "${failed_tests}"
+              )"
+              test_output="$(printf '%s\n\n%s' "${failed_test_output}" "${test_output}")"
+            fi
             if [[ -n "${compiler_output}" ]]; then
-              test_output="$(printf '=== COMPILER OUTPUT ===\n%s\n\n%s' "${compiler_output}" "${package_output}")"
+              test_output="$(printf '=== COMPILER OUTPUT ===\n%s\n\n%s' "${compiler_output}" "${test_output}")"
             fi
           else
             test_output="$(tail -n 80 "${test_log}")"
