@@ -55,9 +55,20 @@ jobs:
             exit 0
           fi
 
+          compiler_output="$(
+            jq -r '
+              select(
+                .Action == "output" and
+                .Test == null and
+                .Output != null and
+                (.Output | test("(^# |\\.go:[0-9]+:[0-9]+:|undefined:|cannot use |not enough arguments|too many arguments|redeclared|imported and not used)"))
+              ) |
+              .Output
+            ' "${test_log}" | tail -n 160
+          )"
           failed_packages="$(jq -r 'select(.Action == "fail" and .Package != null) | .Package' "${test_log}" | sort -u)"
           if [[ -n "${failed_packages}" ]]; then
-            test_output="$(
+            package_output="$(
               while IFS= read -r failed_package; do
                 printf '=== FAILED PACKAGE: %s ===\n' "${failed_package}"
                 jq -r \
@@ -66,6 +77,10 @@ jobs:
                   "${test_log}" | tail -n 120
               done <<< "${failed_packages}"
             )"
+            test_output="${package_output}"
+            if [[ -n "${compiler_output}" ]]; then
+              test_output="$(printf '=== COMPILER OUTPUT ===\n%s\n\n%s' "${compiler_output}" "${package_output}")"
+            fi
           else
             test_output="$(tail -n 80 "${test_log}")"
           fi
