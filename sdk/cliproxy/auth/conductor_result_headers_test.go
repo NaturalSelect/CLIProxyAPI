@@ -12,6 +12,12 @@ type resultHeadersTestError struct {
 	headers http.Header
 }
 
+func newResultHeadersTestHeader(remaining string) http.Header {
+	headers := make(http.Header)
+	headers.Set("X-RateLimit-Remaining", remaining)
+	return headers
+}
+
 func (errResult *resultHeadersTestError) Error() string {
 	return "upstream request failed"
 }
@@ -21,7 +27,7 @@ func (errResult *resultHeadersTestError) Headers() http.Header {
 }
 
 func TestHeadersFromExecResultReadsWrappedErrorHeaders(t *testing.T) {
-	expectedHeaders := http.Header{"X-RateLimit-Remaining": []string{"7"}}
+	expectedHeaders := newResultHeadersTestHeader("7")
 	wrappedError := errors.Join(errors.New("outer failure"), &resultHeadersTestError{headers: expectedHeaders})
 
 	actualHeaders := headersFromExecResult(cliproxyexecutor.Response{}, wrappedError)
@@ -31,7 +37,7 @@ func TestHeadersFromExecResultReadsWrappedErrorHeaders(t *testing.T) {
 }
 
 func TestHeadersFromExecResultFallsBackToResponseHeaders(t *testing.T) {
-	expectedHeaders := http.Header{"X-RateLimit-Remaining": []string{"5"}}
+	expectedHeaders := newResultHeadersTestHeader("5")
 	actualHeaders := headersFromExecResult(
 		cliproxyexecutor.Response{Headers: expectedHeaders},
 		errors.New("upstream request failed after response creation"),
@@ -43,7 +49,7 @@ func TestHeadersFromExecResultFallsBackToResponseHeaders(t *testing.T) {
 }
 
 func TestHeadersFromExecResultFallsBackWhenErrorHeadersAreEmpty(t *testing.T) {
-	expectedHeaders := http.Header{"X-RateLimit-Remaining": []string{"3"}}
+	expectedHeaders := newResultHeadersTestHeader("3")
 	actualHeaders := headersFromExecResult(
 		cliproxyexecutor.Response{Headers: expectedHeaders},
 		&resultHeadersTestError{},
@@ -55,8 +61,8 @@ func TestHeadersFromExecResultFallsBackWhenErrorHeadersAreEmpty(t *testing.T) {
 }
 
 func TestHeadersFromExecResultPrefersNonEmptyErrorHeaders(t *testing.T) {
-	responseHeaders := http.Header{"X-RateLimit-Remaining": []string{"5"}}
-	errorHeaders := http.Header{"X-RateLimit-Remaining": []string{"1"}}
+	responseHeaders := newResultHeadersTestHeader("5")
+	errorHeaders := newResultHeadersTestHeader("1")
 	actualHeaders := headersFromExecResult(
 		cliproxyexecutor.Response{Headers: responseHeaders},
 		&resultHeadersTestError{headers: errorHeaders},

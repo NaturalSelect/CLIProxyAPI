@@ -1676,6 +1676,9 @@ func hasActiveCredentialScopedCooldown(auth *Auth, now time.Time) bool {
 	if auth == nil || !auth.Unavailable || auth.NextRetryAfter.IsZero() || !auth.NextRetryAfter.After(now) {
 		return false
 	}
+	if auth.Quota.Reason == "credential_quota" && auth.Quota.NextRecoverAt.After(now) {
+		return true
+	}
 	return isCredentialScopedResultError(auth.LastError)
 }
 
