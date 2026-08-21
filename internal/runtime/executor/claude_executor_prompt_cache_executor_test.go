@@ -410,8 +410,8 @@ func TestClaudeExecutorCountTokensPassthroughEnforcesCacheControlLimit(t *testin
 	if got := countCacheControls(seenBody); got != 4 {
 		t.Fatalf("cache_control count = %d, want 4", got)
 	}
-	if got := gjson.GetBytes(seenBody, "messages.0.content.0.cache_control.ttl").String(); got != "1h" {
-		t.Fatalf("history ttl = %q, want 1h", got)
+	if gjson.GetBytes(seenBody, "messages.0.content.0.cache_control").Exists() {
+		t.Fatalf("history cache_control survived the four-breakpoint limit: %s", seenBody)
 	}
 }
 

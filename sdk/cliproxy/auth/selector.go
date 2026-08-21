@@ -864,9 +864,10 @@ func sessionHeaderValue(headers http.Header, name string) string {
 //  7. session_id / sessionId
 //  8. prompt_cache_key, with conversation / conversation.id as an alias
 //  9. metadata.user_id and conversation_id legacy body fields
-//  10. explicit execution session metadata
-//  11. stable context-derived session identity
-//  12. stable hash from initial message content
+//  10. normalized Claude session metadata
+//  11. explicit execution session metadata
+//  12. stable context-derived session identity
+//  13. stable hash from initial message content
 func ExtractSessionID(headers http.Header, payload []byte, metadata map[string]any) string {
 	primary, _ := extractSessionIDs(headers, payload, metadata)
 	return primary
@@ -936,6 +937,11 @@ func extractSessionIDs(headers http.Header, payload []byte, metadata map[string]
 		}
 		if conversationID := normalizedSessionCandidate(gjson.GetBytes(payload, "conversation_id").String()); conversationID != "" {
 			return "conv:" + conversationID, ""
+		}
+	}
+	if claudeSessionID, ok := metadata[cliproxyexecutor.ClaudeSessionIDMetadataKey].(string); ok {
+		if claudeSessionID = normalizedSessionCandidate(claudeSessionID); claudeSessionID != "" {
+			return "claude:" + claudeSessionID, ""
 		}
 	}
 

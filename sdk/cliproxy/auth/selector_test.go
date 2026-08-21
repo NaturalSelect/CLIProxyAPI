@@ -750,6 +750,18 @@ func TestExtractSessionID(t *testing.T) {
 	}
 }
 
+func TestExtractSessionIDUsesNormalizedClaudeSessionMetadata(t *testing.T) {
+	t.Parallel()
+
+	const sessionID = "c352b319-8518-5a10-a84e-7fdb54cb876a"
+	got := ExtractSessionID(nil, nil, map[string]any{
+		cliproxyexecutor.ClaudeSessionIDMetadataKey: sessionID,
+	})
+	if got != "claude:"+sessionID {
+		t.Fatalf("ExtractSessionID() = %q, want %q", got, "claude:"+sessionID)
+	}
+}
+
 func TestSessionAffinitySelector_SameSessionSameAuth(t *testing.T) {
 	t.Parallel()
 

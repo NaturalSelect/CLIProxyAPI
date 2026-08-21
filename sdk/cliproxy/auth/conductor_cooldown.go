@@ -1342,7 +1342,7 @@ func resultErrorFromError(err error) *Error {
 		resultErr.HTTPStatus = statusCodeFromError(err)
 	}
 	switch {
-	case isCredentialScopedError(err):
+	case isCredentialBillingError(err):
 		resultErr.Code = credentialScopedErrorCode
 	case isRequestScopedError(err) || isRequestInvalidError(err):
 		// Prefer true request-scoped faults (including Claude OAuth cancellation)
@@ -1507,10 +1507,7 @@ func isCredentialScopedError(err error) bool {
 		IsCredentialScoped() bool
 	}
 	var csp credentialScopedProvider
-	if errors.As(err, &csp) && csp != nil && csp.IsCredentialScoped() {
-		return true
-	}
-	return statusCodeFromError(err) == http.StatusBadRequest && isCredentialScopedErrorMessage(err.Error())
+	return errors.As(err, &csp) && csp != nil && csp.IsCredentialScoped()
 }
 
 func statusCodeFromResult(err *Error) int {
@@ -1644,6 +1641,10 @@ func isCredentialScopedErrorMessage(message string) bool {
 	}
 	return strings.Contains(lower, "third-party apps now draw from extra usage") ||
 		strings.Contains(lower, "claim credit at console.anthropic.com/settings/usage")
+}
+
+func isCredentialBillingError(err error) bool {
+	return err != nil && statusCodeFromError(err) == http.StatusBadRequest && isCredentialScopedErrorMessage(err.Error())
 }
 
 func isCredentialScopedResultError(err *Error) bool {
@@ -1952,7 +1953,7 @@ func isRequestInvalidError(err error) bool {
 	if isModelSupportError(err) {
 		return false
 	}
-	if isCredentialScopedError(err) {
+	if isCredentialScopedError(err) || isCredentialBillingError(err) {
 		return false
 	}
 	status := statusCodeFromError(err)
