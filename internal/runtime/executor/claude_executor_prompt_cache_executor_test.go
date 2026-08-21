@@ -57,33 +57,23 @@ func TestApplyClaudeHeadersWithSessionOverridesConflictingAuthHeader(t *testing.
 
 func TestClaudeExecutorExecuteStreamRetainsStartedCacheStateUntilStreamEnds(t *testing.T) {
 	configuredWaitSeconds := 1
-	releaseStream := make(chan struct{})
+	streamReader, streamWriter := io.Pipe()
 	var releaseOnce sync.Once
 	release := func() {
-		releaseOnce.Do(func() { close(releaseStream) })
+		releaseOnce.Do(func() {
+			go func() {
+				_, _ = streamWriter.Write([]byte(strings.Join([]string{
+					`data: {"type":"message_start","message":{"id":"msg_stream","model":"claude-sonnet-4-5","usage":{"input_tokens":1,"output_tokens":0,"cache_creation_input_tokens":10}}}`,
+					`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`,
+					`data: {"type":"message_stop"}`,
+				}, "\n\n") + "\n\n"))
+				_ = streamWriter.Close()
+			}()
+		})
 	}
 	capturedBody := make(chan []byte, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
-		body, _ := io.ReadAll(request.Body)
-		capturedBody <- bytes.Clone(body)
-		responseWriter.Header().Set("Content-Type", "text/event-stream")
-		responseWriter.WriteHeader(http.StatusOK)
-		if flusher, ok := responseWriter.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		select {
-		case <-releaseStream:
-		case <-request.Context().Done():
-			return
-		}
-		_, _ = responseWriter.Write([]byte(strings.Join([]string{
-			`data: {"type":"message_start","message":{"id":"msg_stream","model":"claude-sonnet-4-5","usage":{"input_tokens":1,"output_tokens":0,"cache_creation_input_tokens":10}}}`,
-			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`,
-			`data: {"type":"message_stop"}`,
-		}, "\n\n") + "\n\n"))
-	}))
-	defer server.Close()
 	defer release()
+	baseURL := "https://anthropic.example.com"
 
 	runtime := NewClaudePromptCacheRuntime()
 	executor := NewClaudeExecutorWithPromptCacheRuntime(&config.Config{
@@ -94,7 +84,7 @@ func TestClaudeExecutorExecuteStreamRetainsStartedCacheStateUntilStreamEnds(t *t
 	}, runtime)
 	auth := &cliproxyauth.Auth{ID: "stream-cache-auth", Attributes: map[string]string{
 		"api_key":  "key-123",
-		"base_url": server.URL,
+		"base_url": baseURL,
 	}}
 	payload := []byte(`{
 		"model":"claude-sonnet-4-5",
@@ -108,9 +98,19 @@ func TestClaudeExecutorExecuteStreamRetainsStartedCacheStateUntilStreamEnds(t *t
 		]
 	}`)
 
-	testContext, cancelTest := context.WithTimeout(context.Background(), 10*time.Second)
+	testContext, cancelTest := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelTest()
-	result, errStream := executor.ExecuteStream(testContext, auth, cliproxyexecutor.Request{
+	requestContext := context.WithValue(testContext, "cliproxy.roundtripper", roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(request.Body)
+		capturedBody <- bytes.Clone(body)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       streamReader,
+			Request:    request,
+		}, nil
+	}))
+	result, errStream := executor.ExecuteStream(requestContext, auth, cliproxyexecutor.Request{
 		Model:   "claude-sonnet-4-5",
 		Payload: payload,
 	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude")})
@@ -128,8 +128,8 @@ func TestClaudeExecutorExecuteStreamRetainsStartedCacheStateUntilStreamEnds(t *t
 	// sent upstream. This reads the ground-truth breakpoint locations the first
 	// planning pass already committed, so the resulting prefix keys exactly
 	// match the ones registered when the in-flight request acquired its flight.
-	scopeKey := claudePromptCacheScopeKey(auth, "key-123", server.URL, "claude-sonnet-4-5")
-	officialAnthropic := isOfficialAnthropicBaseURL(server.URL)
+	scopeKey := claudePromptCacheScopeKey(auth, "key-123", baseURL, "claude-sonnet-4-5")
+	officialAnthropic := isOfficialAnthropicBaseURL(baseURL)
 	_, matchingPlan := runtime.PlanClaudePromptCache(
 		scopeKey,
 		upstreamBody,
