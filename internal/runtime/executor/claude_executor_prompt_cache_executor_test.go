@@ -25,7 +25,10 @@ func TestApplyClaudeHeadersWithSessionOverridesConflictingClientHeader(t *testin
 	request := newClaudeHeaderTestRequest(t, http.Header{
 		"X-Claude-Code-Session-Id": []string{"client-conflict"},
 	})
-	auth := &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "key-session-alignment"}}
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":    "key-session-alignment",
+		"cloak_mode": "always",
+	}}
 
 	if errHeaders := applyClaudeHeaders(request, auth, "key-session-alignment", false, nil, []byte(`{}`), &config.Config{}, nil, false, resolvedSessionID); errHeaders != nil {
 		t.Fatalf("applyClaudeHeaders() error = %v", errHeaders)
@@ -40,6 +43,7 @@ func TestApplyClaudeHeadersWithSessionOverridesConflictingAuthHeader(t *testing.
 	request := newClaudeHeaderTestRequest(t, nil)
 	auth := &cliproxyauth.Auth{Attributes: map[string]string{
 		"api_key":                         "key-session-alignment",
+		"cloak_mode":                      "always",
 		"header:X-Claude-Code-Session-Id": "credential-conflict",
 	}}
 
@@ -367,7 +371,7 @@ func TestClaudeExecutor_ExecuteOpenAINonStreamUsesSSEHeaders(t *testing.T) {
 	}
 }
 
-func TestClaudeExecutorCountTokensPassthroughPreservesCacheControls(t *testing.T) {
+func TestClaudeExecutorCountTokensPassthroughEnforcesCacheControlLimit(t *testing.T) {
 	var seenBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 		body, _ := io.ReadAll(request.Body)
@@ -403,19 +407,18 @@ func TestClaudeExecutorCountTokensPassthroughPreservesCacheControls(t *testing.T
 	if errCount != nil {
 		t.Fatalf("CountTokens() error = %v", errCount)
 	}
-	if got := countCacheControls(seenBody); got != 6 {
-		t.Fatalf("cache_control count = %d, want 6", got)
+	if got := countCacheControls(seenBody); got != 4 {
+		t.Fatalf("cache_control count = %d, want 4", got)
 	}
 	if got := gjson.GetBytes(seenBody, "messages.0.content.0.cache_control.ttl").String(); got != "1h" {
 		t.Fatalf("history ttl = %q, want 1h", got)
 	}
 }
 
-func TestClaudeExecutorCountTokensAdaptivePlansCompatibleProvider(t *testing.T) {
-	var seenBody []byte
+func TestClaudeExecutorCountTokensAdaptiveUsesLocalEstimateForCompatibleProvider(t *testing.T) {
+	upstreamRequestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
-		body, _ := io.ReadAll(request.Body)
-		seenBody = bytes.Clone(body)
+		upstreamRequestCount++
 		responseWriter.Header().Set("Content-Type", "application/json")
 		_, _ = responseWriter.Write([]byte(`{"input_tokens":42}`))
 	}))
@@ -439,24 +442,15 @@ func TestClaudeExecutorCountTokensAdaptivePlansCompatibleProvider(t *testing.T) 
 		]
 	}`)
 
-	_, errCount := executor.countTokensUpstream(context.Background(), auth, cliproxyexecutor.Request{
+	_, errCount := executor.CountTokens(context.Background(), auth, cliproxyexecutor.Request{
 		Model:   "claude-3-5-haiku-20241022",
 		Payload: payload,
 	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude")})
 	if errCount != nil {
 		t.Fatalf("CountTokens() error = %v", errCount)
 	}
-	for _, path := range []string{
-		"tools.0.cache_control",
-		"system.0.cache_control",
-		"messages.0.content.0.cache_control",
-	} {
-		if !gjson.GetBytes(seenBody, path).Exists() {
-			t.Fatalf("adaptive count_tokens body is missing %s: %s", path, seenBody)
-		}
-	}
-	if gjson.GetBytes(seenBody, "cache_control").Exists() {
-		t.Fatal("compatible-provider count_tokens request contains top-level automatic cache_control")
+	if upstreamRequestCount != 0 {
+		t.Fatalf("compatible-provider count_tokens upstream requests = %d, want 0", upstreamRequestCount)
 	}
 }
 

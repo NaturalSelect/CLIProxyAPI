@@ -956,6 +956,9 @@ func applyClaudeHeadersWithNativeProfile(
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs, incomingHeaders)
+	if sessionID != "" {
+		r.Header.Set("X-Claude-Code-Session-Id", sessionID)
+	}
 	// Custom credential headers are a configuration escape hatch for third-party
 	// gateways, so they keep the last word there. On api.anthropic.com they must
 	// not rewrite the reconstructed identity: an overridden Anthropic-Beta yields a
