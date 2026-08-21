@@ -27,8 +27,8 @@ func TestApplyClaudeHeadersWithSessionOverridesConflictingClientHeader(t *testin
 	})
 	auth := &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "key-session-alignment"}}
 
-	if errHeaders := applyClaudeHeadersWithSession(request, auth, "key-session-alignment", false, nil, resolvedSessionID, &config.Config{}, nil); errHeaders != nil {
-		t.Fatalf("applyClaudeHeadersWithSession() error = %v", errHeaders)
+	if errHeaders := applyClaudeHeaders(request, auth, "key-session-alignment", false, nil, []byte(`{}`), &config.Config{}, nil, false, resolvedSessionID); errHeaders != nil {
+		t.Fatalf("applyClaudeHeaders() error = %v", errHeaders)
 	}
 	if got := request.Header.Get("X-Claude-Code-Session-Id"); got != resolvedSessionID {
 		t.Fatalf("X-Claude-Code-Session-Id = %q, want %q", got, resolvedSessionID)
@@ -43,8 +43,8 @@ func TestApplyClaudeHeadersWithSessionOverridesConflictingAuthHeader(t *testing.
 		"header:X-Claude-Code-Session-Id": "credential-conflict",
 	}}
 
-	if errHeaders := applyClaudeHeadersWithSession(request, auth, "key-session-alignment", false, nil, resolvedSessionID, &config.Config{}, nil); errHeaders != nil {
-		t.Fatalf("applyClaudeHeadersWithSession() error = %v", errHeaders)
+	if errHeaders := applyClaudeHeaders(request, auth, "key-session-alignment", false, nil, []byte(`{}`), &config.Config{}, nil, false, resolvedSessionID); errHeaders != nil {
+		t.Fatalf("applyClaudeHeaders() error = %v", errHeaders)
 	}
 	if got := request.Header.Get("X-Claude-Code-Session-Id"); got != resolvedSessionID {
 		t.Fatalf("X-Claude-Code-Session-Id = %q, want %q", got, resolvedSessionID)
