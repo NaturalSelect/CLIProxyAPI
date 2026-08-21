@@ -58,8 +58,7 @@ jobs:
           compiler_output="$(
             jq -r '
               select(
-                .Action == "output" and
-                .Test == null and
+                (.Action == "output" or .Action == "build-output") and
                 .Output != null and
                 (.Output | test("(^# |\\.go:[0-9]+:[0-9]+:|undefined:|cannot use |not enough arguments|too many arguments|redeclared|imported and not used)"))
               ) |
