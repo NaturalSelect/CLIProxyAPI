@@ -434,7 +434,7 @@ func isCodexHandshakeMetadataEvent(eventType string) bool {
 // change would alter cooldown classification and retry-after parsing for everyone. Keeping 503
 // scoped to this path means disabling the feature restores the previous behaviour exactly.
 func newCodexBootstrapOverloadErr(body []byte) statusErr {
-	return newCodexStatusErr(http.StatusServiceUnavailable, body)
+	return newCodexStatusErr(http.StatusServiceUnavailable, body, http.Header{})
 }
 
 // isCodexOverloadBootstrapFailure reports whether a terminal failure delivered inside an HTTP 200

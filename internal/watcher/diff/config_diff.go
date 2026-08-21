@@ -564,13 +564,6 @@ func displayOptionalValue(raw string) string {
 	return trimmed
 }
 
-func formatOptionalBool(value *bool) string {
-	if value == nil {
-		return "<unset>"
-	}
-	return strconv.FormatBool(*value)
-}
-
 func formatProxyURL(raw string) string {
 	return formatURL(raw)
 }

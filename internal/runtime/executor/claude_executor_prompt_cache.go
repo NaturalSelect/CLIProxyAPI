@@ -355,15 +355,17 @@ func (e *ClaudeExecutor) executeClaudeMessagesHTTPRequest(
 		if errRequest != nil {
 			return nil, requestBody, diagnosticsState, errRequest
 		}
-		if errHeaders := applyClaudeHeadersWithSession(
+		if errHeaders := applyClaudeHeaders(
 			httpRequest,
 			auth,
 			apiKey,
 			stream,
 			requestBetas,
-			claudeSessionIDFromPayload(requestBody),
+			requestBody,
 			e.cfg,
 			incomingHeaders,
+			false,
+			claudeSessionIDFromPayload(requestBody),
 		); errHeaders != nil {
 			return nil, requestBody, diagnosticsState, errHeaders
 		}
@@ -399,7 +401,11 @@ func (e *ClaudeExecutor) executeClaudeMessagesHTTPRequest(
 			requestBody, _ = sjson.DeleteBytes(requestBody, "diagnostics")
 			requestBetas = removeClaudeBeta(requestBetas, claudeCacheDiagnosticsBeta)
 			if resignCCH {
-				requestBody = signAnthropicMessagesBody(requestBody)
+				var errSign error
+				requestBody, errSign = signAnthropicMessagesBody(requestBody)
+				if errSign != nil {
+					return nil, requestBody, diagnosticsState, fmt.Errorf("resign Claude CCH after diagnostics fallback: %w", errSign)
+				}
 			}
 			diagnosticsState = nil
 			helps.LogWithRequestID(ctx).Debug(
