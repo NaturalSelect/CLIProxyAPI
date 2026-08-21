@@ -267,7 +267,7 @@ func TestClaudeExecutorAdaptiveReplansOverLimitUserCacheControl(t *testing.T) {
 	}
 }
 
-func TestClaudeExecutor_PreservesResolvedIdentityThroughCloakAndHeaders(t *testing.T) {
+func TestClaudeExecutor_PreservesResolvedSessionThroughCloakAndHeaders(t *testing.T) {
 	t.Parallel()
 
 	var upstreamBody []byte
@@ -312,8 +312,13 @@ func TestClaudeExecutor_PreservesResolvedIdentityThroughCloakAndHeaders(t *testi
 		t.Fatalf("Execute() error = %v", errExecute)
 	}
 
-	if got := gjson.GetBytes(upstreamBody, "metadata.user_id").String(); got != resolvedIdentity.UserID {
-		t.Fatalf("upstream metadata.user_id = %q, want %q", got, resolvedIdentity.UserID)
+	upstreamUserID := gjson.GetBytes(upstreamBody, "metadata.user_id").String()
+	if !helps.IsValidUserID(upstreamUserID) {
+		t.Fatalf("upstream metadata.user_id = %q, want valid Claude Code JSON identity", upstreamUserID)
+	}
+	upstreamMetadataSessionID := gjson.Get(upstreamUserID, "session_id").String()
+	if upstreamMetadataSessionID != resolvedIdentity.SessionID {
+		t.Fatalf("upstream metadata session_id = %q, want %q", upstreamMetadataSessionID, resolvedIdentity.SessionID)
 	}
 	if upstreamSessionID != resolvedIdentity.SessionID {
 		t.Fatalf("upstream X-Claude-Code-Session-Id = %q, want %q", upstreamSessionID, resolvedIdentity.SessionID)
