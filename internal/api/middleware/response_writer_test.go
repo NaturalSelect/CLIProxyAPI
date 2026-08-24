@@ -159,8 +159,129 @@ func TestFinalizeStreamingWritesAPIWebsocketTimeline(t *testing.T) {
 	}
 }
 
+func TestWriteRecordsFirstDownstreamWriteWithoutStreamingLogWriter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+
+	timingTracker := logging.NewRequestTimingTracker("req-timing", "POST /v1/responses", time.Now())
+	timingTurn := timingTracker.BeginTurn("http_stream", "gpt-test")
+	wrapper := &ResponseWriterWrapper{
+		ResponseWriter: ginContext.Writer,
+		body:           &bytes.Buffer{},
+		requestInfo: &RequestInfo{
+			RequestID: "req-timing",
+			Timestamp: time.Now(),
+			timing:    timingTracker,
+		},
+	}
+
+	if _, errWrite := wrapper.Write([]byte("data: first\n\n")); errWrite != nil {
+		t.Fatalf("Write error: %v", errWrite)
+	}
+	timingTurn.Complete("completed")
+
+	snapshot := timingTracker.Snapshot()
+	if len(snapshot.Turns) != 1 {
+		t.Fatalf("turn count = %d, want 1", len(snapshot.Turns))
+	}
+	firstWriteCount := 0
+	for _, event := range snapshot.Turns[0].Events {
+		if event.Stage == logging.TimingStageFirstDownstreamWrite {
+			firstWriteCount++
+		}
+	}
+	if firstWriteCount != 1 {
+		t.Fatalf("first downstream write count = %d, want 1", firstWriteCount)
+	}
+}
+
+func TestWriteInitializesStreamingLoggerWithoutExplicitWriteHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	ginContext.Writer.Header().Set("Content-Type", "text/event-stream")
+
+	streamWriter := &testStreamingLogWriter{}
+	logger := &countingStreamingRequestLogger{streamWriter: streamWriter}
+	wrapper := NewResponseWriterWrapper(ginContext.Writer, logger, &RequestInfo{
+		URL:       "/v1/responses",
+		Method:    http.MethodPost,
+		RequestID: "req-stream-init",
+		Timestamp: time.Now(),
+	})
+
+	if _, errWrite := wrapper.Write([]byte("data: first\n\n")); errWrite != nil {
+		t.Fatalf("Write error: %v", errWrite)
+	}
+	if !wrapper.headerWritten || !wrapper.isStreaming {
+		t.Fatalf("wrapper state = headerWritten:%t isStreaming:%t", wrapper.headerWritten, wrapper.isStreaming)
+	}
+	if logger.streamingCalls != 1 {
+		t.Fatalf("streaming log initialization count = %d, want 1", logger.streamingCalls)
+	}
+	wrapper.WriteHeader(http.StatusAccepted)
+	if logger.streamingCalls != 1 {
+		t.Fatalf("duplicate WriteHeader initialized logger %d times", logger.streamingCalls)
+	}
+	if errFinalize := wrapper.Finalize(ginContext); errFinalize != nil {
+		t.Fatalf("Finalize error: %v", errFinalize)
+	}
+}
+
+func TestFlushInitializesHeadersWithNilLogger(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	wrapper := NewResponseWriterWrapper(ginContext.Writer, nil, &RequestInfo{Timestamp: time.Now()})
+
+	wrapper.Flush()
+	if !wrapper.headerWritten {
+		t.Fatal("Flush did not initialize response headers")
+	}
+}
+
+func TestFinalizeCompletesTimingTurnWithNilLogger(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	timingTracker := logging.NewRequestTimingTracker("req-nil-logger", "POST /v1/responses", time.Now())
+	timingTracker.BeginTurn("http_stream", "gpt-test")
+	wrapper := NewResponseWriterWrapper(ginContext.Writer, nil, &RequestInfo{
+		RequestID: "req-nil-logger",
+		Timestamp: time.Now(),
+		timing:    timingTracker,
+	})
+
+	if errFinalize := wrapper.Finalize(ginContext); errFinalize != nil {
+		t.Fatalf("Finalize error: %v", errFinalize)
+	}
+	snapshot := timingTracker.Snapshot()
+	if len(snapshot.Turns) != 1 || !snapshot.Turns[0].Completed {
+		t.Fatalf("timing turn was not completed: %#v", snapshot)
+	}
+}
+
 type testRequestLogger struct {
 	enabled bool
+}
+
+type countingStreamingRequestLogger struct {
+	streamWriter   logging.StreamingLogWriter
+	streamingCalls int
+}
+
+func (l *countingStreamingRequestLogger) LogRequest(string, string, map[string][]string, []byte, int, map[string][]string, []byte, []byte, []byte, []byte, []byte, []*interfaces.ErrorMessage, string, time.Time, time.Time) error {
+	return nil
+}
+
+func (l *countingStreamingRequestLogger) LogStreamingRequest(string, string, map[string][]string, []byte, string) (logging.StreamingLogWriter, error) {
+	l.streamingCalls++
+	return l.streamWriter, nil
+}
+
+func (l *countingStreamingRequestLogger) IsEnabled() bool {
+	return true
 }
 
 func (l *testRequestLogger) LogRequest(string, string, map[string][]string, []byte, int, map[string][]string, []byte, []byte, []byte, []byte, []byte, []*interfaces.ErrorMessage, string, time.Time, time.Time) error {

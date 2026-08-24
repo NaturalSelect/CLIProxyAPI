@@ -29,15 +29,15 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-func writeResponsesSSEChunk(w io.Writer, chunk []byte) {
+func writeResponsesSSEChunk(w io.Writer, chunk []byte) bool {
 	if w == nil || len(chunk) == 0 {
-		return
+		return false
 	}
 	if _, err := w.Write(chunk); err != nil {
-		return
+		return false
 	}
 	if bytes.HasSuffix(chunk, []byte("\n\n")) || bytes.HasSuffix(chunk, []byte("\r\n\r\n")) {
-		return
+		return true
 	}
 	suffix := []byte("\n\n")
 	if bytes.HasSuffix(chunk, []byte("\r\n")) {
@@ -46,8 +46,9 @@ func writeResponsesSSEChunk(w io.Writer, chunk []byte) {
 		suffix = []byte("\n")
 	}
 	if _, err := w.Write(suffix); err != nil {
-		return
+		return false
 	}
+	return true
 }
 
 type responsesSSEFramer struct {
@@ -119,7 +120,29 @@ func (f *responsesSSEFramer) Flush(w io.Writer) {
 }
 
 func (f *responsesSSEFramer) writeFrame(w io.Writer, frame []byte) {
-	writeResponsesSSEChunk(w, f.repairFrame(frame))
+	repairedFrame := f.repairFrame(frame)
+	if !writeResponsesSSEChunk(w, repairedFrame) {
+		return
+	}
+	f.markDownstreamFrame(repairedFrame)
+}
+
+func (f *responsesSSEFramer) markDownstreamFrame(frame []byte) {
+	if f == nil || f.timingTurn == nil {
+		return
+	}
+	payload, ok := responsesSSEDataPayload(frame)
+	if !ok || len(payload) == 0 || !json.Valid(payload) {
+		return
+	}
+	eventType := gjson.GetBytes(payload, "type").String()
+	if eventType == "" {
+		eventType = responsesSSEEventName(frame)
+	}
+	f.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+	if eventType == "response.output_text.delta" && strings.TrimSpace(gjson.GetBytes(payload, "delta").String()) != "" {
+		f.timingTurn.MarkOnce(requestlogging.TimingStageFirstVisibleText, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+	}
 }
 
 func (f *responsesSSEFramer) repairFrame(frame []byte) []byte {
@@ -152,12 +175,6 @@ func (f *responsesSSEFramer) repairFrame(frame []byte) []byte {
 	}
 	if eventType != "" {
 		f.lastEvent = sanitizeResponsesStreamEventName(eventType)
-		if f.timingTurn != nil {
-			f.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: eventType})
-			if eventType == "response.output_text.delta" && strings.TrimSpace(gjson.GetBytes(payload, "delta").String()) != "" {
-				f.timingTurn.MarkOnce(requestlogging.TimingStageFirstVisibleText, requestlogging.RequestTimingEventDetails{})
-			}
-		}
 	}
 	if responsesSSEErrorEvent(eventType) {
 		return f.repairErrorPayload(payload)

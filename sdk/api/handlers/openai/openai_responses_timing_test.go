@@ -2,11 +2,18 @@ package openai
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 	"time"
 
 	requestlogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 )
+
+type failingResponsesTimingWriter struct{}
+
+func (failingResponsesTimingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
 
 func TestResponsesSSEFramerRecordsFirstEventAndVisibleText(t *testing.T) {
 	tracker := requestlogging.NewRequestTimingTracker("request-1", "POST /v1/responses", time.Now())
@@ -55,6 +62,22 @@ func TestResponsesSSEFramerIgnoresEmptyTextDelta(t *testing.T) {
 	for _, event := range tracker.Snapshot().Turns[0].Events {
 		if event.Stage == requestlogging.TimingStageFirstVisibleText {
 			t.Fatal("empty text delta recorded as visible text")
+		}
+	}
+}
+
+func TestResponsesSSEFramerDoesNotRecordDownstreamEventWhenWriteFails(t *testing.T) {
+	tracker := requestlogging.NewRequestTimingTracker("request-3", "POST /v1/responses", time.Now())
+	turn := tracker.BeginTurn("http_stream", "gpt-5.6-luna")
+	framer := &responsesSSEFramer{timingTurn: turn}
+
+	framer.WriteChunk(failingResponsesTimingWriter{}, []byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"))
+	turn.Complete("failed")
+
+	for _, event := range tracker.Snapshot().Turns[0].Events {
+		switch event.Stage {
+		case requestlogging.TimingStageFirstDownstreamEvent, requestlogging.TimingStageFirstVisibleText:
+			t.Fatalf("failed write recorded downstream event: %#v", event)
 		}
 	}
 }

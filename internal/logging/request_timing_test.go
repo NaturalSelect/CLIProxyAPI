@@ -67,6 +67,28 @@ func TestRequestTimingTurnMarkOnceIsConcurrentSafe(t *testing.T) {
 	}
 }
 
+func TestRequestTimingEventOffsetsAreRelativeToTheirTurn(t *testing.T) {
+	tracker := NewRequestTimingTracker("request-4", "GET /v1/responses", time.Now().Add(-5*time.Second))
+	turn := tracker.BeginTurn("responses_websocket_turn", "gpt-5.6-luna")
+	turn.MarkOnce(TimingStageStreamExecutionEntered, RequestTimingEventDetails{})
+	turn.Complete("completed")
+
+	snapshot := tracker.Snapshot()
+	if len(snapshot.Turns) != 1 {
+		t.Fatalf("turn count = %d, want 1", len(snapshot.Turns))
+	}
+	turnSnapshot := snapshot.Turns[0]
+	if turnSnapshot.StartedOffset < 4*time.Second {
+		t.Fatalf("turn started offset = %v, want request-relative offset near 5s", turnSnapshot.StartedOffset)
+	}
+	if len(turnSnapshot.Events) == 0 {
+		t.Fatal("expected timing events")
+	}
+	if turnSnapshot.Events[0].Offset >= time.Second {
+		t.Fatalf("first event offset = %v, want turn-relative offset below 1s", turnSnapshot.Events[0].Offset)
+	}
+}
+
 func TestPropagateRequestTimingPreservesTrackerAndTurn(t *testing.T) {
 	tracker := NewRequestTimingTracker("request-3", "POST /v1/messages", time.Now())
 	turn := tracker.BeginTurn("http_stream", "claude-sonnet")
@@ -78,6 +100,23 @@ func TestPropagateRequestTimingPreservesTrackerAndTurn(t *testing.T) {
 	}
 	if RequestTimingTurnFromContext(target) != turn {
 		t.Fatal("turn was not propagated")
+	}
+}
+
+func TestPropagateRequestTimingDoesNotReplaceTargetTrackerWithSourceTurn(t *testing.T) {
+	targetTracker := NewRequestTimingTracker("target", "POST /v1/responses", time.Now())
+	sourceTracker := NewRequestTimingTracker("source", "POST /v1/messages", time.Now())
+	sourceTurn := sourceTracker.BeginTurn("http_stream", "source-model")
+
+	target := WithRequestTimingTracker(context.Background(), targetTracker)
+	source := WithRequestTimingTurn(context.Background(), sourceTurn)
+	propagated := PropagateRequestTiming(target, source)
+
+	if RequestTimingTrackerFromContext(propagated) != targetTracker {
+		t.Fatal("target tracker was replaced by source tracker")
+	}
+	if RequestTimingTurnFromContext(propagated) != nil {
+		t.Fatal("source turn was attached to an unrelated target tracker")
 	}
 }
 

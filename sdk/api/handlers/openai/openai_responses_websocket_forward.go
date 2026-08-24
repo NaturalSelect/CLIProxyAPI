@@ -64,13 +64,12 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 				continue
 			}
 			if errMsg == nil {
+				if opts.timingTurn != nil {
+					opts.timingTurn.MarkOnce(requestlogging.TimingStageDownstreamCompleted, requestlogging.RequestTimingEventDetails{Outcome: "stream_closed"})
+				}
 				cancel(nil)
 				return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, nil
 			}
-			if opts.timingTurn != nil {
-				opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: "error"})
-			}
-
 			h.LoggingAPIResponseError(context.WithValue(context.Background(), "gin", c), errMsg)
 			if opts.suppressError != nil && opts.suppressError(errMsg) {
 				cancel(errMsg.Error)
@@ -87,6 +86,11 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 
 			errorPayload, wrote, errTerminate := writeResponsesWebsocketTerminalError(writer, wsTimelineLog, errMsg, nil)
 			if wrote {
+				if opts.timingTurn != nil {
+					opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: "error"})
+					opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamWrite, requestlogging.RequestTimingEventDetails{Outcome: "error"})
+					opts.timingTurn.MarkOnce(requestlogging.TimingStageDownstreamCompleted, requestlogging.RequestTimingEventDetails{Outcome: "error"})
+				}
 				log.Infof(
 					"responses websocket: downstream_out id=%s type=%d event=%s payload=%s",
 					sessionID,
@@ -121,12 +125,6 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 			for i := range payloads {
 				collectResponsesWebsocketOutputItem(payloads[i], outputItemsByIndex, &outputItemsFallback)
 				eventType := gjson.GetBytes(payloads[i], "type").String()
-				if opts.timingTurn != nil {
-					opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: eventType})
-					if eventType == "response.output_text.delta" && strings.TrimSpace(gjson.GetBytes(payloads[i], "delta").String()) != "" {
-						opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstVisibleText, requestlogging.RequestTimingEventDetails{})
-					}
-				}
 				if isResponsesWebsocketCompletionEvent(eventType) {
 					payloads[i] = restoreResponsesWebsocketCompletionOutput(payloads[i], outputItemsByIndex, outputItemsFallback)
 				}
@@ -162,6 +160,11 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 					}
 					errorPayload, wrote, errTerminate := writeResponsesWebsocketTerminalError(writer, wsTimelineLog, payloadErrMsg, payloads[i])
 					if wrote {
+						if opts.timingTurn != nil {
+							opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+							opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamWrite, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+							opts.timingTurn.MarkOnce(requestlogging.TimingStageDownstreamCompleted, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+						}
 						log.Infof(
 							"responses websocket: downstream_out id=%s type=%d event=%s payload=%s",
 							sessionID,
@@ -191,9 +194,16 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 					return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, errWrite
 				}
 				if opts.timingTurn != nil {
+					opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+					if eventType == "response.output_text.delta" && strings.TrimSpace(gjson.GetBytes(payloads[i], "delta").String()) != "" {
+						opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstVisibleText, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+					}
 					opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamWrite, requestlogging.RequestTimingEventDetails{Outcome: eventType})
 				}
 				if isResponsesWebsocketCompletionEvent(eventType) {
+					if opts.timingTurn != nil {
+						opts.timingTurn.MarkOnce(requestlogging.TimingStageDownstreamCompleted, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+					}
 					cancel(nil)
 					return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, nil
 				}

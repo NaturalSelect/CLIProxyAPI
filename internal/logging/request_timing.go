@@ -180,11 +180,17 @@ func PropagateRequestTiming(target context.Context, source context.Context) cont
 	if source == nil {
 		return target
 	}
-	if RequestTimingTrackerFromContext(target) == nil {
-		target = WithRequestTimingTracker(target, RequestTimingTrackerFromContext(source))
+	targetTracker := RequestTimingTrackerFromContext(target)
+	sourceTracker := RequestTimingTrackerFromContext(source)
+	if targetTracker == nil && sourceTracker != nil {
+		target = WithRequestTimingTracker(target, sourceTracker)
+		targetTracker = sourceTracker
 	}
 	if RequestTimingTurnFromContext(target) == nil {
-		target = WithRequestTimingTurn(target, RequestTimingTurnFromContext(source))
+		sourceTurn := RequestTimingTurnFromContext(source)
+		if sourceTurn != nil && (targetTracker == nil || sourceTurn.tracker == targetTracker) {
+			target = WithRequestTimingTurn(target, sourceTurn)
+		}
 	}
 	return target
 }
@@ -280,7 +286,7 @@ func (turn *RequestTimingTurn) mark(stage string, details RequestTimingEventDeta
 	state.events = append(state.events, RequestTimingEventSnapshot{
 		Sequence: tracker.nextSequence,
 		Stage:    stage,
-		Offset:   nonNegativeDuration(now.Sub(tracker.startedAt)),
+		Offset:   nonNegativeDuration(now.Sub(state.startedAt)),
 		Duration: nonNegativeDuration(details.Duration),
 		Outcome:  strings.TrimSpace(details.Outcome),
 		Provider: strings.TrimSpace(details.Provider),
@@ -417,6 +423,7 @@ func logRequestTimingSummary(requestID string, endpoint string, turn RequestTimi
 		TimingStageAuthSelection,
 		TimingStageAuthPreparation,
 		TimingStageExecutorExecuteStream,
+		TimingStageUpstreamTTFTStarted,
 		TimingStageUpstreamConnection,
 		TimingStageFirstUpstreamEvent,
 		TimingStageFirstUpstreamPayload,

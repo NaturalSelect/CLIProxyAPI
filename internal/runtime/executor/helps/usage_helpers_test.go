@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/clienterror"
+	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
@@ -43,6 +44,32 @@ func TestParseOpenAIUsageChatCompletions(t *testing.T) {
 	}
 	if detail.TokenBreakdown.Input.UncachedTokens != 6 || detail.TokenBreakdown.Output.NonReasoningTokens != 1 {
 		t.Fatalf("token breakdown = %+v", detail.TokenBreakdown)
+	}
+}
+
+func TestUsageReporterRecordsTTFTStagesInRequestTiming(t *testing.T) {
+	timingTracker := internallogging.NewRequestTimingTracker("request-timing", "POST /v1/responses", time.Now())
+	timingTurn := timingTracker.BeginTurn("http_stream", "gpt-test")
+	ctx := internallogging.WithRequestTimingTurn(context.Background(), timingTurn)
+	reporter := NewUsageReporter(ctx, "codex", "gpt-test", nil)
+
+	reporter.StartResponseTTFT()
+	reporter.MarkFirstResponseContent()
+	timingTurn.Complete("completed")
+
+	snapshot := timingTracker.Snapshot()
+	if len(snapshot.Turns) != 1 {
+		t.Fatalf("turn count = %d, want 1", len(snapshot.Turns))
+	}
+	stages := make(map[string]int)
+	for _, event := range snapshot.Turns[0].Events {
+		stages[event.Stage]++
+	}
+	if stages[internallogging.TimingStageUpstreamTTFTStarted] != 1 {
+		t.Fatalf("upstream TTFT start count = %d, want 1", stages[internallogging.TimingStageUpstreamTTFTStarted])
+	}
+	if stages[internallogging.TimingStageFirstSemanticContent] != 1 {
+		t.Fatalf("first semantic content count = %d, want 1", stages[internallogging.TimingStageFirstSemanticContent])
 	}
 }
 

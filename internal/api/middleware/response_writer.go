@@ -46,6 +46,7 @@ type ResponseWriterWrapper struct {
 	logger              logging.RequestLogger      // logger is the instance of the request logger service.
 	requestInfo         *RequestInfo               // requestInfo holds the details of the original request.
 	statusCode          int                        // statusCode stores the HTTP status code of the response.
+	headerWritten       bool                       // headerWritten prevents duplicate streaming writer initialization.
 	headers             map[string][]string        // headers stores the response headers.
 	logOnErrorOnly      bool                       // logOnErrorOnly enables logging only when an error response is detected.
 	firstChunkTimestamp time.Time                  // firstChunkTimestamp captures TTFB for streaming responses.
@@ -77,23 +78,31 @@ func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger
 // CRITICAL: This method prioritizes writing to the client to ensure zero latency,
 // handling logging operations subsequently.
 func (w *ResponseWriterWrapper) Write(data []byte) (int, error) {
+	if !w.headerWritten {
+		w.WriteHeader(http.StatusOK)
+	}
 	// Ensure headers are captured before first write
 	// This is critical because Write() may trigger WriteHeader() internally
 	w.ensureHeadersCaptured()
 
 	// CRITICAL: Write to client first (zero latency)
 	n, err := w.ResponseWriter.Write(data)
+	if n > 0 {
+		w.markActiveTurnOnce(logging.TimingStageFirstDownstreamWrite, logging.RequestTimingEventDetails{Outcome: "write"})
+	}
 
 	// THEN: Handle logging based on response type
 	if w.isStreaming && w.chunkChannel != nil {
+		if n <= 0 {
+			return n, err
+		}
 		// Capture TTFB on first chunk (synchronous, before async channel send)
 		if w.firstChunkTimestamp.IsZero() {
 			w.firstChunkTimestamp = time.Now()
-			w.markActiveTurnOnce(logging.TimingStageFirstDownstreamWrite, logging.RequestTimingEventDetails{Outcome: "write"})
 		}
 		// For streaming responses: Send to async logging channel (non-blocking)
 		select {
-		case w.chunkChannel <- append([]byte(nil), data...): // Non-blocking send with copy
+		case w.chunkChannel <- append([]byte(nil), data[:n]...): // Non-blocking send with copy
 		default: // Channel full, skip logging to avoid blocking
 		}
 		return n, err
@@ -128,20 +137,28 @@ func (w *ResponseWriterWrapper) shouldBufferResponseBody() bool {
 // Some handlers (and fmt/io helpers) write via io.StringWriter; without this override, those writes
 // bypass Write() and would be missing from request logs.
 func (w *ResponseWriterWrapper) WriteString(data string) (int, error) {
+	if !w.headerWritten {
+		w.WriteHeader(http.StatusOK)
+	}
 	w.ensureHeadersCaptured()
 
 	// CRITICAL: Write to client first (zero latency)
 	n, err := w.ResponseWriter.WriteString(data)
+	if n > 0 {
+		w.markActiveTurnOnce(logging.TimingStageFirstDownstreamWrite, logging.RequestTimingEventDetails{Outcome: "write_string"})
+	}
 
 	// THEN: Capture for logging
 	if w.isStreaming && w.chunkChannel != nil {
+		if n <= 0 {
+			return n, err
+		}
 		// Capture TTFB on first chunk (synchronous, before async channel send)
 		if w.firstChunkTimestamp.IsZero() {
 			w.firstChunkTimestamp = time.Now()
-			w.markActiveTurnOnce(logging.TimingStageFirstDownstreamWrite, logging.RequestTimingEventDetails{Outcome: "write_string"})
 		}
 		select {
-		case w.chunkChannel <- []byte(data):
+		case w.chunkChannel <- []byte(data[:n]):
 		default:
 		}
 		return n, err
@@ -157,6 +174,10 @@ func (w *ResponseWriterWrapper) WriteString(data string) (int, error) {
 // It captures the status code, detects if the response is streaming based on the Content-Type header,
 // and initializes the appropriate logging mechanism (standard or streaming).
 func (w *ResponseWriterWrapper) WriteHeader(statusCode int) {
+	if w.headerWritten {
+		return
+	}
+	w.headerWritten = true
 	w.statusCode = statusCode
 	w.markActiveTurnOnce(logging.TimingStageDownstreamHeaders, logging.RequestTimingEventDetails{Outcome: http.StatusText(statusCode)})
 
@@ -168,7 +189,7 @@ func (w *ResponseWriterWrapper) WriteHeader(statusCode int) {
 	w.isStreaming = w.detectStreaming(contentType)
 
 	// If streaming, initialize streaming log writer
-	if w.isStreaming && w.logger.IsEnabled() {
+	if w.isStreaming && w.logger != nil && w.logger.IsEnabled() {
 		streamWriter, err := w.logger.LogStreamingRequest(
 			w.requestInfo.URL,
 			w.requestInfo.Method,
@@ -192,6 +213,14 @@ func (w *ResponseWriterWrapper) WriteHeader(statusCode int) {
 
 	// Call original WriteHeader
 	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Flush ensures the wrapped response headers are initialized before flushing data.
+func (w *ResponseWriterWrapper) Flush() {
+	if !w.headerWritten {
+		w.WriteHeader(http.StatusOK)
+	}
+	w.ResponseWriter.Flush()
 }
 
 // ensureHeadersCaptured is a helper function to make sure response headers are captured.
@@ -269,10 +298,6 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 	if w.requestInfo != nil && w.requestInfo.deferredBodyCapture != nil {
 		defer w.requestInfo.deferredBodyCapture.Cleanup()
 	}
-	if w.logger == nil {
-		return nil
-	}
-
 	finalStatusCode := w.statusCode
 	if finalStatusCode == 0 {
 		if statusWriter, ok := w.ResponseWriter.(interface{ Status() int }); ok {
@@ -292,6 +317,9 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 
 	hasAPIError := hasActionableError(c, finalStatusCode, slicesAPIResponseError)
 	timingSnapshot := w.completeActiveTimingTurn(finalStatusCode, hasAPIError)
+	if w.logger == nil {
+		return nil
+	}
 	forceLog := w.logOnErrorOnly && hasAPIError && !w.logger.IsEnabled()
 	websocketTimelineSource := w.extractWebsocketTimelineSource(c)
 	apiRequestSource := w.extractAPIRequestSource(c)
