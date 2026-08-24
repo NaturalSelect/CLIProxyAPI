@@ -22,6 +22,7 @@ const (
 	TimingStageBeforeAuthInterceptor   = "interceptor.before_auth"
 	TimingStageAuthManagerEntered      = "auth.manager_entered"
 	TimingStageAuthSelection           = "auth.selection"
+	TimingStageAuthSelectionSubstage   = "auth.selection.substage"
 	TimingStageAuthPreparation         = "auth.preparation"
 	TimingStageExecutorExecuteStream   = "executor.execute_stream"
 	TimingStageUpstreamTTFTStarted     = "upstream.ttft_started"
@@ -49,6 +50,7 @@ type RequestTimingEventDetails struct {
 	Provider string
 	Model    string
 	Attempt  int
+	Items    int
 }
 
 // RequestTimingEventSnapshot is an immutable timing event included in request logs.
@@ -61,6 +63,7 @@ type RequestTimingEventSnapshot struct {
 	Provider string
 	Model    string
 	Attempt  int
+	Items    int
 }
 
 // RequestTimingTurnSnapshot contains one HTTP stream or WebSocket logical turn.
@@ -283,6 +286,7 @@ func (turn *RequestTimingTurn) mark(stage string, details RequestTimingEventDeta
 		Provider: strings.TrimSpace(details.Provider),
 		Model:    strings.TrimSpace(details.Model),
 		Attempt:  details.Attempt,
+		Items:    details.Items,
 	})
 }
 
@@ -456,11 +460,12 @@ func writeRequestTimingSection(writer io.Writer, snapshot RequestTimingSnapshot)
 		for _, event := range turn.Events {
 			if _, errWrite := fmt.Fprintf(
 				writer,
-				"  +%.3fms stage=%s duration_ms=%.3f attempt=%d outcome=%s provider=%s model=%s\n",
+				"  +%.3fms stage=%s duration_ms=%.3f attempt=%d items=%d outcome=%s provider=%s model=%s\n",
 				durationMilliseconds(event.Offset),
 				event.Stage,
 				durationMilliseconds(event.Duration),
 				event.Attempt,
+				event.Items,
 				event.Outcome,
 				event.Provider,
 				event.Model,

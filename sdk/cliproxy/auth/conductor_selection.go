@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	requestlogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -1378,7 +1379,21 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		return nil, nil, "", &Error{Code: "provider_not_found", Message: "no provider supplied"}
 	}
 
+	timingTurn := requestlogging.RequestTimingTurnFromContext(ctx)
+	markSelectionSubstage := func(startedAt time.Time, outcome string, items int) {
+		if timingTurn == nil {
+			return
+		}
+		timingTurn.Measure(requestlogging.TimingStageAuthSelectionSubstage, startedAt, requestlogging.RequestTimingEventDetails{
+			Outcome: outcome,
+			Items:   items,
+		})
+	}
+
+	lockWaitStartedAt := time.Now()
 	m.mu.RLock()
+	lockWaitDuration := time.Since(lockWaitStartedAt)
+	lockHoldStartedAt := time.Now()
 	selector := m.selector
 	pluginScheduler := m.pluginScheduler
 	candidates := make([]*Auth, 0, len(m.auths))
@@ -1391,6 +1406,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		}
 	}
 	registryRef := registry.GetGlobalRegistry()
+	candidateScanStartedAt := time.Now()
 	for _, candidate := range m.auths {
 		if candidate == nil || candidate.Disabled {
 			continue
@@ -1419,26 +1435,63 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		}
 		candidates = append(candidates, candidate)
 	}
+	candidateScanDuration := time.Since(candidateScanStartedAt)
 	if len(candidates) == 0 {
+		lockHoldDuration := time.Since(lockHoldStartedAt)
 		m.mu.RUnlock()
+		if timingTurn != nil {
+			timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: lockWaitDuration, Outcome: "manager_lock_wait"})
+			timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: candidateScanDuration, Outcome: "candidate_scan", Items: 0})
+			timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: lockHoldDuration, Outcome: "manager_lock_hold"})
+		}
 		return nil, nil, "", &Error{Code: "auth_not_found", Message: "no auth available"}
 	}
+	availabilityStartedAt := time.Now()
 	available, selectorAuths, errAvailable := m.availableAuthsForSelector(selector, candidates, "mixed", model, time.Now())
+	availabilityDuration := time.Since(availabilityStartedAt)
+	lockHoldDuration := time.Since(lockHoldStartedAt)
 	if errAvailable != nil {
 		m.mu.RUnlock()
+		if timingTurn != nil {
+			timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: lockWaitDuration, Outcome: "manager_lock_wait"})
+			timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: candidateScanDuration, Outcome: "candidate_scan", Items: len(candidates)})
+			timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: availabilityDuration, Outcome: "availability_failed", Items: len(available)})
+			timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: lockHoldDuration, Outcome: "manager_lock_hold"})
+		}
 		m.warnLogAuthUnavailable(ctx, providers, model, opts, tried, errAvailable)
 		return nil, nil, "", errAvailable
 	}
 	m.mu.RUnlock()
+	if timingTurn != nil {
+		timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: lockWaitDuration, Outcome: "manager_lock_wait"})
+		timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: candidateScanDuration, Outcome: "candidate_scan", Items: len(candidates)})
+		timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: availabilityDuration, Outcome: "availability", Items: len(available)})
+		timingTurn.Mark(requestlogging.TimingStageAuthSelectionSubstage, requestlogging.RequestTimingEventDetails{Duration: lockHoldDuration, Outcome: "manager_lock_hold"})
+	}
 
+	pluginSchedulerStartedAt := time.Now()
 	selected, handled, errPick := m.pickViaPluginScheduler(ctx, pluginScheduler, "mixed", providers, model, opts, tried, available)
+	pluginSchedulerOutcome := "unhandled"
+	if handled {
+		pluginSchedulerOutcome = "handled"
+	}
+	if errPick != nil {
+		pluginSchedulerOutcome = "failed"
+	}
+	markSelectionSubstage(pluginSchedulerStartedAt, "plugin_scheduler_"+pluginSchedulerOutcome, len(available))
 	if errPick != nil {
 		m.warnLogAuthUnavailable(ctx, providers, model, opts, tried, errPick)
 		return nil, nil, "", errPick
 	}
 	if !handled {
 		selectorCtx := withWeightedSelectorStateModel(ctx, selector, model)
+		selectorStartedAt := time.Now()
 		selected, errPick = selector.Pick(selectorCtx, "mixed", selectionArgForSelector(selector, model), opts, selectorAuths)
+		selectorOutcome := "selected"
+		if errPick != nil {
+			selectorOutcome = "failed"
+		}
+		markSelectionSubstage(selectorStartedAt, "selector_"+selectorOutcome, len(selectorAuths))
 		if errPick != nil {
 			if isBuiltInSelector(selector) {
 				errPick = restoreModelCooldownErrorModel(errPick, model)
