@@ -663,6 +663,7 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 	modelName := gjson.GetBytes(rawJSON, "model").String()
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 	cliCtx = cliproxyexecutor.WithPreferUpstreamWebsocket(cliCtx)
+	cliCtx, timingTurn := requestlogging.EnsureRequestTimingTurn(cliCtx, "http_stream", modelName)
 	dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "")
 
 	setSSEHeaders := func() {
@@ -677,7 +678,7 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 	}
 	framer := &responsesSSEFramer{
 		failureEvent: failureEvent,
-		timingTurn:   requestlogging.RequestTimingTurnFromContext(cliCtx),
+		timingTurn:   timingTurn,
 	}
 	var initialOutput bytes.Buffer
 
