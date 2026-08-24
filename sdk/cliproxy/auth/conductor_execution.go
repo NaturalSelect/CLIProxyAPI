@@ -125,6 +125,9 @@ func (m *Manager) ExecuteCount(ctx context.Context, providers []string, req clip
 // ExecuteStream performs a streaming execution using the configured selector and executor.
 // It supports multiple providers for the same model and round-robins the starting provider per model.
 func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	if turn := logging.RequestTimingTurnFromContext(ctx); turn != nil {
+		turn.MarkOnce(logging.TimingStageAuthManagerEntered, logging.RequestTimingEventDetails{})
+	}
 	req, opts = cliproxysession.Enrich(req, opts)
 	if m.HomeEnabled() {
 		if unlockSession := m.lockHomeWebsocketSession(ctx, opts); unlockSession != nil {
@@ -646,6 +649,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 	attempted := make(map[string]struct{})
 	unauthorizedRefreshTried := make(map[string]struct{})
 	var lastErr error
+	selectionAttempt := 0
 	for {
 		if !homeMode && maxRetryCredentials > 0 && len(attempted) >= maxRetryCredentials {
 			if lastErr != nil {
@@ -663,6 +667,8 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 		var executor ProviderExecutor
 		var provider string
 		var errPick error
+		selectionAttempt++
+		selectionStartedAt := time.Now()
 		if homeMode {
 			selection, errPick = m.pickHomeDispatchSelection(ctx, routeModel, pickOpts)
 			if selection != nil {
@@ -672,6 +678,21 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			}
 		} else {
 			auth, executor, provider, errPick = m.pickNextMixed(ctx, providers, routeModel, pickOpts, tried)
+		}
+		if turn := logging.RequestTimingTurnFromContext(ctx); turn != nil {
+			outcome := "selected"
+			if errPick != nil {
+				outcome = "failed"
+			}
+			turn.Measure(logging.TimingStageAuthSelection, selectionStartedAt, logging.RequestTimingEventDetails{
+				Outcome:  outcome,
+				Provider: provider,
+				Model:    routeModel,
+				Attempt:  selectionAttempt,
+			})
+			if errPick == nil {
+				turn.SetRoute(provider, routeModel)
+			}
 		}
 		if errPick != nil {
 			if shouldReturnLastErrorOnPickFailure(homeMode, lastErr, errPick) {
@@ -737,10 +758,23 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 		}
 		attempted[auth.ID] = struct{}{}
 		var errPrepare error
+		prepareStartedAt := time.Now()
 		if selection != nil {
 			auth, errPrepare = m.prepareHomeRequestAuth(execCtx, executor, selection)
 		} else {
 			auth, errPrepare = m.prepareRequestAuth(execCtx, executor, auth)
+		}
+		if turn := logging.RequestTimingTurnFromContext(execCtx); turn != nil {
+			outcome := "completed"
+			if errPrepare != nil {
+				outcome = "failed"
+			}
+			turn.Measure(logging.TimingStageAuthPreparation, prepareStartedAt, logging.RequestTimingEventDetails{
+				Outcome:  outcome,
+				Provider: provider,
+				Model:    routeModel,
+				Attempt:  selectionAttempt,
+			})
 		}
 		if errPrepare != nil {
 			if selection == nil {

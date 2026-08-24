@@ -40,6 +40,7 @@ func (l *FileRequestLogger) writeNonStreamingLog(
 	decompressErr error,
 	requestTimestamp time.Time,
 	apiResponseTimestamp time.Time,
+	requestTiming RequestTimingSnapshot,
 ) error {
 	if requestTimestamp.IsZero() {
 		requestTimestamp = time.Now()
@@ -48,6 +49,9 @@ func (l *FileRequestLogger) writeNonStreamingLog(
 	downstreamTransport := inferDownstreamTransport(requestHeaders, websocketTimeline, websocketTimelineSource)
 	upstreamTransport := inferUpstreamTransport(apiRequest, apiRequestSource, apiResponse, apiResponseSource, apiWebsocketTimeline, apiWebsocketTimelineSource, apiResponseErrors)
 	if errWrite := writeRequestInfoWithBody(w, url, method, requestHeaders, requestBody, requestBodyPath, requestTimestamp, downstreamTransport, upstreamTransport, !isWebsocketTranscript); errWrite != nil {
+		return errWrite
+	}
+	if errWrite := writeRequestTimingSection(w, requestTiming); errWrite != nil {
 		return errWrite
 	}
 	if errWrite := writeAPISectionWithSource(w, "=== WEBSOCKET TIMELINE ===\n", "=== WEBSOCKET TIMELINE", websocketTimeline, websocketTimelineSource, time.Time{}); errWrite != nil {

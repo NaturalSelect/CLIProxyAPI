@@ -30,6 +30,7 @@ const (
 // large and unknown-size bodies are spooled to disk and retained only for error logs.
 func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		requestStartedAt := time.Now()
 		if logger == nil {
 			c.Next()
 			return
@@ -56,6 +57,13 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 			// In a real implementation, you might want to use a proper logger here
 			c.Next()
 			return
+		}
+		requestInfo.Timestamp = requestStartedAt
+		if loggerEnabled && c.Request != nil {
+			endpoint := strings.TrimSpace(c.Request.Method + " " + c.Request.URL.Path)
+			requestInfo.timing = logging.NewRequestTimingTracker(requestInfo.RequestID, endpoint, requestStartedAt)
+			requestContext := logging.WithRequestTimingTracker(c.Request.Context(), requestInfo.timing)
+			c.Request = c.Request.WithContext(requestContext)
 		}
 
 		// Create response writer wrapper

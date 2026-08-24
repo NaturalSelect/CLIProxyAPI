@@ -101,6 +101,7 @@ type homeStreamingLogWriter struct {
 	requestID        string
 	apiResponseTS    time.Time
 	firstChunkTS     time.Time
+	requestTiming    RequestTimingSnapshot
 }
 
 func newHomeStreamingLogWriter(url, method string, headers map[string][]string, body []byte, requestID string) *homeStreamingLogWriter {
@@ -197,6 +198,13 @@ func (w *homeStreamingLogWriter) SetFirstChunkTimestamp(timestamp time.Time) {
 	}
 }
 
+func (w *homeStreamingLogWriter) SetRequestTiming(timing RequestTimingSnapshot) {
+	if w == nil {
+		return
+	}
+	w.requestTiming = timing
+}
+
 func (w *homeStreamingLogWriter) Close() error {
 	if w == nil {
 		return nil
@@ -218,6 +226,9 @@ func (w *homeStreamingLogWriter) Close() error {
 	var buf bytes.Buffer
 	upstreamTransport := inferUpstreamTransport(w.apiRequest, nil, w.apiResponse, nil, w.apiWebsocketTime, nil, nil)
 	if errWrite := writeRequestInfoWithBody(&buf, w.url, w.method, w.requestHeaders, w.requestBody, "", w.timestamp, "http", upstreamTransport, true); errWrite != nil {
+		return errWrite
+	}
+	if errWrite := writeRequestTimingSection(&buf, w.requestTiming); errWrite != nil {
 		return errWrite
 	}
 	if errWrite := writeAPISection(&buf, "=== API WEBSOCKET TIMELINE ===\n", "=== API WEBSOCKET TIMELINE", w.apiWebsocketTime, time.Time{}); errWrite != nil {

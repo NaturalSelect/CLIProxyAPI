@@ -41,6 +41,7 @@ type UsageReporter struct {
 	ttft            time.Duration
 	ttftStart       time.Time
 	ttftSet         bool
+	timingTurn      *internallogging.RequestTimingTurn
 	once            sync.Once
 }
 
@@ -75,6 +76,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		reasoning:   usage.ReasoningEffortFromContext(ctx),
 		serviceTier: usage.ServiceTierFromContext(ctx),
 		generate:    usage.GenerateFromContext(ctx),
+		timingTurn:  internallogging.RequestTimingTurnFromContext(ctx),
 	}
 	if auth != nil {
 		reporter.authID = auth.ID
@@ -163,6 +165,9 @@ func (r *UsageReporter) StartResponseTTFT() {
 	r.ttftMu.Lock()
 	if !r.ttftSet && r.ttftStart.IsZero() {
 		r.ttftStart = time.Now()
+		if r.timingTurn != nil {
+			r.timingTurn.MarkOnce(internallogging.TimingStageUpstreamTTFTStarted, internallogging.RequestTimingEventDetails{})
+		}
 	}
 	r.ttftMu.Unlock()
 }
@@ -195,6 +200,9 @@ func (r *UsageReporter) MarkFirstResponseContent() {
 	r.ttft = ttft
 	r.ttftSet = true
 	r.ttftStart = time.Time{}
+	if r.timingTurn != nil {
+		r.timingTurn.MarkOnce(internallogging.TimingStageFirstSemanticContent, internallogging.RequestTimingEventDetails{})
+	}
 }
 
 // MarkFirstResponseByte is retained for source compatibility.

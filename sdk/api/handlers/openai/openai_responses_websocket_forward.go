@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/clienterror"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	requestlogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -23,6 +24,7 @@ import (
 type responsesWebsocketForwardOptions struct {
 	toolCacheTurn *responsesWebsocketToolCacheTurn
 	suppressError func(*interfaces.ErrorMessage) bool
+	timingTurn    *requestlogging.RequestTimingTurn
 }
 
 func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
@@ -64,6 +66,9 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 			if errMsg == nil {
 				cancel(nil)
 				return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, nil
+			}
+			if opts.timingTurn != nil {
+				opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: "error"})
 			}
 
 			h.LoggingAPIResponseError(context.WithValue(context.Background(), "gin", c), errMsg)
@@ -116,6 +121,12 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 			for i := range payloads {
 				collectResponsesWebsocketOutputItem(payloads[i], outputItemsByIndex, &outputItemsFallback)
 				eventType := gjson.GetBytes(payloads[i], "type").String()
+				if opts.timingTurn != nil {
+					opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+					if eventType == "response.output_text.delta" && strings.TrimSpace(gjson.GetBytes(payloads[i], "delta").String()) != "" {
+						opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstVisibleText, requestlogging.RequestTimingEventDetails{})
+					}
+				}
 				if isResponsesWebsocketCompletionEvent(eventType) {
 					payloads[i] = restoreResponsesWebsocketCompletionOutput(payloads[i], outputItemsByIndex, outputItemsFallback)
 				}
@@ -178,6 +189,13 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 					)
 					cancel(errWrite)
 					return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, errWrite
+				}
+				if opts.timingTurn != nil {
+					opts.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamWrite, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+				}
+				if isResponsesWebsocketCompletionEvent(eventType) {
+					cancel(nil)
+					return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, nil
 				}
 			}
 		}

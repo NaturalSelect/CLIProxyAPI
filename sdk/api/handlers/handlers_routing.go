@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/tidwall/sjson"
 
 	. "github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	requestlogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -328,6 +330,7 @@ func (h *BaseAPIHandler) applyModelRouter(ctx context.Context, handlerType, mode
 	if host == nil || !modelRoutersEnabled(host, execOptions.SkipRouterPluginID) {
 		return decision
 	}
+	startedAt := time.Now()
 	meta := requestExecutionMetadata(ctx)
 	meta[coreexecutor.RequestedModelMetadataKey] = modelName
 	addModelExecutionSourceMetadata(meta, execOptions.InternalSource)
@@ -340,6 +343,13 @@ func (h *BaseAPIHandler) applyModelRouter(ctx context.Context, handlerType, mode
 		Body:           cloneBytes(rawJSON),
 		Metadata:       meta,
 	}, execOptions.SkipRouterPluginID)
+	if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+		outcome := "unhandled"
+		if ok && resp.Handled {
+			outcome = "handled"
+		}
+		turn.Measure(requestlogging.TimingStageModelRouter, startedAt, requestlogging.RequestTimingEventDetails{Outcome: outcome})
+	}
 	if !ok || !resp.Handled {
 		return decision
 	}

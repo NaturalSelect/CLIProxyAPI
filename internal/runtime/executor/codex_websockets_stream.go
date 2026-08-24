@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	requestlogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -125,6 +127,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 	var closer *websocketConnectionCloser
 	var respHS *http.Response
 	var errDial error
+	connectionStartedAt := time.Now()
 	if cliproxyexecutor.RequiredUpstreamWebsocket(ctx) {
 		conn, closer = existingWebsocketSessionConn(sess, authID, wsURL)
 		if conn == nil {
@@ -135,6 +138,20 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 		}
 	} else {
 		conn, closer, respHS, errDial = e.ensureUpstreamConn(ctx, auth, sess, authID, wsURL, wsHeaders)
+	}
+	if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+		connectionOutcome := "reused"
+		if respHS != nil {
+			connectionOutcome = "new"
+		}
+		if errDial != nil {
+			connectionOutcome = "failed"
+		}
+		turn.Measure(requestlogging.TimingStageUpstreamConnection, connectionStartedAt, requestlogging.RequestTimingEventDetails{
+			Outcome:  connectionOutcome,
+			Provider: "codex",
+			Model:    req.Model,
+		})
 	}
 	var upstreamHeaders http.Header
 	if respHS != nil {
@@ -178,7 +195,15 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 	}
 	restoreMultiAgentV2 := !multiAgentV2Conflict && (optimizeMultiAgentV2 || sess.isMultiAgentV2Optimized(conn))
 
+	sendStartedAt := time.Now()
 	if errSend := writeCodexWebsocketMessage(sess, conn, wsReqBody); errSend != nil {
+		if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+			turn.Measure(requestlogging.TimingStageUpstreamRequestSent, sendStartedAt, requestlogging.RequestTimingEventDetails{
+				Outcome:  "failed",
+				Provider: "codex",
+				Model:    req.Model,
+			})
+		}
 		errSend = mapCodexWebsocketWriteError(sess, conn, errSend)
 		helps.RecordAPIWebsocketError(ctx, e.cfg, "send", errSend)
 		if sess != nil {
@@ -249,6 +274,13 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			return nil, errSend
 		}
 	}
+	if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+		turn.Measure(requestlogging.TimingStageUpstreamRequestSent, sendStartedAt, requestlogging.RequestTimingEventDetails{
+			Outcome:  "sent",
+			Provider: "codex",
+			Model:    req.Model,
+		})
+	}
 
 	if optimizeMultiAgentV2 || multiAgentV2Conflict {
 		sess.setMultiAgentV2Optimized(conn, optimizeMultiAgentV2 && !multiAgentV2Conflict)
@@ -316,6 +348,13 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			payload = bytes.TrimSpace(payload)
 			if len(payload) == 0 {
 				continue
+			}
+			if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+				turn.MarkOnce(requestlogging.TimingStageFirstUpstreamEvent, requestlogging.RequestTimingEventDetails{
+					Outcome:  gjson.GetBytes(payload, "type").String(),
+					Provider: "codex",
+					Model:    req.Model,
+				})
 			}
 			reporter.MarkFirstResponseByte()
 			payload = applyCodexIdentityConfuseResponsePayload(payload, identityState)
@@ -527,6 +566,13 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			payload = bytes.TrimSpace(payload)
 			if len(payload) == 0 {
 				continue
+			}
+			if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+				turn.MarkOnce(requestlogging.TimingStageFirstUpstreamEvent, requestlogging.RequestTimingEventDetails{
+					Outcome:  gjson.GetBytes(payload, "type").String(),
+					Provider: "codex",
+					Model:    req.Model,
+				})
 			}
 			payload = applyCodexIdentityConfuseResponsePayload(payload, identityState)
 			helps.AppendAPIWebsocketResponse(ctx, e.cfg, payload)

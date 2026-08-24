@@ -428,6 +428,7 @@ func (h *BaseAPIHandler) applyRequestInterceptorsBeforeAuth(ctx context.Context,
 	if !requestInterceptorsEnabled(host) {
 		return req, opts, nil
 	}
+	startedAt := time.Now()
 	resp := interceptRequestBeforeAuth(ctx, host, pluginapi.RequestInterceptRequest{
 		RequestID:      requestID,
 		TraceID:        logging.GetRequestID(ctx),
@@ -439,6 +440,13 @@ func (h *BaseAPIHandler) applyRequestInterceptorsBeforeAuth(ctx context.Context,
 		Body:           cloneBytes(req.Payload),
 		Metadata:       opts.Metadata,
 	}, skipPluginID)
+	if turn := logging.RequestTimingTurnFromContext(ctx); turn != nil {
+		outcome := "completed"
+		if resp.Terminate {
+			outcome = "terminated"
+		}
+		turn.Measure(logging.TimingStageBeforeAuthInterceptor, startedAt, logging.RequestTimingEventDetails{Outcome: outcome})
+	}
 	opts.Headers = finalInterceptorHeaders(opts.Headers, resp.Headers)
 	if len(resp.Body) > 0 {
 		req.Payload = cloneBytes(resp.Body)

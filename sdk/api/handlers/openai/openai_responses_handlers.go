@@ -21,6 +21,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/client/codex/optimize-multi-agent-v2"
 	. "github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	requestlogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -59,6 +60,7 @@ type responsesSSEFramer struct {
 	terminalError        *interfaces.ErrorMessage
 	failureEvent         string
 	dataFrames           int
+	timingTurn           *requestlogging.RequestTimingTurn
 }
 
 func (f *responsesSSEFramer) WriteChunk(w io.Writer, chunk []byte) {
@@ -150,6 +152,12 @@ func (f *responsesSSEFramer) repairFrame(frame []byte) []byte {
 	}
 	if eventType != "" {
 		f.lastEvent = sanitizeResponsesStreamEventName(eventType)
+		if f.timingTurn != nil {
+			f.timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: eventType})
+			if eventType == "response.output_text.delta" && strings.TrimSpace(gjson.GetBytes(payload, "delta").String()) != "" {
+				f.timingTurn.MarkOnce(requestlogging.TimingStageFirstVisibleText, requestlogging.RequestTimingEventDetails{})
+			}
+		}
 	}
 	if responsesSSEErrorEvent(eventType) {
 		return f.repairErrorPayload(payload)
@@ -650,7 +658,10 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 	if isCodexResponsesClientRequest(c) {
 		failureEvent = "response.failed"
 	}
-	framer := &responsesSSEFramer{failureEvent: failureEvent}
+	framer := &responsesSSEFramer{
+		failureEvent: failureEvent,
+		timingTurn:   requestlogging.RequestTimingTurnFromContext(cliCtx),
+	}
 	var initialOutput bytes.Buffer
 
 	// Peek at the first complete SSE data frame.

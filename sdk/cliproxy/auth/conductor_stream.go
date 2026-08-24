@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	requestlogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
@@ -105,10 +106,16 @@ func readStreamBootstrap(ctx context.Context, ch <-chan cliproxyexecutor.StreamC
 			return buffered, true, nil
 		}
 		if chunk.Err != nil {
+			if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+				turn.MarkOnce(requestlogging.TimingStageFirstUpstreamPayload, requestlogging.RequestTimingEventDetails{Outcome: "error"})
+			}
 			return nil, false, chunk.Err
 		}
 		buffered = append(buffered, chunk)
 		if len(chunk.Payload) > 0 {
+			if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+				turn.MarkOnce(requestlogging.TimingStageFirstUpstreamPayload, requestlogging.RequestTimingEventDetails{Outcome: "payload"})
+			}
 			return buffered, false, nil
 		}
 	}
@@ -249,6 +256,19 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		startStream := time.Now()
 		streamResult, errStream := executor.ExecuteStream(ctx, auth, execReq, execOpts)
 		durationStream := time.Since(startStream)
+		if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+			outcome := "stream_ready"
+			if errStream != nil {
+				outcome = "failed"
+			}
+			turn.Mark(requestlogging.TimingStageExecutorExecuteStream, requestlogging.RequestTimingEventDetails{
+				Duration: durationStream,
+				Outcome:  outcome,
+				Provider: provider,
+				Model:    execModel,
+				Attempt:  idx + 1,
+			})
+		}
 		if errStream != nil {
 			if errCtx := ctx.Err(); errCtx != nil {
 				return nil, errCtx
@@ -274,6 +294,19 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 					startRetry := time.Now()
 					streamResult, errStream = executor.ExecuteStream(ctx, auth, execReq, execOpts)
 					durationRetry := time.Since(startRetry)
+					if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+						outcome := "stream_ready"
+						if errStream != nil {
+							outcome = "failed"
+						}
+						turn.Mark(requestlogging.TimingStageExecutorExecuteStream, requestlogging.RequestTimingEventDetails{
+							Duration: durationRetry,
+							Outcome:  outcome,
+							Provider: provider,
+							Model:    execModel,
+							Attempt:  idx + 2,
+						})
+					}
 					if errStream != nil {
 						warnLogUpstreamFailure(ctx, entry, provider, execModel, auth, durationRetry, errStream)
 						if errCtx := ctx.Err(); errCtx != nil {

@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	requestlogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -405,6 +406,17 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			requestModelName = strings.TrimSpace(gjson.GetBytes(lastRequest, "model").String())
 		}
 		executionParent := context.WithValue(c.Request.Context(), "gin", c)
+		var timingTurn *requestlogging.RequestTimingTurn
+		if tracker := requestlogging.RequestTimingTrackerFromContext(executionParent); tracker != nil {
+			timingTurn = tracker.BeginTurn("responses_websocket_turn", requestModelName)
+			executionParent = requestlogging.WithRequestTimingTurn(executionParent, timingTurn)
+			timingTurn.MarkOnce(requestlogging.TimingStageStreamExecutionEntered, requestlogging.RequestTimingEventDetails{Model: requestModelName})
+		}
+		completeTimingTurn := func(outcome string) {
+			if timingTurn != nil {
+				timingTurn.Complete(outcome)
+			}
+		}
 		executionParent, routeOverridesModelResolution := h.PrepareStreamModelRoute(
 			executionParent,
 			h.HandlerType(),
@@ -452,6 +464,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		requestRequiresCurrentUpstreamWebsocket := responsesWebsocketRequestRequiresCurrentUpstream(payload)
 		if upstreamMode == responsesWebsocketUpstreamModeWS && !nativeWebsocketPassthrough {
 			if requestRequiresCurrentUpstreamWebsocket {
+				completeTimingTurn("replay_required")
 				replayErr := responsesWebsocketHTTPReplayRequiredError()
 				wsTerminateErr = replayErr
 				matched, errClose := writer.closeForUpstreamError(replayErr)
@@ -501,6 +514,9 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		if errMsg != nil {
 			h.LoggingAPIResponseError(context.WithValue(context.Background(), "gin", c), errMsg)
 			markAPIResponseTimestamp(c)
+			if timingTurn != nil {
+				timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: "error"})
+			}
 			errorPayload, errWrite := writeResponsesWebsocketError(writer, wsTimelineLog, errMsg)
 			log.Infof(
 				"responses websocket: downstream_out id=%s type=%d event=%s payload=%s",
@@ -510,6 +526,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				websocketPayloadPreview(errorPayload),
 			)
 			if errWrite != nil {
+				completeTimingTurn("downstream_write_error")
 				log.Warnf(
 					"responses websocket: downstream_out write failed id=%s event=%s error=%v",
 					passthroughSessionID,
@@ -518,6 +535,10 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				)
 				return
 			}
+			if timingTurn != nil {
+				timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamWrite, requestlogging.RequestTimingEventDetails{Outcome: "error"})
+			}
+			completeTimingTurn("invalid_request")
 			continue
 		}
 
@@ -534,10 +555,18 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			lastResponseOutput = []byte("[]")
 			lastResponseID = ""
 			lastResponsePendingToolCallIDs = nil
+			if timingTurn != nil {
+				timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamEvent, requestlogging.RequestTimingEventDetails{Outcome: "response.created"})
+			}
 			if errWrite := writeResponsesWebsocketSyntheticPrewarm(c, writer, requestJSON, wsTimelineLog, passthroughSessionID); errWrite != nil {
+				completeTimingTurn("downstream_write_error")
 				wsTerminateErr = errWrite
 				return
 			}
+			if timingTurn != nil {
+				timingTurn.MarkOnce(requestlogging.TimingStageFirstDownstreamWrite, requestlogging.RequestTimingEventDetails{Outcome: "response.created"})
+			}
+			completeTimingTurn("local_prewarm")
 			continue
 		}
 
@@ -604,9 +633,11 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			responsesWebsocketForwardOptions{
 				toolCacheTurn: toolCacheTurn,
 				suppressError: replayPinnedAuthFailure,
+				timingTurn:    timingTurn,
 			},
 		)
 		if errForward != nil {
+			completeTimingTurn("forward_error")
 			wsTerminateErr = errForward
 			switch {
 			case errors.Is(errForward, websocket.ErrCloseSent):
@@ -624,6 +655,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				forgetPinnedAuth()
 			}
 			if replayPinnedAuthFailure(forwardErrMsg) {
+				completeTimingTurn("replay_required")
 				replayErr := responsesWebsocketHTTPReplayRequiredError()
 				wsTerminateErr = replayErr
 				matched, errClose := writer.closeForUpstreamError(replayErr)
@@ -634,6 +666,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				}
 				return
 			}
+			completeTimingTurn("upstream_error")
 			continue
 		}
 
@@ -656,6 +689,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			lastResponseID = strings.TrimSpace(completedResponseID)
 			lastResponsePendingToolCallIDs = append([]string(nil), completedPendingToolCallIDs...)
 		}
+		completeTimingTurn("completed")
 	}
 }
 

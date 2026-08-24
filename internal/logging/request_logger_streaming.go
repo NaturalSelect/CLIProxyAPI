@@ -72,6 +72,8 @@ type FileStreamingLogWriter struct {
 
 	// apiResponseTimestamp captures when the API response was received.
 	apiResponseTimestamp time.Time
+
+	requestTiming RequestTimingSnapshot
 }
 
 // WriteChunkAsync writes a response chunk asynchronously (non-blocking).
@@ -190,6 +192,11 @@ func (w *FileStreamingLogWriter) SetFirstChunkTimestamp(timestamp time.Time) {
 	}
 }
 
+// SetRequestTiming stores the immutable latency snapshot for final log assembly.
+func (w *FileStreamingLogWriter) SetRequestTiming(timing RequestTimingSnapshot) {
+	w.requestTiming = timing
+}
+
 // Close finalizes the log file and cleans up resources.
 // It writes all buffered data to the file in the correct order:
 // API WEBSOCKET TIMELINE -> API REQUEST -> API RESPONSE -> RESPONSE (status, headers, body chunks)
@@ -275,6 +282,9 @@ func (w *FileStreamingLogWriter) asyncWriter() {
 
 func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
 	if errWrite := writeRequestInfoWithBody(logFile, w.url, w.method, w.requestHeaders, nil, w.requestBodyPath, w.timestamp, "http", inferUpstreamTransport(w.apiRequest, w.apiRequestSource, w.apiResponse, w.apiResponseSource, w.apiWebsocketTimeline, nil, nil), true); errWrite != nil {
+		return errWrite
+	}
+	if errWrite := writeRequestTimingSection(logFile, w.requestTiming); errWrite != nil {
 		return errWrite
 	}
 	if errWrite := writeAPISection(logFile, "=== API WEBSOCKET TIMELINE ===\n", "=== API WEBSOCKET TIMELINE", w.apiWebsocketTimeline, time.Time{}); errWrite != nil {
@@ -372,6 +382,8 @@ func (w *NoOpStreamingLogWriter) WriteAPIWebsocketTimeline(_ []byte) error {
 }
 
 func (w *NoOpStreamingLogWriter) SetFirstChunkTimestamp(_ time.Time) {}
+
+func (w *NoOpStreamingLogWriter) SetRequestTiming(_ RequestTimingSnapshot) {}
 
 // Close is a no-op implementation that does nothing and always returns nil.
 //

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	requestlogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -278,6 +279,9 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 			}
 			select {
 			case dataChan <- payload:
+				if turn := requestlogging.RequestTimingTurnFromContext(ctx); turn != nil {
+					turn.MarkOnce(requestlogging.TimingStageFirstHandlerDeliverable, requestlogging.RequestTimingEventDetails{Outcome: "plugin_payload"})
+				}
 				if streamInterceptorsActive {
 					historyChunks = appendStreamInterceptorHistory(historyChunks, payload)
 				}
@@ -299,6 +303,10 @@ func (h *BaseAPIHandler) executeStreamWithAuthManager(ctx context.Context, handl
 }
 
 func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context, entryProtocol, exitProtocol, modelName string, rawJSON []byte, alt string, allowImageModel bool, execOptions modelExecutionOptions) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
+	ctx, timingTurn := requestlogging.EnsureRequestTimingTurn(ctx, "http_stream", modelName)
+	if timingTurn != nil {
+		timingTurn.MarkOnce(requestlogging.TimingStageStreamExecutionEntered, requestlogging.RequestTimingEventDetails{Model: modelName})
+	}
 	originalRequestedModel := modelName
 	if errMsg := h.validateClientModelAccess(ctx, originalRequestedModel); errMsg != nil {
 		return clientModelAccessDeniedStream(errMsg)
@@ -538,6 +546,9 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				continue
 			}
 			bootstrapPayload = payload
+			if timingTurn != nil {
+				timingTurn.MarkOnce(requestlogging.TimingStageFirstHandlerDeliverable, requestlogging.RequestTimingEventDetails{Outcome: "payload"})
+			}
 			return
 		}
 	}
@@ -644,12 +655,18 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		sendData := func(chunk []byte) bool {
 			if ctx == nil {
 				dataChan <- chunk
+				if timingTurn != nil {
+					timingTurn.MarkOnce(requestlogging.TimingStageFirstHandlerDeliverable, requestlogging.RequestTimingEventDetails{Outcome: "payload"})
+				}
 				return true
 			}
 			select {
 			case <-ctx.Done():
 				return false
 			case dataChan <- chunk:
+				if timingTurn != nil {
+					timingTurn.MarkOnce(requestlogging.TimingStageFirstHandlerDeliverable, requestlogging.RequestTimingEventDetails{Outcome: "payload"})
+				}
 				return true
 			}
 		}

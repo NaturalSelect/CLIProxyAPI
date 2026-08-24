@@ -24,12 +24,13 @@ const websocketTimelineOverrideContextKey = "WEBSOCKET_TIMELINE_OVERRIDE"
 
 // RequestInfo holds essential details of an incoming HTTP request for logging purposes.
 type RequestInfo struct {
-	URL                 string                      // URL is the request URL.
-	Method              string                      // Method is the HTTP method (e.g., GET or POST).
-	Headers             map[string][]string         // Headers contains the request headers.
-	Body                []byte                      // Body is the raw request body.
-	RequestID           string                      // RequestID is the unique identifier for the request.
-	Timestamp           time.Time                   // Timestamp is when the request was received.
+	URL                 string              // URL is the request URL.
+	Method              string              // Method is the HTTP method (e.g., GET or POST).
+	Headers             map[string][]string // Headers contains the request headers.
+	Body                []byte              // Body is the raw request body.
+	RequestID           string              // RequestID is the unique identifier for the request.
+	Timestamp           time.Time           // Timestamp is when the request was received.
+	timing              *logging.RequestTimingTracker
 	deferredBodyCapture *deferredRequestBodyCapture // deferredBodyCapture spools large error-only request bodies.
 }
 
@@ -88,6 +89,7 @@ func (w *ResponseWriterWrapper) Write(data []byte) (int, error) {
 		// Capture TTFB on first chunk (synchronous, before async channel send)
 		if w.firstChunkTimestamp.IsZero() {
 			w.firstChunkTimestamp = time.Now()
+			w.markActiveTurnOnce(logging.TimingStageFirstDownstreamWrite, logging.RequestTimingEventDetails{Outcome: "write"})
 		}
 		// For streaming responses: Send to async logging channel (non-blocking)
 		select {
@@ -136,6 +138,7 @@ func (w *ResponseWriterWrapper) WriteString(data string) (int, error) {
 		// Capture TTFB on first chunk (synchronous, before async channel send)
 		if w.firstChunkTimestamp.IsZero() {
 			w.firstChunkTimestamp = time.Now()
+			w.markActiveTurnOnce(logging.TimingStageFirstDownstreamWrite, logging.RequestTimingEventDetails{Outcome: "write_string"})
 		}
 		select {
 		case w.chunkChannel <- []byte(data):
@@ -155,6 +158,7 @@ func (w *ResponseWriterWrapper) WriteString(data string) (int, error) {
 // and initializes the appropriate logging mechanism (standard or streaming).
 func (w *ResponseWriterWrapper) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
+	w.markActiveTurnOnce(logging.TimingStageDownstreamHeaders, logging.RequestTimingEventDetails{Outcome: http.StatusText(statusCode)})
 
 	// Capture response headers using the new method
 	w.captureCurrentHeaders()
@@ -287,6 +291,7 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 	}
 
 	hasAPIError := hasActionableError(c, finalStatusCode, slicesAPIResponseError)
+	timingSnapshot := w.completeActiveTimingTurn(finalStatusCode, hasAPIError)
 	forceLog := w.logOnErrorOnly && hasAPIError && !w.logger.IsEnabled()
 	websocketTimelineSource := w.extractWebsocketTimelineSource(c)
 	apiRequestSource := w.extractAPIRequestSource(c)
@@ -309,6 +314,11 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 		}
 
 		w.streamWriter.SetFirstChunkTimestamp(w.firstChunkTimestamp)
+		if timingWriter, ok := w.streamWriter.(interface {
+			SetRequestTiming(logging.RequestTimingSnapshot)
+		}); ok {
+			timingWriter.SetRequestTiming(timingSnapshot)
+		}
 
 		// Write API Request and Response to the streaming log before closing
 		apiRequest := w.extractAPIRequest(c)
@@ -372,7 +382,31 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 	if forceLog && len(apiRequest) == 0 {
 		apiRequest = w.extractDeferredAPIRequest(c)
 	}
-	return w.logRequest(w.extractRequestBody(c), finalStatusCode, w.cloneHeaders(), w.extractResponseBody(c), w.extractWebsocketTimeline(c), websocketTimelineSource, apiRequest, apiRequestSource, w.extractAPIResponse(c), apiResponseSource, w.extractAPIWebsocketTimeline(c), apiWebsocketTimelineSource, w.extractAPIResponseTimestamp(c), slicesAPIResponseError, forceLog)
+	return w.logRequest(w.extractRequestBody(c), finalStatusCode, w.cloneHeaders(), w.extractResponseBody(c), w.extractWebsocketTimeline(c), websocketTimelineSource, apiRequest, apiRequestSource, w.extractAPIResponse(c), apiResponseSource, w.extractAPIWebsocketTimeline(c), apiWebsocketTimelineSource, w.extractAPIResponseTimestamp(c), slicesAPIResponseError, forceLog, timingSnapshot)
+}
+
+func (w *ResponseWriterWrapper) markActiveTurnOnce(stage string, details logging.RequestTimingEventDetails) {
+	if w == nil || w.requestInfo == nil || w.requestInfo.timing == nil {
+		return
+	}
+	if turn := w.requestInfo.timing.ActiveTurn(); turn != nil {
+		turn.MarkOnce(stage, details)
+	}
+}
+
+func (w *ResponseWriterWrapper) completeActiveTimingTurn(statusCode int, hasAPIError bool) logging.RequestTimingSnapshot {
+	if w == nil || w.requestInfo == nil || w.requestInfo.timing == nil {
+		return logging.RequestTimingSnapshot{}
+	}
+	if turn := w.requestInfo.timing.ActiveTurn(); turn != nil {
+		outcome := "completed"
+		if hasAPIError || statusCode >= http.StatusBadRequest {
+			outcome = "failed"
+		}
+		turn.MarkOnce(logging.TimingStageDownstreamCompleted, logging.RequestTimingEventDetails{Outcome: outcome})
+		turn.Complete(outcome)
+	}
+	return w.requestInfo.timing.Snapshot()
 }
 
 func (w *ResponseWriterWrapper) cloneHeaders() map[string][]string {
@@ -558,10 +592,38 @@ func extractBodyOverride(c *gin.Context, key string) []byte {
 	return nil
 }
 
-func (w *ResponseWriterWrapper) logRequest(requestBody []byte, statusCode int, headers map[string][]string, body, websocketTimeline []byte, websocketTimelineSource *logging.FileBodySource, apiRequestBody []byte, apiRequestSource *logging.FileBodySource, apiResponseBody []byte, apiResponseSource *logging.FileBodySource, apiWebsocketTimeline []byte, apiWebsocketTimelineSource *logging.FileBodySource, apiResponseTimestamp time.Time, apiResponseErrors []*interfaces.ErrorMessage, forceLog bool) error {
+func (w *ResponseWriterWrapper) logRequest(requestBody []byte, statusCode int, headers map[string][]string, body, websocketTimeline []byte, websocketTimelineSource *logging.FileBodySource, apiRequestBody []byte, apiRequestSource *logging.FileBodySource, apiResponseBody []byte, apiResponseSource *logging.FileBodySource, apiWebsocketTimeline []byte, apiWebsocketTimelineSource *logging.FileBodySource, apiResponseTimestamp time.Time, apiResponseErrors []*interfaces.ErrorMessage, forceLog bool, timingSnapshot logging.RequestTimingSnapshot) error {
 	if w.requestInfo == nil {
 		cleanupFileBodySources(websocketTimelineSource, apiRequestSource, apiResponseSource, apiWebsocketTimelineSource)
 		return nil
+	}
+
+	if loggerWithTiming, ok := w.logger.(interface {
+		LogRequestWithOptionsAndAllSourcesAndTiming(string, string, map[string][]string, []byte, int, map[string][]string, []byte, []byte, *logging.FileBodySource, []byte, *logging.FileBodySource, []byte, *logging.FileBodySource, []byte, *logging.FileBodySource, []*interfaces.ErrorMessage, bool, string, time.Time, time.Time, logging.RequestTimingSnapshot) error
+	}); ok {
+		return loggerWithTiming.LogRequestWithOptionsAndAllSourcesAndTiming(
+			w.requestInfo.URL,
+			w.requestInfo.Method,
+			w.requestInfo.Headers,
+			requestBody,
+			statusCode,
+			headers,
+			body,
+			websocketTimeline,
+			websocketTimelineSource,
+			apiRequestBody,
+			apiRequestSource,
+			apiResponseBody,
+			apiResponseSource,
+			apiWebsocketTimeline,
+			apiWebsocketTimelineSource,
+			apiResponseErrors,
+			forceLog,
+			w.requestInfo.RequestID,
+			w.requestInfo.Timestamp,
+			apiResponseTimestamp,
+			timingSnapshot,
+		)
 	}
 
 	if loggerWithAllSources, ok := w.logger.(interface {
