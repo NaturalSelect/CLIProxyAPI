@@ -565,10 +565,10 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 		return nil, errDial
 	}
 	if errBind := sess.bindExecutionLifecycle(opts, conn, closer, req.Model); errBind != nil {
+		closeWebsocketAfterBindFailure(sess, conn, closer)
 		if sess != nil {
 			sess.reqMu.Unlock()
 		}
-		closeWebsocketAfterBindFailure(sess, conn, closer)
 		return nil, errBind
 	}
 	recordAPIWebsocketHandshake(ctx, e.cfg, respHS)
@@ -619,8 +619,8 @@ func (e *XAIWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 			closer = closerRetry
 			if errBind := sess.bindExecutionLifecycle(opts, conn, closer, req.Model); errBind != nil {
 				clearRetryActiveState(sess, previousConn, previousReadCh)
-				sess.reqMu.Unlock()
 				closeWebsocketAfterBindFailure(sess, conn, closer)
+				sess.reqMu.Unlock()
 				return nil, errBind
 			}
 			readCh = sess.activate(conn)

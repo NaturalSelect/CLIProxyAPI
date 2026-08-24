@@ -178,8 +178,8 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 		return nil, errDial
 	}
 	if errBind := sess.bindExecutionLifecycle(opts, conn, closer, req.Model); errBind != nil {
-		unlockStreamSession()
 		closeWebsocketAfterBindFailure(sess, conn, closer)
+		unlockStreamSession()
 		return nil, errBind
 	}
 	recordAPIWebsocketHandshake(ctx, e.cfg, respHS)
@@ -237,8 +237,8 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			closer = closerRetry
 			if errBind := sess.bindExecutionLifecycle(opts, conn, closer, req.Model); errBind != nil {
 				clearRetryActiveState(sess, previousConn, previousReadCh)
-				sess.reqMu.Unlock()
 				closeWebsocketAfterBindFailure(sess, conn, closer)
+				sess.reqMu.Unlock()
 				return nil, errBind
 			}
 			readCh = sess.activate(conn)

@@ -271,6 +271,12 @@ func TestWebsocketRetryBindFailureClearsActiveSessionState(t *testing.T) {
 			if active {
 				t.Fatal("retry bind failure left the old active websocket state")
 			}
+			sess.connMu.Lock()
+			connectionStateActive := sess.conn != nil || sess.connCloser != nil || sess.readerConn != nil
+			sess.connMu.Unlock()
+			if connectionStateActive {
+				t.Fatal("retry bind failure left stale websocket connection state")
+			}
 
 			opts.ExecutionLifecycle = nil
 			if errRun := run(opts); errRun != nil {
