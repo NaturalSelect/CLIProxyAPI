@@ -62,7 +62,7 @@ func applyRateLimitHeaders(auth *Auth, headers http.Header, observedAt time.Time
 	if auth == nil || len(headers) == 0 {
 		return false
 	}
-	snapshot, ok := parseRateLimitHeaders(auth.Provider, headers)
+	snapshot, ok := parseRateLimitHeaders(auth.Provider, headers, auth.RateLimits)
 	if !ok {
 		return false
 	}
@@ -104,11 +104,13 @@ func parseRateLimitObservedAt(snapshot map[string]any) (time.Time, bool) {
 
 // parseRateLimitHeaders dispatches to a provider specific header parser. It reports
 // ok=false when the provider has no known usage headers or none of them are present
-// on this response.
-func parseRateLimitHeaders(provider string, headers http.Header) (map[string]any, bool) {
+// on this response. existing is the auth's previously stored snapshot (may be nil),
+// used by providers whose headers only cover a subset of tracked windows on any
+// given response so an unreported window can be carried forward.
+func parseRateLimitHeaders(provider string, headers http.Header, existing map[string]any) (map[string]any, bool) {
 	switch provider {
 	case "claude":
-		return parseClaudeRateLimitHeaders(headers)
+		return parseClaudeRateLimitHeaders(headers, existing)
 	case "codex":
 		return parseCodexRateLimitHeaders(headers)
 	default:
@@ -116,7 +118,7 @@ func parseRateLimitHeaders(provider string, headers http.Header) (map[string]any
 	}
 }
 
-func parseClaudeRateLimitHeaders(headers http.Header) (map[string]any, bool) {
+func parseClaudeRateLimitHeaders(headers http.Header, existing map[string]any) (map[string]any, bool) {
 	snapshot := make(map[string]any)
 	setRateLimitUtilizationPercent(snapshot, "5h_utilization", headers.Get(claudeRateLimit5hUtilizationHeader))
 	setRateLimitResetTime(snapshot, "5h_reset", headers.Get(claudeRateLimit5hResetHeader))
@@ -130,10 +132,28 @@ func parseClaudeRateLimitHeaders(headers http.Header) (map[string]any, bool) {
 	if status := strings.TrimSpace(headers.Get(claudeRateLimit7dOiStatusHeader)); status != "" {
 		snapshot["7d_oi_status"] = status
 	}
+	// The 7d_oi window is only reported on responses routed through the
+	// claude-fable model family. Carry the last observed values forward when
+	// this response doesn't include them, so an intervening non-fable request
+	// for the same credential doesn't erase a still-active fable window.
+	copyMissingRateLimitKeys(snapshot, existing, "7d_oi_utilization", "7d_oi_reset", "7d_oi_status")
 	if len(snapshot) == 0 {
 		return nil, false
 	}
 	return snapshot, true
+}
+
+// copyMissingRateLimitKeys fills each of keys absent from dst with the value
+// most recently observed in src.
+func copyMissingRateLimitKeys(dst, src map[string]any, keys ...string) {
+	for _, key := range keys {
+		if _, ok := dst[key]; ok {
+			continue
+		}
+		if v, ok := src[key]; ok {
+			dst[key] = v
+		}
+	}
 }
 
 // parseCodexRateLimitHeaders reads the primary (typically weekly) and secondary
