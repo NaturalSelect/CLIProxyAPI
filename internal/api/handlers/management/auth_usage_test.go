@@ -103,6 +103,68 @@ func TestListAuthFileUsage_AntigravityReturnsTwoEntries(t *testing.T) {
 	}
 }
 
+func TestListAuthFileUsage_ClaudeFableWindowReturnsSeparateEntry(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	manager := coreauth.NewManager(nil, &coreauth.BalancedHashSelector{}, nil)
+	auth := &coreauth.Auth{ID: "auth-claude-2", Provider: "claude", FileName: "claude-2.json"}
+	auth.RateLimits = map[string]any{
+		"7d_utilization":    12,
+		"7d_reset":          "2026-08-17T05:29:20Z",
+		"5h_utilization":    40,
+		"5h_reset":          "2026-08-10T20:22:39Z",
+		"7d_oi_utilization": 9,
+		"7d_oi_reset":       "2026-08-31T00:00:00Z",
+		"7d_oi_status":      "allowed",
+		"observed_at":       "2026-08-10T18:00:00Z",
+	}
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+
+	usage := listAuthFileUsage(t, manager)
+	if len(usage) != 2 {
+		t.Fatalf("len(usage) = %d, want 2: %+v", len(usage), usage)
+	}
+
+	byName := make(map[string]map[string]any)
+	for _, entry := range usage {
+		entryName, _ := entry["name"].(string)
+		byName[entryName] = entry
+	}
+
+	main, ok := byName["claude-2.json"]
+	if !ok {
+		t.Fatalf("missing main entry, got names: %+v", byName)
+	}
+	if main["type"] != "claude" {
+		t.Fatalf("main type = %v, want claude", main["type"])
+	}
+	mainWindow7d, ok := main["usage_7d"].(map[string]any)
+	if !ok || int(mainWindow7d["percent"].(float64)) != 12 {
+		t.Fatalf("main usage_7d = %+v", main["usage_7d"])
+	}
+
+	fable, ok := byName["claude-2.json (claude-fable)"]
+	if !ok {
+		t.Fatalf("missing claude-fable entry, got names: %+v", byName)
+	}
+	if fable["id"] != "auth-claude-2" || fable["type"] != "claude-claude-fable" || fable["group"] != "claude-fable" {
+		t.Fatalf("fable entry = %+v", fable)
+	}
+	fableWindow7d, ok := fable["usage_7d"].(map[string]any)
+	if !ok || int(fableWindow7d["percent"].(float64)) != 9 || fableWindow7d["reset_at"] != "2026-08-31T00:00:00Z" {
+		t.Fatalf("fable usage_7d = %+v", fable["usage_7d"])
+	}
+	if _, has5h := fable["usage_5h"]; has5h {
+		t.Fatalf("fable entry should not have usage_5h: %+v", fable)
+	}
+	if fable["observed_at"] != "2026-08-10T18:00:00Z" {
+		t.Fatalf("fable observed_at = %v", fable["observed_at"])
+	}
+}
+
 // listAuthFileUsage calls ListAuthFileUsage through the HTTP handler and
 // decodes the "usage" array, exercising sorting and JSON encoding along with
 // buildAuthUsageEntries.

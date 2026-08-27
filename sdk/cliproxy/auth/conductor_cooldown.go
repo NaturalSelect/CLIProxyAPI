@@ -1457,11 +1457,16 @@ func isUnauthorizedError(err error) bool {
 	return strings.Contains(raw, "status 401") || strings.Contains(raw, "401 unauthorized")
 }
 
+// hasUnauthorizedAuthFailure reports whether the auth carries the explicit
+// "unauthorized" marker. Only the Code counts: refresh failures keep the raw
+// 401 HTTP status in LastError for display but clear the Code (see
+// refreshAuthForRequest), because a failed token refresh does not prove the
+// credential is dead — the existing access token may still work.
 func hasUnauthorizedAuthFailure(auth *Auth) bool {
 	if auth == nil || auth.LastError == nil {
 		return false
 	}
-	return auth.LastError.StatusCode() == http.StatusUnauthorized || strings.EqualFold(auth.LastError.Code, "unauthorized")
+	return strings.EqualFold(auth.LastError.Code, "unauthorized")
 }
 
 func refreshErrorFromError(err error) *Error {

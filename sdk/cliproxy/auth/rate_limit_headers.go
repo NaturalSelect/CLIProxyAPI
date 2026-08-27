@@ -18,6 +18,19 @@ const (
 	claudeRateLimit7dStatusHeader      = "Anthropic-Ratelimit-Unified-7d-Status"
 )
 
+// Anthropic additionally reports a second 7d window for the claude-fable model
+// family under the "7d_oi" header prefix, tracked independently from the main
+// 7d window above.
+const (
+	claudeRateLimit7dOiUtilizationHeader = "Anthropic-Ratelimit-Unified-7d_oi-Utilization"
+	claudeRateLimit7dOiResetHeader       = "Anthropic-Ratelimit-Unified-7d_oi-Reset"
+	claudeRateLimit7dOiStatusHeader      = "Anthropic-Ratelimit-Unified-7d_oi-Status"
+)
+
+// ClaudeRateLimitFableGroup is the usage group ID under which the 7d_oi window
+// is reported (see authUsageEntries in the management handlers).
+const ClaudeRateLimitFableGroup = "claude-fable"
+
 // ChatGPT/Codex sends these headers on /backend-api/codex/responses responses to
 // report the primary (weekly) and secondary (short window, e.g. 5h) usage windows
 // for the credential.
@@ -111,6 +124,11 @@ func parseClaudeRateLimitHeaders(headers http.Header) (map[string]any, bool) {
 	setRateLimitResetTime(snapshot, "7d_reset", headers.Get(claudeRateLimit7dResetHeader))
 	if status := strings.TrimSpace(headers.Get(claudeRateLimit7dStatusHeader)); status != "" {
 		snapshot["7d_status"] = status
+	}
+	setRateLimitUtilizationPercent(snapshot, "7d_oi_utilization", headers.Get(claudeRateLimit7dOiUtilizationHeader))
+	setRateLimitResetTime(snapshot, "7d_oi_reset", headers.Get(claudeRateLimit7dOiResetHeader))
+	if status := strings.TrimSpace(headers.Get(claudeRateLimit7dOiStatusHeader)); status != "" {
+		snapshot["7d_oi_status"] = status
 	}
 	if len(snapshot) == 0 {
 		return nil, false

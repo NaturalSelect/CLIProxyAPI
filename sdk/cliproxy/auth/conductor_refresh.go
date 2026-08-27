@@ -537,19 +537,20 @@ func (m *Manager) refreshAuthForRequest(ctx context.Context, id, failedAccessTok
 	log.Debugf("refreshed %s, %s, %v", auth.Provider, auth.ID, err)
 	now := time.Now()
 	if err != nil {
-		unauthorized := isUnauthorizedError(err)
+		// XX: A failed refresh must not take the credential out of service: the
+		// account often still works (e.g. the access token is still valid), so we
+		// only record the failure for display and back off the next refresh.
 		shouldReschedule := false
 		m.mu.Lock()
 		if current := m.auths[id]; current != nil {
-			current.LastError = refreshErrorFromError(err)
-			if unauthorized {
-				current.NextRefreshAfter = time.Time{}
-				current.Unavailable = true
-				current.Status = StatusError
-				current.StatusMessage = statusReasonWithDetail("unauthorized", current.LastError)
-			} else {
-				current.NextRefreshAfter = now.Add(refreshFailureBackoff)
-			}
+			lastErr := *refreshErrorFromError(err)
+			// XX: clear the 401 markers so hasUnauthorizedAuthFailure stays false
+			// and the credential keeps being scheduled and selected.
+			lastErr.Code = ""
+			lastErr.Retryable = true
+			current.LastError = &lastErr
+			current.StatusMessage = statusReasonWithDetail("refresh failed", current.LastError)
+			current.NextRefreshAfter = now.Add(refreshFailureBackoff)
 			m.auths[id] = current
 			shouldReschedule = true
 			if m.scheduler != nil {
