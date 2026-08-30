@@ -208,6 +208,20 @@ attemptLoop:
 						continue attemptLoop
 					}
 				}
+				if antigravityShouldRetryUnsupportedLocation(httpResp.StatusCode, bodyBytes) {
+					if idx+1 < len(baseURLs) {
+						log.Debugf("antigravity executor: unsupported location on base url %s, retrying with fallback base url: %s", baseURL, baseURLs[idx+1])
+						continue
+					}
+					if attempt+1 < attempts {
+						delay := antigravityUnsupportedLocationRetryDelay(attempt)
+						log.Debugf("antigravity executor: unsupported location for model %s, retrying in %s (attempt %d/%d)", baseModel, delay, attempt+1, attempts)
+						if errWait := antigravityWait(ctx, delay); errWait != nil {
+							return resp, errWait
+						}
+						continue attemptLoop
+					}
+				}
 				if antigravityShouldRetrySoftRateLimit(httpResp.StatusCode, bodyBytes) {
 					if attempt+1 < attempts {
 						delay := antigravitySoftRateLimitDelay(attempt)
@@ -443,6 +457,20 @@ attemptLoop:
 					if attempt+1 < attempts {
 						delay := antigravityNoCapacityRetryDelay(attempt)
 						log.Debugf("antigravity executor: no capacity for model %s, retrying in %s (attempt %d/%d)", baseModel, delay, attempt+1, attempts)
+						if errWait := antigravityWait(ctx, delay); errWait != nil {
+							return resp, errWait
+						}
+						continue attemptLoop
+					}
+				}
+				if antigravityShouldRetryUnsupportedLocation(httpResp.StatusCode, bodyBytes) {
+					if idx+1 < len(baseURLs) {
+						log.Debugf("antigravity executor: unsupported location on base url %s, retrying with fallback base url: %s", baseURL, baseURLs[idx+1])
+						continue
+					}
+					if attempt+1 < attempts {
+						delay := antigravityUnsupportedLocationRetryDelay(attempt)
+						log.Debugf("antigravity executor: unsupported location for model %s, retrying in %s (attempt %d/%d)", baseModel, delay, attempt+1, attempts)
 						if errWait := antigravityWait(ctx, delay); errWait != nil {
 							return resp, errWait
 						}

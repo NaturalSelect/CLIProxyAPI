@@ -556,6 +556,22 @@ func antigravityShouldRetryNoCapacity(statusCode int, body []byte) bool {
 	return strings.Contains(msg, "no capacity available")
 }
 
+// antigravityShouldRetryUnsupportedLocation reports whether the upstream
+// rejected the request with a "User location is not supported" error. Google
+// occasionally emits this as a transient false positive from its edge/load
+// balancer rather than a durable per-account restriction, so it is worth a
+// short retry before surfacing the failure to the client.
+func antigravityShouldRetryUnsupportedLocation(statusCode int, body []byte) bool {
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+	if len(body) == 0 {
+		return false
+	}
+	msg := strings.ToLower(string(body))
+	return strings.Contains(msg, "user location is not supported")
+}
+
 func antigravityShouldRetryTransientResourceExhausted429(statusCode int, body []byte) bool {
 	if statusCode != http.StatusTooManyRequests {
 		return false
@@ -752,6 +768,17 @@ func homeKVUnavailableStatusErr(cause error) statusErr {
 }
 
 func antigravityNoCapacityRetryDelay(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	delay := time.Duration(attempt+1) * 250 * time.Millisecond
+	if delay > 2*time.Second {
+		delay = 2 * time.Second
+	}
+	return delay
+}
+
+func antigravityUnsupportedLocationRetryDelay(attempt int) time.Duration {
 	if attempt < 0 {
 		attempt = 0
 	}
