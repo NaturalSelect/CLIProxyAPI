@@ -129,6 +129,81 @@ func TestWeightedRoundRobinSelectorPick_ResetsCreditsWhenWeightsChange(t *testin
 	}
 }
 
+func TestUsageAwareSelectorPick_PrefersHigherHeadroom(t *testing.T) {
+	t.Parallel()
+
+	selector := &UsageAwareSelector{}
+	auths := []*Auth{
+		{ID: "hot", Provider: "claude", RateLimits: map[string]any{"5h_utilization": 90}},
+		{ID: "cool", Provider: "claude", RateLimits: map[string]any{"5h_utilization": 20}},
+		{ID: "warm", Provider: "claude", RateLimits: map[string]any{"5h_utilization": 60}},
+	}
+
+	for index := 0; index < 5; index++ {
+		got, errPick := selector.Pick(context.Background(), "claude", "", cliproxyexecutor.Options{}, auths)
+		if errPick != nil {
+			t.Fatalf("Pick() #%d error = %v", index, errPick)
+		}
+		if got.ID != "cool" {
+			t.Fatalf("Pick() #%d auth.ID = %q, want %q", index, got.ID, "cool")
+		}
+	}
+}
+
+func TestUsageAwareSelectorPick_DeterministicTiebreak(t *testing.T) {
+	t.Parallel()
+
+	selector := &UsageAwareSelector{}
+	auths := []*Auth{
+		{ID: "b", Provider: "claude", RateLimits: map[string]any{"5h_utilization": 40}},
+		{ID: "a", Provider: "claude", RateLimits: map[string]any{"5h_utilization": 40}},
+	}
+
+	got, err := selector.Pick(context.Background(), "claude", "", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got.ID != "a" {
+		t.Fatalf("Pick() auth.ID = %q, want %q", got.ID, "a")
+	}
+}
+
+func TestUsageAwareSelectorPick_FallbackDoesNotStarveUnmeasuredCredential(t *testing.T) {
+	t.Parallel()
+
+	selector := &UsageAwareSelector{}
+	auths := []*Auth{
+		{ID: "busy-claude", Provider: "claude", RateLimits: map[string]any{"5h_utilization": 80}},
+		{ID: "no-data", Provider: "gemini"},
+	}
+
+	got, err := selector.Pick(context.Background(), "mixed", "", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got.ID != "no-data" {
+		t.Fatalf("Pick() auth.ID = %q, want %q (neutral fallback beats 80%% utilization)", got.ID, "no-data")
+	}
+}
+
+func TestUsageAwareSelectorPick_LowUtilizationBeatsUnmeasuredCredential(t *testing.T) {
+	t.Parallel()
+
+	selector := &UsageAwareSelector{}
+	auths := []*Auth{
+		{ID: "fresh-claude", Provider: "claude", RateLimits: map[string]any{"5h_utilization": 10}},
+		{ID: "no-data", Provider: "gemini"},
+	}
+
+	got, err := selector.Pick(context.Background(), "mixed", "", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got.ID != "fresh-claude" {
+		t.Fatalf("Pick() auth.ID = %q, want %q (10%% utilization beats neutral fallback)", got.ID, "fresh-claude")
+	}
+}
+
 func TestWeightedRoundRobinSelectorPick_RebalancesWhenHighestWeightUnavailable(t *testing.T) {
 	t.Parallel()
 

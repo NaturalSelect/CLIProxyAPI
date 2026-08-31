@@ -547,6 +547,35 @@ func (s *FillFirstSelector) Pick(ctx context.Context, provider, model string, op
 	return available[0], nil
 }
 
+// UsageAwareSelector picks the credential with the most usage headroom, scored from
+// each candidate's cached rate-limit snapshot (remaining quota and window reset
+// time; see usage_score.go). Credentials with no snapshot receive a neutral score
+// so they are neither favored nor starved relative to credentials with real usage
+// data.
+type UsageAwareSelector struct{}
+
+// Pick selects the available auth with the highest usage-aware score. Ties (most
+// commonly credentials that share the neutral fallback score) break toward the
+// lowest ID, matching getAvailableAuths' stable ID-sorted candidate order.
+func (s *UsageAwareSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
+	_ = opts
+	now := time.Now()
+	available, err := getAvailableAuths(auths, provider, model, now)
+	if err != nil {
+		return nil, err
+	}
+	available = preferCodexWebsocketAuths(ctx, provider, available)
+	best := available[0]
+	bestScore := usageAwareScore(best, now)
+	for _, candidate := range available[1:] {
+		if score := usageAwareScore(candidate, now); score > bestScore {
+			best = candidate
+			bestScore = score
+		}
+	}
+	return best, nil
+}
+
 func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, blockReason, time.Time) {
 	if auth == nil {
 		return true, blockReasonOther, time.Time{}
