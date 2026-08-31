@@ -15,7 +15,7 @@ import (
 // headers (Claude: Anthropic-Ratelimit-Unified-*; Codex: X-Codex-Primary/Secondary-*).
 // Claude's second 7d window (Anthropic-Ratelimit-Unified-7d_oi-*, reported for
 // the claude-fable model family) is split into its own entry tagged with type
-// "claude-claude-fable", mirroring how antigravity splits its quota groups.
+// "claude-fable", mirroring how antigravity splits its quota groups.
 // Antigravity usage comes from a dedicated retrieveUserQuotaSummary probe (see
 // sdk/cliproxy/auth/antigravity_quota.go) and, since that endpoint reports
 // independent quota groups (currently "gemini" and "3p"), yields one entry per
@@ -120,7 +120,7 @@ func claudeGroupUsageEntries(auth *coreauth.Auth, name string) []gin.H {
 	entry := gin.H{
 		"id":    auth.ID,
 		"name":  fmt.Sprintf("%s (%s)", name, coreauth.ClaudeRateLimitFableGroup),
-		"type":  fmt.Sprintf("claude-%s", coreauth.ClaudeRateLimitFableGroup),
+		"type":  coreauth.ClaudeRateLimitFableGroup,
 		"group": coreauth.ClaudeRateLimitFableGroup,
 	}
 	entry["usage_7d"] = window

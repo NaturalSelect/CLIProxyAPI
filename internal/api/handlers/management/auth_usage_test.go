@@ -150,7 +150,7 @@ func TestListAuthFileUsage_ClaudeFableWindowReturnsSeparateEntry(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing claude-fable entry, got names: %+v", byName)
 	}
-	if fable["id"] != "auth-claude-2" || fable["type"] != "claude-claude-fable" || fable["group"] != "claude-fable" {
+	if fable["id"] != "auth-claude-2" || fable["type"] != "claude-fable" || fable["group"] != "claude-fable" {
 		t.Fatalf("fable entry = %+v", fable)
 	}
 	fableWindow7d, ok := fable["usage_7d"].(map[string]any)
