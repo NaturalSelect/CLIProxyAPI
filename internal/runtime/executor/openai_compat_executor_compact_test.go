@@ -76,6 +76,313 @@ func TestOpenAICompatExecutorCompactPassthrough(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatExecutorNativeResponsesPassthroughUsesUpstreamTier(t *testing.T) {
+	var upstreamPath string
+	var upstreamBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		upstreamPath = request.URL.Path
+		upstreamBody, _ = io.ReadAll(request.Body)
+		responseWriter.Header().Set("Content-Type", "application/json")
+		_, _ = responseWriter.Write([]byte(`{"id":"resp_1","object":"response","service_tier":"default","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[]}`))
+	}))
+	defer server.Close()
+
+	executor := NewOpenAICompatExecutor("openai-compatibility", &config.Config{
+		Payload: config.PayloadConfig{
+			Override: []config.PayloadRule{
+				{
+					Models: []config.PayloadModelRule{{Name: "gpt-5.6-luna", Protocol: "openai"}},
+					Params: map[string]any{"chat_protocol_rule": true},
+				},
+				{
+					Models: []config.PayloadModelRule{{Name: "gpt-5.6-luna", Protocol: "openai-response"}},
+					Params: map[string]any{"responses_protocol_rule": true},
+				},
+			},
+		},
+	})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url": server.URL + "/v1",
+		"api_key":  "test",
+	}}
+	requestPayload := []byte(`{"model":"gpt-5.6-luna","input":"hi","service_tier":"priority"}`)
+	response, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.6-luna",
+		Payload: requestPayload,
+	}, cliproxyexecutor.Options{
+		SourceFormat:    sdktranslator.FormatOpenAIResponse,
+		ResponseFormat:  sdktranslator.FormatOpenAIResponse,
+		OriginalRequest: requestPayload,
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	if upstreamPath != "/v1/responses" {
+		t.Fatalf("upstream path = %q, want /v1/responses", upstreamPath)
+	}
+	if got := gjson.GetBytes(upstreamBody, "service_tier").String(); got != "priority" {
+		t.Fatalf("upstream request service_tier = %q, want priority; body=%s", got, string(upstreamBody))
+	}
+	if !gjson.GetBytes(upstreamBody, "input").Exists() {
+		t.Fatalf("native Responses input is missing: %s", string(upstreamBody))
+	}
+	if gjson.GetBytes(upstreamBody, "messages").Exists() {
+		t.Fatalf("unexpected Chat Completions messages in native Responses body: %s", string(upstreamBody))
+	}
+	if !gjson.GetBytes(upstreamBody, "responses_protocol_rule").Bool() {
+		t.Fatalf("openai-response payload rule was not applied: %s", string(upstreamBody))
+	}
+	if gjson.GetBytes(upstreamBody, "chat_protocol_rule").Exists() {
+		t.Fatalf("openai payload rule leaked into native Responses body: %s", string(upstreamBody))
+	}
+	if got := gjson.GetBytes(response.Payload, "service_tier").String(); got != "default" {
+		t.Fatalf("downstream service_tier = %q, want upstream value default; payload=%s", got, string(response.Payload))
+	}
+}
+
+func TestOpenAICompatExecutorNativeResponsesOmitsTierWithoutUpstreamValue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		responseWriter.Header().Set("Content-Type", "application/json")
+		_, _ = responseWriter.Write([]byte(`{"id":"resp_1","object":"response","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[]}`))
+	}))
+	defer server.Close()
+
+	executor := NewOpenAICompatExecutor("openai-compatibility", &config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url": server.URL + "/v1",
+		"api_key":  "test",
+	}}
+	requestPayload := []byte(`{"model":"gpt-5.6-luna","input":"hi","service_tier":"priority"}`)
+	response, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.6-luna",
+		Payload: requestPayload,
+	}, cliproxyexecutor.Options{
+		SourceFormat:    sdktranslator.FormatOpenAIResponse,
+		ResponseFormat:  sdktranslator.FormatOpenAIResponse,
+		OriginalRequest: requestPayload,
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if gjson.GetBytes(response.Payload, "service_tier").Exists() {
+		t.Fatalf("downstream echoed client service_tier without an upstream value: %s", string(response.Payload))
+	}
+}
+
+func TestOpenAICompatExecutorNativeResponsesDoesNotFallbackToChatCompletions(t *testing.T) {
+	var responsesRequests int
+	var chatCompletionsRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/responses":
+			responsesRequests++
+			responseWriter.Header().Set("Content-Type", "application/json")
+			responseWriter.WriteHeader(http.StatusNotFound)
+			_, _ = responseWriter.Write([]byte(`{"error":{"message":"responses endpoint is unsupported"}}`))
+		case "/v1/chat/completions":
+			chatCompletionsRequests++
+			responseWriter.Header().Set("Content-Type", "application/json")
+			_, _ = responseWriter.Write([]byte(`{"id":"chatcmpl_1","object":"chat.completion","choices":[]}`))
+		default:
+			responseWriter.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	executor := NewOpenAICompatExecutor("openai-compatibility", &config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url": server.URL + "/v1",
+		"api_key":  "test",
+	}}
+	requestPayload := []byte(`{"model":"gpt-5.6-luna","input":"hi"}`)
+	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.6-luna",
+		Payload: requestPayload,
+	}, cliproxyexecutor.Options{
+		SourceFormat:    sdktranslator.FormatOpenAIResponse,
+		ResponseFormat:  sdktranslator.FormatOpenAIResponse,
+		OriginalRequest: requestPayload,
+	})
+	if err == nil {
+		t.Fatal("Execute error = nil, want upstream /responses failure")
+	}
+	statusError, ok := err.(interface{ StatusCode() int })
+	if !ok || statusError.StatusCode() != http.StatusNotFound {
+		t.Fatalf("Execute error = %v, want HTTP %d", err, http.StatusNotFound)
+	}
+	if responsesRequests != 1 {
+		t.Fatalf("/responses request count = %d, want 1", responsesRequests)
+	}
+	if chatCompletionsRequests != 0 {
+		t.Fatalf("/chat/completions request count = %d, want 0", chatCompletionsRequests)
+	}
+}
+
+func TestOpenAICompatExecutorNativeResponsesStreamPreservesEventsAndUpstreamTier(t *testing.T) {
+	var upstreamPath string
+	var upstreamBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		upstreamPath = request.URL.Path
+		upstreamBody, _ = io.ReadAll(request.Body)
+		responseWriter.Header().Set("Content-Type", "text/event-stream")
+		_, _ = responseWriter.Write([]byte("event: response.created\n"))
+		_, _ = responseWriter.Write([]byte(`data: {"type":"response.created","response":{"id":"resp_1","service_tier":"auto"}}` + "\n\n"))
+		_, _ = responseWriter.Write([]byte("event: response.output_text.delta\n"))
+		_, _ = responseWriter.Write([]byte(`data: {"type":"response.output_text.delta","delta":"hello"}` + "\n\n"))
+		_, _ = responseWriter.Write([]byte("event: response.completed\n"))
+		_, _ = responseWriter.Write([]byte(`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","service_tier":"default","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n"))
+	}))
+	defer server.Close()
+
+	executor := NewOpenAICompatExecutor("openai-compatibility", &config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url": server.URL + "/v1",
+		"api_key":  "test",
+	}}
+	requestPayload := []byte(`{"model":"gpt-5.6-luna","input":"hi","service_tier":"priority","stream":true}`)
+	streamResult, err := executor.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.6-luna",
+		Payload: requestPayload,
+	}, cliproxyexecutor.Options{
+		SourceFormat:    sdktranslator.FormatOpenAIResponse,
+		ResponseFormat:  sdktranslator.FormatOpenAIResponse,
+		OriginalRequest: requestPayload,
+		Stream:          true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
+	}
+
+	var downstreamStream strings.Builder
+	for chunk := range streamResult.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("stream chunk error: %v", chunk.Err)
+		}
+		downstreamStream.Write(chunk.Payload)
+	}
+
+	if upstreamPath != "/v1/responses" {
+		t.Fatalf("upstream path = %q, want /v1/responses", upstreamPath)
+	}
+	if got := gjson.GetBytes(upstreamBody, "service_tier").String(); got != "priority" {
+		t.Fatalf("upstream request service_tier = %q, want priority; body=%s", got, string(upstreamBody))
+	}
+	if gjson.GetBytes(upstreamBody, "messages").Exists() {
+		t.Fatalf("unexpected Chat Completions messages in native Responses body: %s", string(upstreamBody))
+	}
+	if gjson.GetBytes(upstreamBody, "stream_options.include_usage").Exists() {
+		t.Fatalf("unexpected Chat Completions stream_options in native Responses body: %s", string(upstreamBody))
+	}
+	downstreamPayload := downstreamStream.String()
+	for _, eventName := range []string{"response.created", "response.output_text.delta", "response.completed"} {
+		if !strings.Contains(downstreamPayload, "event: "+eventName) {
+			t.Fatalf("downstream stream is missing event %q: %q", eventName, downstreamPayload)
+		}
+	}
+	if !strings.Contains(downstreamPayload, `"service_tier":"default"`) {
+		t.Fatalf("downstream stream is missing upstream tier default: %q", downstreamPayload)
+	}
+	if strings.Contains(downstreamPayload, `"service_tier":"priority"`) {
+		t.Fatalf("downstream stream echoed client tier priority: %q", downstreamPayload)
+	}
+}
+
+func TestOpenAICompatExecutorNativeResponsesStreamRejectsDoneBeforeTerminalEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		responseWriter.Header().Set("Content-Type", "text/event-stream")
+		_, _ = responseWriter.Write([]byte("event: response.output_text.delta\n"))
+		_, _ = responseWriter.Write([]byte(`data: {"type":"response.output_text.delta","delta":"partial"}` + "\n\n"))
+		_, _ = responseWriter.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	executor := NewOpenAICompatExecutor("openai-compatibility", &config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url": server.URL + "/v1",
+		"api_key":  "test",
+	}}
+	requestPayload := []byte(`{"model":"gpt-5.6-luna","input":"hi","stream":true}`)
+	streamResult, err := executor.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.6-luna",
+		Payload: requestPayload,
+	}, cliproxyexecutor.Options{
+		SourceFormat:    sdktranslator.FormatOpenAIResponse,
+		ResponseFormat:  sdktranslator.FormatOpenAIResponse,
+		OriginalRequest: requestPayload,
+		Stream:          true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
+	}
+
+	var downstreamStream strings.Builder
+	var streamError error
+	for chunk := range streamResult.Chunks {
+		downstreamStream.Write(chunk.Payload)
+		if chunk.Err != nil {
+			streamError = chunk.Err
+		}
+	}
+	if streamError == nil {
+		t.Fatal("stream error = nil, want premature [DONE] failure")
+	}
+	statusError, ok := streamError.(interface{ StatusCode() int })
+	if !ok || statusError.StatusCode() != http.StatusBadGateway {
+		t.Fatalf("stream error = %v, want HTTP %d", streamError, http.StatusBadGateway)
+	}
+	if !strings.Contains(streamError.Error(), "ended before a terminal response event") {
+		t.Fatalf("stream error does not explain premature [DONE]: %v", streamError)
+	}
+	if strings.Contains(downstreamStream.String(), "response.completed") {
+		t.Fatalf("premature [DONE] generated a completed event: %q", downstreamStream.String())
+	}
+}
+
+func TestOpenAICompatExecutorChatCompletionsStreamPathRemainsUnchanged(t *testing.T) {
+	var upstreamPath string
+	var upstreamBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		upstreamPath = request.URL.Path
+		upstreamBody, _ = io.ReadAll(request.Body)
+		responseWriter.Header().Set("Content-Type", "text/event-stream")
+		_, _ = responseWriter.Write([]byte(`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}` + "\n\n"))
+		_, _ = responseWriter.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	executor := NewOpenAICompatExecutor("openai-compatibility", &config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url": server.URL + "/v1",
+		"api_key":  "test",
+	}}
+	streamResult, err := executor.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.6-luna",
+		Payload: []byte(`{"model":"gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FormatOpenAI,
+		Stream:       true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
+	}
+	for chunk := range streamResult.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("stream chunk error: %v", chunk.Err)
+		}
+	}
+
+	if upstreamPath != "/v1/chat/completions" {
+		t.Fatalf("upstream path = %q, want /v1/chat/completions", upstreamPath)
+	}
+	if !gjson.GetBytes(upstreamBody, "messages").Exists() {
+		t.Fatalf("Chat Completions messages are missing: %s", string(upstreamBody))
+	}
+	if !gjson.GetBytes(upstreamBody, "stream_options.include_usage").Bool() {
+		t.Fatalf("Chat Completions include_usage was not enabled: %s", string(upstreamBody))
+	}
+}
+
 func TestOpenAICompatExecutorPayloadOverrideWinsOverThinkingSuffix(t *testing.T) {
 	var gotBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -904,10 +1211,11 @@ func TestOpenAICompatExecutorStreamSkipsKeepAliveUntilDataLine(t *testing.T) {
 	}
 }
 
-func TestOpenAICompatExecutorResponsesStreamFailsOnEOFWithoutDone(t *testing.T) {
+func TestOpenAICompatExecutorResponsesStreamFailsOnEOFWithoutTerminalEvent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte(`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1773896263,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"role":"assistant","content":"partial"},"finish_reason":null}]}` + "\n\n"))
+		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"partial"}` + "\n\n"))
 	}))
 	defer server.Close()
 
@@ -942,16 +1250,16 @@ func TestOpenAICompatExecutorResponsesStreamFailsOnEOFWithoutDone(t *testing.T) 
 		t.Fatalf("stream did not forward partial assistant output: %q", streamed.String())
 	}
 	if strings.Contains(streamed.String(), "response.completed") {
-		t.Fatalf("clean EOF without [DONE] was finalized as response.completed: %q", streamed.String())
+		t.Fatalf("clean EOF without a terminal event was finalized as response.completed: %q", streamed.String())
 	}
 	if streamErr == nil {
-		t.Fatal("clean EOF without [DONE] did not produce a terminal stream error")
+		t.Fatal("clean EOF without a terminal event did not produce a stream error")
 	}
 	statusErr, ok := streamErr.(interface{ StatusCode() int })
 	if !ok || statusErr.StatusCode() != http.StatusBadGateway {
 		t.Fatalf("stream error status = %v, want %d", streamErr, http.StatusBadGateway)
 	}
-	if !strings.Contains(streamErr.Error(), "closed before [DONE]") {
+	if !strings.Contains(streamErr.Error(), "closed before a terminal response event") {
 		t.Fatalf("stream error does not explain the missing terminal marker: %v", streamErr)
 	}
 }
@@ -961,7 +1269,8 @@ func TestOpenAICompatExecutorResponsesStreamPreservesUpstreamDataError(t *testin
 		t.Run(fmt.Sprintf("with_done=%t", withDone), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte(`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1773896263,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"role":"assistant","content":"partial"},"finish_reason":null}]}` + "\n\n"))
+				_, _ = w.Write([]byte("event: response.output_text.delta\n"))
+				_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"partial"}` + "\n\n"))
 				_, _ = w.Write([]byte(`data: {"error":{"type":"server_error","code":"upstream_failed","message":"upstream failed"}}` + "\n\n"))
 				if withDone {
 					_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -1009,7 +1318,8 @@ func TestOpenAICompatExecutorResponsesStreamPreservesUpstreamDataError(t *testin
 func TestOpenAICompatExecutorResponsesStreamPreservesNamedErrorEvent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte(`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1773896263,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"role":"assistant","content":"partial"},"finish_reason":null}]}` + "\n\n"))
+		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
+		_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"partial"}` + "\n\n"))
 		_, _ = w.Write([]byte("event: error\n"))
 		_, _ = w.Write([]byte(`data: {"code":"upstream_failed",` + "\n"))
 		_, _ = w.Write([]byte(`data: "message":"upstream failed"}` + "\n\n"))
@@ -1107,7 +1417,8 @@ func TestOpenAICompatExecutorResponsesStreamHandlesAdditionalErrorShapes(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte(`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1773896263,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"role":"assistant","content":"partial"},"finish_reason":null}]}` + "\n\n"))
+				_, _ = w.Write([]byte("event: response.output_text.delta\n"))
+				_, _ = w.Write([]byte(`data: {"type":"response.output_text.delta","delta":"partial"}` + "\n\n"))
 				for _, line := range tc.lines {
 					_, _ = w.Write([]byte(line))
 				}

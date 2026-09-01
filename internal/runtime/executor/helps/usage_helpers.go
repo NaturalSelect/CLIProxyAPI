@@ -523,6 +523,20 @@ func (b *StreamUsageBuffer) ObserveOpenAIStream(line []byte) {
 	b.Observe(detail, usageOK || detail.ResponseServiceTier != "")
 }
 
+// ObserveResponsesStream records usage and response-tier state from a native
+// OpenAI Responses event. Final event usage replaces an earlier provisional tier.
+func (b *StreamUsageBuffer) ObserveResponsesStream(line []byte) {
+	if b == nil {
+		return
+	}
+	payload := jsonPayload(line)
+	if len(payload) == 0 {
+		return
+	}
+	detail, ok := ParseResponsesUsage(payload)
+	b.Observe(detail, ok)
+}
+
 // Publish emits the latest observed usage detail, if any.
 func (b *StreamUsageBuffer) Publish(ctx context.Context, reporter *UsageReporter) bool {
 	if b == nil || !b.ok || reporter == nil {
@@ -549,9 +563,16 @@ func (b *StreamUsageBuffer) Detail() (usage.Detail, bool) {
 	return b.detail, true
 }
 
-func ParseCodexUsage(data []byte) (usage.Detail, bool) {
+func ParseResponsesUsage(data []byte) (usage.Detail, bool) {
+	if len(data) == 0 || !gjson.ValidBytes(data) {
+		return usage.Detail{}, false
+	}
 	responseServiceTier := extractResponseServiceTier(data)
-	usageNode := gjson.ParseBytes(data).Get("response.usage")
+	root := gjson.ParseBytes(data)
+	usageNode := root.Get("response.usage")
+	if !hasOpenAIStyleUsageTokenFields(usageNode) {
+		usageNode = root.Get("usage")
+	}
 	if !hasOpenAIStyleUsageTokenFields(usageNode) {
 		if responseServiceTier == "" {
 			return usage.Detail{}, false
@@ -561,6 +582,10 @@ func ParseCodexUsage(data []byte) (usage.Detail, bool) {
 	detail := parseOpenAIStyleUsageNode(usageNode)
 	detail.ResponseServiceTier = responseServiceTier
 	return detail, true
+}
+
+func ParseCodexUsage(data []byte) (usage.Detail, bool) {
+	return ParseResponsesUsage(data)
 }
 
 func ParseCodexImageToolUsage(data []byte) (usage.Detail, bool) {

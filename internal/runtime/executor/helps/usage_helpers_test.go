@@ -102,6 +102,82 @@ func TestParseOpenAIUsageResponses(t *testing.T) {
 	}
 }
 
+func TestParseResponsesUsageSupportsTopLevelAndCompletedEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		data               string
+		wantTier           string
+		wantInputTokens    int64
+		wantOutputTokens   int64
+		wantTotalTokens    int64
+		wantUsageAvailable bool
+	}{
+		{
+			name:               "top level response",
+			data:               `{"service_tier":"default","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30}}`,
+			wantTier:           "default",
+			wantInputTokens:    10,
+			wantOutputTokens:   20,
+			wantTotalTokens:    30,
+			wantUsageAvailable: true,
+		},
+		{
+			name:               "completed stream event",
+			data:               `{"type":"response.completed","response":{"service_tier":"priority","usage":{"input_tokens":7,"output_tokens":5,"total_tokens":12}}}`,
+			wantTier:           "priority",
+			wantInputTokens:    7,
+			wantOutputTokens:   5,
+			wantTotalTokens:    12,
+			wantUsageAvailable: true,
+		},
+		{
+			name:               "tier without usage",
+			data:               `{"type":"response.created","response":{"service_tier":"auto"}}`,
+			wantTier:           "auto",
+			wantUsageAvailable: true,
+		},
+		{
+			name:               "zero token usage",
+			data:               `{"type":"response.completed","response":{"service_tier":"default","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`,
+			wantTier:           "default",
+			wantUsageAvailable: true,
+		},
+		{
+			name:               "invalid payload",
+			data:               `{"type":"response.completed"`,
+			wantUsageAvailable: false,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			detail, ok := ParseResponsesUsage([]byte(test.data))
+			if ok != test.wantUsageAvailable {
+				t.Fatalf("ParseResponsesUsage() ok = %t, want %t; detail=%+v", ok, test.wantUsageAvailable, detail)
+			}
+			if detail.ResponseServiceTier != test.wantTier {
+				t.Fatalf("response service tier = %q, want %q", detail.ResponseServiceTier, test.wantTier)
+			}
+			if detail.InputTokens != test.wantInputTokens || detail.OutputTokens != test.wantOutputTokens || detail.TotalTokens != test.wantTotalTokens {
+				t.Fatalf(
+					"usage tokens = (%d, %d, %d), want (%d, %d, %d)",
+					detail.InputTokens,
+					detail.OutputTokens,
+					detail.TotalTokens,
+					test.wantInputTokens,
+					test.wantOutputTokens,
+					test.wantTotalTokens,
+				)
+			}
+		})
+	}
+}
+
 func TestParseOpenAIUsageTotalOnlyIsUnclassified(t *testing.T) {
 	detail := ParseOpenAIUsage([]byte(`{"usage":{"total_tokens":42}}`))
 	if !detail.TokenBreakdown.Valid() || detail.TokenBreakdown.Quality != usage.TokenAccountingQualityUnclassified ||
@@ -315,6 +391,26 @@ func TestStreamUsageBufferObserveOpenAIStreamStateTransitions(t *testing.T) {
 			t.Fatal("Detail() ok = false, want true")
 		}
 	})
+}
+
+func TestStreamUsageBufferObserveResponsesStreamUsesFinalTier(t *testing.T) {
+	t.Parallel()
+
+	var buffer StreamUsageBuffer
+	buffer.ObserveResponsesStream([]byte(`data: {"type":"response.created","response":{"service_tier":"auto"}}`))
+	buffer.ObserveResponsesStream([]byte(`data: {"type":"response.output_text.delta","delta":"hello"}`))
+	buffer.ObserveResponsesStream([]byte(`data: {"type":"response.completed","response":{"service_tier":"priority","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`))
+
+	detail, ok := buffer.Detail()
+	if !ok {
+		t.Fatal("Detail() ok = false, want true")
+	}
+	if detail.ResponseServiceTier != "priority" {
+		t.Fatalf("response service tier = %q, want priority", detail.ResponseServiceTier)
+	}
+	if detail.InputTokens != 2 || detail.OutputTokens != 3 || detail.TotalTokens != 5 {
+		t.Fatalf("detail = %+v, want completed-event usage", detail)
+	}
 }
 
 func TestStreamUsageBufferPreservesOnlyZeroUsage(t *testing.T) {
