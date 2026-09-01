@@ -24,6 +24,99 @@ func parseOpenAIResponsesSSEEvent(t *testing.T, chunk []byte) (string, gjson.Res
 	return event, gjson.Parse(dataLine)
 }
 
+func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ServiceTierUsesUpstreamValue(t *testing.T) {
+	t.Parallel()
+
+	request := []byte(`{"model":"gpt-5.6-luna","service_tier":"priority"}`)
+	inputChunks := []string{
+		`data: {"id":"resp_service_tier","object":"chat.completion.chunk","created":1773896263,"model":"gpt-5.6-luna","service_tier":"default","choices":[{"index":0,"delta":{"role":"assistant","content":"hello"},"finish_reason":null}]}`,
+		`data: {"id":"resp_service_tier","object":"chat.completion.chunk","created":1773896263,"model":"gpt-5.6-luna","service_tier":"default","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`,
+		`data: [DONE]`,
+	}
+
+	var param any
+	observedEvents := make(map[string]gjson.Result)
+	for _, inputChunk := range inputChunks {
+		for _, outputChunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "gpt-5.6-luna", request, request, []byte(inputChunk), &param) {
+			event, data := parseOpenAIResponsesSSEEvent(t, outputChunk)
+			if event == "response.created" || event == "response.in_progress" || event == "response.completed" {
+				observedEvents[event] = data
+			}
+		}
+	}
+
+	for _, event := range []string{"response.created", "response.in_progress", "response.completed"} {
+		data, exists := observedEvents[event]
+		if !exists {
+			t.Fatalf("missing %s event", event)
+		}
+		if got := data.Get("response.service_tier").String(); got != "default" {
+			t.Fatalf("%s response.service_tier = %q, want upstream value default", event, got)
+		}
+	}
+}
+
+func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ServiceTierIsOmittedWithoutUpstreamValue(t *testing.T) {
+	t.Parallel()
+
+	request := []byte(`{"model":"gpt-5.6-luna","service_tier":"priority"}`)
+	inputChunks := []string{
+		`data: {"id":"resp_no_service_tier","object":"chat.completion.chunk","created":1773896263,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{"role":"assistant","content":"hello"},"finish_reason":null}]}`,
+		`data: {"id":"resp_no_service_tier","object":"chat.completion.chunk","created":1773896263,"model":"gpt-5.6-luna","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}`,
+		`data: [DONE]`,
+	}
+
+	var param any
+	for _, inputChunk := range inputChunks {
+		for _, outputChunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "gpt-5.6-luna", request, request, []byte(inputChunk), &param) {
+			event, data := parseOpenAIResponsesSSEEvent(t, outputChunk)
+			if event != "response.created" && event != "response.in_progress" && event != "response.completed" {
+				continue
+			}
+			if data.Get("response.service_tier").Exists() {
+				t.Fatalf("%s echoed client service_tier without an upstream value: %s", event, data.Raw)
+			}
+		}
+	}
+}
+
+func TestConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream_ServiceTierUsesUpstreamValue(t *testing.T) {
+	t.Parallel()
+
+	request := []byte(`{"model":"gpt-5.6-luna","service_tier":"priority"}`)
+	tests := []struct {
+		name             string
+		upstreamResponse []byte
+		expectedTier     string
+	}{
+		{
+			name:             "upstream value replaces client request value",
+			upstreamResponse: []byte(`{"id":"chatcmpl_service_tier","object":"chat.completion","created":1773896263,"model":"gpt-5.6-luna","service_tier":"default","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`),
+			expectedTier:     "default",
+		},
+		{
+			name:             "missing upstream value stays omitted",
+			upstreamResponse: []byte(`{"id":"chatcmpl_no_service_tier","object":"chat.completion","created":1773896263,"model":"gpt-5.6-luna","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`),
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			out := ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(context.Background(), "gpt-5.6-luna", request, request, testCase.upstreamResponse, nil)
+			serviceTier := gjson.GetBytes(out, "service_tier")
+			if testCase.expectedTier == "" {
+				if serviceTier.Exists() {
+					t.Fatalf("service_tier echoed client value without an upstream value: %s", out)
+				}
+				return
+			}
+			if got := serviceTier.String(); got != testCase.expectedTier {
+				t.Fatalf("service_tier = %q, want upstream value %q; output=%s", got, testCase.expectedTier, out)
+			}
+		})
+	}
+}
+
 func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ResponseCompletedWaitsForDone(t *testing.T) {
 	t.Parallel()
 

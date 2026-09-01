@@ -56,6 +56,12 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 	if maxTokens := root.Get("max_output_tokens"); maxTokens.Exists() {
 		out, _ = sjson.SetBytes(out, "max_tokens", maxTokens.Int())
 	}
+	if serviceTier := root.Get("service_tier"); serviceTier.Exists() && serviceTier.Type == gjson.String {
+		value := strings.TrimSpace(serviceTier.String())
+		if value != "" {
+			out, _ = sjson.SetBytes(out, "service_tier", value)
+		}
+	}
 
 	// Convert instructions to system message
 	if instructions := root.Get("instructions"); instructions.Exists() {

@@ -20,6 +20,46 @@ func prettyJSONForTest(raw []byte) string {
 	return out.String()
 }
 
+func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_ServiceTier(t *testing.T) {
+	tests := []struct {
+		name          string
+		serviceTier   string
+		expectedValue string
+		expected      bool
+	}{
+		{name: "priority", serviceTier: `"priority"`, expectedValue: "priority", expected: true},
+		{name: "trim surrounding whitespace", serviceTier: `"  flex  "`, expectedValue: "flex", expected: true},
+		{name: "empty string", serviceTier: `""`, expected: false},
+		{name: "blank string", serviceTier: `"   "`, expected: false},
+		{name: "null", serviceTier: `null`, expected: false},
+		{name: "non-string", serviceTier: `42`, expected: false},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			raw := []byte(fmt.Sprintf(`{"model":"client-model","input":"hello","max_output_tokens":64,"service_tier":%s}`, testCase.serviceTier))
+			out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("upstream-model", raw, true)
+
+			serviceTier := gjson.GetBytes(out, "service_tier")
+			if serviceTier.Exists() != testCase.expected {
+				t.Fatalf("service_tier exists = %v, want %v; output=%s", serviceTier.Exists(), testCase.expected, out)
+			}
+			if testCase.expected && serviceTier.String() != testCase.expectedValue {
+				t.Fatalf("service_tier = %q, want %q; output=%s", serviceTier.String(), testCase.expectedValue, out)
+			}
+			if got := gjson.GetBytes(out, "model").String(); got != "upstream-model" {
+				t.Fatalf("model = %q, want upstream-model; output=%s", got, out)
+			}
+			if got := gjson.GetBytes(out, "max_tokens").Int(); got != 64 {
+				t.Fatalf("max_tokens = %d, want 64; output=%s", got, out)
+			}
+			if !gjson.GetBytes(out, "stream").Bool() {
+				t.Fatalf("stream = false, want true; output=%s", out)
+			}
+		})
+	}
+}
+
 func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_MergeConsecutiveFunctionCalls(t *testing.T) {
 	raw := []byte(`{
 		"input": [
