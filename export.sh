@@ -23,13 +23,13 @@ echo "  Commit: ${COMMIT}"
 echo "  Build Date: ${BUILD_DATE}"
 echo "----------------------------------------"
 
-export CLI_PROXY_IMAGE="${IMAGE_TAG}"
-
 echo "Building the Docker image..."
-docker compose build \
+docker build \
+  --tag "${IMAGE_TAG}" \
   --build-arg VERSION="${VERSION}" \
   --build-arg COMMIT="${COMMIT}" \
-  --build-arg BUILD_DATE="${BUILD_DATE}"
+  --build-arg BUILD_DATE="${BUILD_DATE}" \
+  .
 
 echo "Saving ${IMAGE_TAG} to ${OUTPUT_FILE}..."
 docker save -o "${OUTPUT_FILE}" "${IMAGE_TAG}"
