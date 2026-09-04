@@ -402,7 +402,7 @@ func classifyClaudeUpstreamError(statusCode int, headers http.Header, body []byt
 	if statusCode == http.StatusTooManyRequests || (statusCode >= 400 && statusCode < 600) {
 		retryAfter = helps.ParseClaudeRateLimitReset(headers, time.Now())
 	}
-	err := statusErr{code: statusCode, msg: string(body), retryAfter: retryAfter}
+	err := statusErr{code: statusCode, msg: string(body), retryAfter: retryAfter, headers: headers.Clone()}
 	if statusCode == http.StatusTooManyRequests {
 		if helps.ClaudeHeadersIndicateUnifiedRateLimitRejection(headers) {
 			return claudeRateLimitError{statusErr: err, credentialScoped: true}

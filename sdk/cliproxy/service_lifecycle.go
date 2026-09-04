@@ -205,7 +205,7 @@ func (s *Service) Run(ctx context.Context) error {
 		s.coreManager.StartAutoRefresh(context.Background(), interval)
 		log.Infof("core auth auto-refresh started (interval=%s)", interval)
 
-		usageInterval := 5 * time.Minute
+		usageInterval := 10 * time.Minute
 		s.coreManager.StartUsageRefresh(context.Background(), usageInterval)
 		log.Infof("core auth usage-refresh prober started (interval=%s)", usageInterval)
 	}

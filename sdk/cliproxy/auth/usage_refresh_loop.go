@@ -17,13 +17,14 @@ import (
 
 const (
 	// usageRefreshCheckInterval is how often the prober scans all auths for a
-	// stale rate-limit snapshot. The staleness threshold is much coarser
-	// (usageRefreshStaleAfter), so this only needs to be frequent enough to
-	// notice a newly-stale auth within a reasonable margin of that threshold.
-	usageRefreshCheckInterval = 5 * time.Minute
-	// usageRefreshStaleAfter is how old a RateLimits snapshot must be (or
-	// missing entirely) before the prober refreshes it with a probe call.
-	usageRefreshStaleAfter = 30 * time.Minute
+	// stale rate-limit snapshot. It matches usageRefreshStaleAfter so each
+	// auth is re-probed roughly once every usageRefreshStaleAfter, gated by
+	// its own last-refresh timestamp rather than a fixed schedule.
+	usageRefreshCheckInterval = 10 * time.Minute
+	// usageRefreshStaleAfter is the minimum time that must have elapsed since
+	// an auth's RateLimits snapshot was last refreshed (or missing entirely)
+	// before the prober is allowed to refresh it again with a probe call.
+	usageRefreshStaleAfter = 10 * time.Minute
 	// usageRefreshBetweenProbes spaces out consecutive probe calls so a cold
 	// start (every auth stale at once) doesn't burst-call every credential.
 	usageRefreshBetweenProbes = 5 * time.Second

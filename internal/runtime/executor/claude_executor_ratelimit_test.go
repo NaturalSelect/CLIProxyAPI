@@ -514,6 +514,70 @@ func TestClaudeExecutor_AuthManager_CredentialScopeBlocksAllModelsAndAliases(t *
 	}
 }
 
+func TestClaudeExecutor_AuthManager_RateLimitsAppliedOn429(t *testing.T) {
+	fiveHourReset := time.Now().Add(5 * time.Hour).Unix()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Anthropic-Ratelimit-Unified-5h-Utilization", "0.42")
+		w.Header().Set("Anthropic-Ratelimit-Unified-5h-Reset", strconv.FormatInt(fiveHourReset, 10))
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"Model rate limit exceeded."}}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{DisableCooling: false}
+	manager := cliproxyauth.NewManager(nil, nil, nil)
+	manager.SetRetryConfig(0, 0, 0)
+
+	executor := NewClaudeExecutor(cfg)
+	manager.RegisterExecutor(executor)
+
+	baseID := uuid.NewString()
+	auth := &cliproxyauth.Auth{
+		ID:       baseID + "-claude-ratelimit-429",
+		Provider: "claude",
+		Attributes: map[string]string{
+			"api_key":  "test-key",
+			"base_url": server.URL,
+		},
+	}
+
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(auth.ID, "claude", []*registry.ModelInfo{{ID: "claude-3-5-sonnet-20241022"}})
+	t.Cleanup(func() {
+		reg.UnregisterClient(auth.ID)
+	})
+
+	if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
+		t.Fatalf("failed to register auth: %v", errRegister)
+	}
+
+	// A 429 still carries Anthropic's usage headers; MarkResult must apply them
+	// to the credential's RateLimits snapshot instead of discarding them because
+	// the request failed.
+	payload := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`)
+	_, err := manager.Execute(context.Background(), []string{"claude"}, cliproxyexecutor.Request{
+		Model:   "claude-3-5-sonnet-20241022",
+		Payload: payload,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude})
+	if err == nil {
+		t.Fatal("expected error from 429 response, got nil")
+	}
+
+	registeredAuth, ok := manager.GetByID(auth.ID)
+	if !ok || registeredAuth == nil {
+		t.Fatal("auth not found")
+	}
+	utilization, ok := registeredAuth.RateLimits["5h_utilization"]
+	if !ok {
+		t.Fatalf("expected RateLimits to be populated from the 429 response headers, got %+v", registeredAuth.RateLimits)
+	}
+	if utilization != 42 {
+		t.Fatalf("5h_utilization = %v, want 42", utilization)
+	}
+}
+
 func TestClaudeExecutor_AuthManager_OrdinaryModel429DoesNotBlockSiblingModels(t *testing.T) {
 	var attemptsSonnet atomic.Int32
 	var attemptsOpus atomic.Int32
