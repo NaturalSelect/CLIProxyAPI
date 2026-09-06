@@ -20,6 +20,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher/synthesizer"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	log "github.com/sirupsen/logrus"
 )
 
 // Download single auth file by name
@@ -275,7 +276,40 @@ func (h *Handler) writeAuthFile(ctx context.Context, name string, data []byte) e
 	if err := h.upsertAuthRecord(ctx, auth); err != nil {
 		return err
 	}
+	h.refreshUploadedCodexAuth(ctx, auth)
 	return nil
+}
+
+// refreshUploadedCodexAuth eagerly refreshes a freshly uploaded Codex credential
+// using its refresh token, so the stored access token is valid immediately
+// instead of waiting for the next scheduled auto-refresh pass.
+func (h *Handler) refreshUploadedCodexAuth(ctx context.Context, auth *coreauth.Auth) {
+	if h == nil || h.authManager == nil || auth == nil {
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") {
+		return
+	}
+	refreshToken, _ := auth.Metadata["refresh_token"].(string)
+	if strings.TrimSpace(refreshToken) == "" {
+		return
+	}
+	exec, ok := h.authManager.Executor(auth.Provider)
+	if !ok || exec == nil {
+		return
+	}
+	refreshed, errRefresh := exec.Refresh(ctx, auth.Clone())
+	if errRefresh != nil {
+		log.Warnf("failed to refresh uploaded codex auth %s: %v", auth.ID, errRefresh)
+		return
+	}
+	if refreshed == nil {
+		return
+	}
+	refreshed.LastRefreshedAt = time.Now()
+	if _, errUpdate := h.authManager.Update(ctx, refreshed); errUpdate != nil {
+		log.Warnf("failed to persist refreshed codex auth %s: %v", auth.ID, errUpdate)
+	}
 }
 
 func requestedAuthFileNamesForDelete(c *gin.Context) ([]string, error) {
