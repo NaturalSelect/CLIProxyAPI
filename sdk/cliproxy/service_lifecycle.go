@@ -84,6 +84,13 @@ func (s *Service) Run(ctx context.Context) error {
 				log.Warnf("failed to restore cooldown state: %v", errRestoreCooldown)
 			}
 		}
+		s.registerAvailableExecutors(ctx, executorRegistrationOptions{
+			includeBaseline: true,
+			auths:           s.coreManager.List(),
+		})
+		interval := 15 * time.Minute
+		s.coreManager.StartAutoRefresh(ctx, interval)
+		log.Infof("core auth auto-refresh started (interval=%s)", interval)
 	}
 
 	if !homeEnabled {
@@ -199,12 +206,9 @@ func (s *Service) Run(ctx context.Context) error {
 
 	s.registerModelRefreshCallback()
 
-	// Prefer core auth manager auto refresh if available.
+	// Keep the local-only usage refresh loop; StartAutoRefresh moved up to the
+	// post-load block above by the cherry-picked upstream commit.
 	if s.coreManager != nil && !homeEnabled {
-		interval := 15 * time.Minute
-		s.coreManager.StartAutoRefresh(context.Background(), interval)
-		log.Infof("core auth auto-refresh started (interval=%s)", interval)
-
 		usageInterval := 10 * time.Minute
 		s.coreManager.StartUsageRefresh(context.Background(), usageInterval)
 		log.Infof("core auth usage-refresh prober started (interval=%s)", usageInterval)

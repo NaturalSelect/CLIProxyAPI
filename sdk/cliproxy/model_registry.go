@@ -17,6 +17,10 @@ type ModelRegistry interface {
 	ClientSupportsModel(clientID, modelID string) bool
 	GetAvailableModels(handlerType string) []map[string]any
 	GetAvailableModelsByProvider(provider string) []*ModelInfo
+	GetModelsForClient(clientID string) []*ModelInfo
+	GetModelsAndEpochForClient(clientID string) ([]*ModelInfo, uint64)
+	ClientRegistrationEpoch(clientID string) uint64
+	ApplyClientModelCapabilities(clientID string, expectedEpoch uint64, mutate func(modelID string, info *ModelInfo)) bool
 }
 
 // GlobalModelRegistry returns the shared registry instance.
