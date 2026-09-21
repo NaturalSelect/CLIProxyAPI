@@ -1,10 +1,15 @@
 package auth
 
 import (
+	"context"
+	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
 func TestBuildUsageProbeRequestSelectsOnlySafeProviderModel(t *testing.T) {
@@ -68,6 +73,89 @@ func TestBuildUsageProbeRequestSelectsOnlySafeProviderModel(t *testing.T) {
 				t.Fatalf("buildUsageProbeRequest() model = %q, want %q", request.Model, testCase.expectedModel)
 			}
 		})
+	}
+}
+
+type usageProbePrepareExecutor struct {
+	prepareCalls atomic.Int32
+	executeCalls atomic.Int32
+	inFlight     atomic.Int32
+	maxInFlight  atomic.Int32
+}
+
+func (e *usageProbePrepareExecutor) Identifier() string { return "claude" }
+func (e *usageProbePrepareExecutor) Execute(_ context.Context, auth *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	inFlight := e.inFlight.Add(1)
+	defer e.inFlight.Add(-1)
+	for {
+		maxInFlight := e.maxInFlight.Load()
+		if inFlight <= maxInFlight || e.maxInFlight.CompareAndSwap(maxInFlight, inFlight) {
+			break
+		}
+	}
+	if prepared, _ := auth.Metadata["prepared"].(bool); prepared {
+		e.executeCalls.Add(1)
+	}
+	return cliproxyexecutor.Response{Headers: http.Header{
+		claudeRateLimit5hUtilizationHeader: []string{"10"},
+	}}, nil
+}
+func (e *usageProbePrepareExecutor) ExecuteStream(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	return nil, nil
+}
+func (e *usageProbePrepareExecutor) Refresh(context.Context, *Auth) (*Auth, error) { return nil, nil }
+func (e *usageProbePrepareExecutor) CountTokens(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{}, nil
+}
+func (e *usageProbePrepareExecutor) HttpRequest(context.Context, *Auth, *http.Request) (*http.Response, error) {
+	return nil, nil
+}
+func (e *usageProbePrepareExecutor) ShouldPrepareRequestAuth(auth *Auth) bool {
+	prepared, _ := auth.Metadata["prepared"].(bool)
+	return !prepared
+}
+func (e *usageProbePrepareExecutor) PrepareRequestAuth(_ context.Context, auth *Auth) (*Auth, error) {
+	e.prepareCalls.Add(1)
+	updated := auth.Clone()
+	updated.Metadata = map[string]any{"prepared": true}
+	return updated, nil
+}
+
+func TestProbeUsagePreparesAuthBeforeExecuting(t *testing.T) {
+	clientID := "usage-probe-prepare"
+	registry.GetGlobalRegistry().RegisterClient(clientID, "claude", []*registry.ModelInfo{{ID: "claude-haiku-4-5"}})
+	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(clientID) })
+
+	exec := &usageProbePrepareExecutor{}
+	manager := NewManager(nil, nil, nil)
+	manager.executors["claude"] = exec
+	manager.auths[clientID] = &Auth{ID: clientID, Provider: "claude", Metadata: map[string]any{}}
+
+	var probes sync.WaitGroup
+	probes.Add(2)
+	for range 2 {
+		go func() {
+			defer probes.Done()
+			manager.probeUsage(context.Background(), clientID)
+		}()
+	}
+	probes.Wait()
+
+	if got := exec.prepareCalls.Load(); got != 1 {
+		t.Fatalf("PrepareRequestAuth calls = %d, want 1", got)
+	}
+	if got := exec.executeCalls.Load(); got != 1 {
+		t.Fatalf("usage probe executions with prepared auth = %d, want 1", got)
+	}
+	if got := exec.maxInFlight.Load(); got != 1 {
+		t.Fatalf("maximum concurrent usage probes = %d, want 1", got)
+	}
+	current, ok := manager.GetByID(clientID)
+	if !ok || current == nil {
+		t.Fatal("prepared auth was not saved")
+	}
+	if prepared, _ := current.Metadata["prepared"].(bool); !prepared {
+		t.Fatal("prepared auth metadata was not saved")
 	}
 }
 

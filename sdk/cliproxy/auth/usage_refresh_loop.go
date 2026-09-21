@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
@@ -157,11 +158,20 @@ func needsUsageProbe(a *Auth, now time.Time) bool {
 // may still be relying on, and the probe itself is not "real" usage worth
 // counting toward Success/Failed telemetry.
 func (m *Manager) probeUsage(ctx context.Context, authID string) {
+	lockValue, _ := m.usageProbeLocks.LoadOrStore(authID, &sync.Mutex{})
+	probeLock, ok := lockValue.(*sync.Mutex)
+	if !ok || probeLock == nil {
+		return
+	}
+	probeLock.Lock()
+	defer probeLock.Unlock()
+
 	m.mu.RLock()
 	a := m.auths[authID]
 	var exec ProviderExecutor
 	if a != nil {
-		exec = m.executors[a.Provider]
+		a = a.Clone()
+		exec = m.executors[executorKeyFromAuth(a)]
 	}
 	m.mu.RUnlock()
 
@@ -170,6 +180,16 @@ func (m *Manager) probeUsage(ctx context.Context, authID string) {
 	}
 	if !needsUsageProbe(a, time.Now()) {
 		// Superseded by real traffic (or a concurrent probe) since it was queued.
+		return
+	}
+
+	var errPrepare error
+	a, errPrepare = m.prepareRequestAuth(ctx, exec, a)
+	if errPrepare != nil {
+		log.Debugf("usage-refresh prober: prepare auth %s (%s) failed: %v", authID, a.Provider, errPrepare)
+		return
+	}
+	if a == nil || !needsUsageProbe(a, time.Now()) {
 		return
 	}
 
