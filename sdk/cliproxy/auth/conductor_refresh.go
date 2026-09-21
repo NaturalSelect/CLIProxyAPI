@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	log "github.com/sirupsen/logrus"
 )
@@ -22,7 +21,6 @@ type RefreshEvaluator interface {
 
 const (
 	refreshCheckInterval  = 5 * time.Second
-	refreshMaxConcurrency = 16
 	refreshPendingBackoff = time.Minute
 	refreshFailureBackoff = 5 * time.Minute
 	// refreshIneffectiveBackoff throttles refresh attempts when an executor returns
@@ -53,11 +51,7 @@ func (m *Manager) StartAutoRefresh(parent context.Context, interval time.Duratio
 	}
 
 	ctx, cancelCtx := context.WithCancel(parent)
-	workers := refreshMaxConcurrency
-	if cfg, ok := m.runtimeConfig.Load().(*internalconfig.Config); ok && cfg != nil && cfg.AuthAutoRefreshWorkers > 0 {
-		workers = cfg.AuthAutoRefreshWorkers
-	}
-	loop := newAuthAutoRefreshLoop(m, interval, workers)
+	loop := newAuthAutoRefreshLoop(m, interval)
 
 	m.mu.Lock()
 	m.refreshCancel = cancelCtx
@@ -480,8 +474,9 @@ func (m *Manager) tryRefreshAfterUnauthorized(ctx context.Context, auth *Auth, e
 	return refreshed, true
 }
 
-func (m *Manager) refreshAuth(ctx context.Context, id string) {
-	_, _ = m.refreshAuthForRequest(ctx, id, "")
+func (m *Manager) refreshAuth(ctx context.Context, id string) error {
+	_, err := m.refreshAuthForRequest(ctx, id, "")
+	return err
 }
 
 // refreshAuthForRequest performs a synchronous credential refresh for the given auth.

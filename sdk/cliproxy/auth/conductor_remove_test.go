@@ -62,7 +62,7 @@ func TestManager_Remove_UnschedulesAutoRefresh(t *testing.T) {
 	ctx := context.Background()
 
 	manager := NewManager(nil, nil, nil)
-	loop := newAuthAutoRefreshLoop(manager, time.Second, 1)
+	loop := newAuthAutoRefreshLoop(manager, time.Second)
 	manager.mu.Lock()
 	manager.refreshLoop = loop
 	manager.mu.Unlock()

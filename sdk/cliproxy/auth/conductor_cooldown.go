@@ -1469,6 +1469,20 @@ func hasUnauthorizedAuthFailure(auth *Auth) bool {
 	return strings.EqualFold(auth.LastError.Code, "unauthorized")
 }
 
+// isNetworkRefreshError reports whether a refresh error is a network-level
+// failure (not an HTTP-status error, not a context cancellation) that justifies
+// aborting the current batch so transient infrastructure problems don't cascade
+// into back-to-back refresh attempts for every credential in the pool.
+func isNetworkRefreshError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return statusCodeFromError(err) == 0
+}
+
 func refreshErrorFromError(err error) *Error {
 	if err == nil {
 		return nil

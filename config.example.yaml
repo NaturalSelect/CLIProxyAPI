@@ -201,10 +201,6 @@ disable-image-generation: false
 # to the credential that created them. Default: 3h.
 video-result-auth-cache-ttl: "3h"
 
-# Core auth auto-refresh worker pool size (OAuth/file-based auth token refresh).
-# When > 0, overrides the default worker count (16).
-# auth-auto-refresh-workers: 16
-
 # Quota exceeded behavior
 quota-exceeded:
   switch-project: true # Whether to automatically switch to another project when a quota is exceeded

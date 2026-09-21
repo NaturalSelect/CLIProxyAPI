@@ -519,7 +519,7 @@ func (s *GitTokenStore) Delete(_ context.Context, id string) error {
 	if errRel != nil {
 		return errRel
 	}
-	if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err = os.Rename(path, path+".bak"); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("auth filestore: delete failed: %w", err)
 	}
 	messageID := id

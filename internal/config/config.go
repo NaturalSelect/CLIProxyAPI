@@ -72,10 +72,6 @@ type Config struct {
 	// 0 keeps the legacy default cooldown. Negative values disable these cooldowns.
 	TransientErrorCooldownSeconds int `yaml:"transient-error-cooldown-seconds" json:"transient-error-cooldown-seconds"`
 
-	// AuthAutoRefreshWorkers overrides the size of the core auth auto-refresh worker pool.
-	// When <= 0, the default worker count is used.
-	AuthAutoRefreshWorkers int `yaml:"auth-auto-refresh-workers" json:"auth-auto-refresh-workers"`
-
 	// RequestRetry defines the retry times when the request failed.
 	RequestRetry int `yaml:"request-retry" json:"request-retry"`
 	// MaxRetryCredentials defines the maximum number of credentials to try for a failed request.

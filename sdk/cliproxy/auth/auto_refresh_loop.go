@@ -11,9 +11,8 @@ import (
 )
 
 type authAutoRefreshLoop struct {
-	manager     *Manager
-	interval    time.Duration
-	concurrency int
+	manager  *Manager
+	interval time.Duration
 
 	mu    sync.Mutex
 	queue refreshMinHeap
@@ -21,28 +20,18 @@ type authAutoRefreshLoop struct {
 	dirty map[string]struct{}
 
 	wakeCh chan struct{}
-	jobs   chan string
 }
 
-func newAuthAutoRefreshLoop(manager *Manager, interval time.Duration, concurrency int) *authAutoRefreshLoop {
+func newAuthAutoRefreshLoop(manager *Manager, interval time.Duration) *authAutoRefreshLoop {
 	if interval <= 0 {
 		interval = refreshCheckInterval
 	}
-	if concurrency <= 0 {
-		concurrency = refreshMaxConcurrency
-	}
-	jobBuffer := concurrency * 4
-	if jobBuffer < 64 {
-		jobBuffer = 64
-	}
 	return &authAutoRefreshLoop{
-		manager:     manager,
-		interval:    interval,
-		concurrency: concurrency,
-		index:       make(map[string]*refreshHeapItem),
-		dirty:       make(map[string]struct{}),
-		wakeCh:      make(chan struct{}, 1),
-		jobs:        make(chan string, jobBuffer),
+		manager:  manager,
+		interval: interval,
+		index:    make(map[string]*refreshHeapItem),
+		dirty:    make(map[string]struct{}),
+		wakeCh:   make(chan struct{}, 1),
 	}
 }
 
@@ -63,31 +52,7 @@ func (l *authAutoRefreshLoop) run(ctx context.Context) {
 	if l == nil || l.manager == nil {
 		return
 	}
-
-	workers := l.concurrency
-	if workers <= 0 {
-		workers = refreshMaxConcurrency
-	}
-	for i := 0; i < workers; i++ {
-		go l.worker(ctx)
-	}
-
 	l.loop(ctx)
-}
-
-func (l *authAutoRefreshLoop) worker(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case authID := <-l.jobs:
-			if authID == "" {
-				continue
-			}
-			l.manager.refreshAuth(ctx, authID)
-			l.queueReschedule(authID)
-		}
-	}
 }
 
 func (l *authAutoRefreshLoop) rebuild(now time.Time) {
@@ -193,8 +158,19 @@ func (l *authAutoRefreshLoop) handleDue(ctx context.Context, now time.Time) {
 	if log.IsLevelEnabled(log.DebugLevel) {
 		log.Debugf("auto-refresh scheduler due auths: %d", len(due))
 	}
-	for _, authID := range due {
-		l.handleDueAuth(ctx, now, authID)
+	for i, authID := range due {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		if err := l.handleDueAuth(ctx, now, authID); isNetworkRefreshError(err) {
+			log.Warnf("auto-refresh: network error refreshing %s, aborting %d remaining in batch: %v", authID, len(due)-i-1, err)
+			for _, remaining := range due[i+1:] {
+				l.queueReschedule(remaining)
+			}
+			return
+		}
 	}
 }
 
@@ -218,9 +194,9 @@ func (l *authAutoRefreshLoop) popDue(now time.Time) []string {
 	return due
 }
 
-func (l *authAutoRefreshLoop) handleDueAuth(ctx context.Context, now time.Time, authID string) {
+func (l *authAutoRefreshLoop) handleDueAuth(ctx context.Context, now time.Time, authID string) error {
 	if authID == "" {
-		return
+		return nil
 	}
 
 	manager := l.manager
@@ -229,7 +205,7 @@ func (l *authAutoRefreshLoop) handleDueAuth(ctx context.Context, now time.Time, 
 	auth := manager.auths[authID]
 	if auth == nil {
 		manager.mu.RUnlock()
-		return
+		return nil
 	}
 	next, shouldSchedule := nextRefreshCheckAt(now, auth, l.interval)
 	shouldRefresh := manager.shouldRefresh(auth, now)
@@ -238,17 +214,17 @@ func (l *authAutoRefreshLoop) handleDueAuth(ctx context.Context, now time.Time, 
 
 	if !shouldSchedule {
 		l.remove(authID)
-		return
+		return nil
 	}
 
 	if !shouldRefresh {
 		l.upsert(authID, next)
-		return
+		return nil
 	}
 
 	if exec == nil {
 		l.upsert(authID, now.Add(l.interval))
-		return
+		return nil
 	}
 
 	if !manager.markRefreshPending(authID, now) {
@@ -261,14 +237,12 @@ func (l *authAutoRefreshLoop) handleDueAuth(ctx context.Context, now time.Time, 
 		} else {
 			l.remove(authID)
 		}
-		return
+		return nil
 	}
 
-	select {
-	case <-ctx.Done():
-		return
-	case l.jobs <- authID:
-	}
+	err := l.manager.refreshAuth(ctx, authID)
+	l.queueReschedule(authID)
+	return err
 }
 
 func (l *authAutoRefreshLoop) applyDirty(now time.Time) {

@@ -377,7 +377,7 @@ func (s *PostgresStore) Delete(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err = os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err = os.Rename(path, path+".bak"); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("postgres store: delete auth file: %w", err)
 	}
 	relID, err := s.relativeAuthID(path)
