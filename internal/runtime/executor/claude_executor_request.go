@@ -39,6 +39,7 @@ const (
 	claudeCodeBeta               = "claude-code-20250219"
 	claudeContext1MBeta          = "context-1m-2025-08-07"
 	claudeMidConvSystemBeta      = "mid-conversation-system-2026-04-07"
+	claudeMidConvToolChangesBeta = "mid-conversation-tool-changes-2026-07-01"
 	claudeAdvisorToolBeta        = "advisor-tool-2026-03-01"
 	claudeAdvancedToolUseBeta    = "advanced-tool-use-2025-11-20"
 	claudeEffortBeta             = "effort-2025-11-24"
@@ -75,8 +76,9 @@ var claudeCodeTrailingBetas = []string{
 	claudeStructuredOutputsBeta,
 }
 
+
 // claudeCodeCLIBetas assembles the Anthropic-Beta baseline the way Claude Code
-// 2.1.258 does: the list is per-request, not a fixed string. requested holds the
+// 2.1.280 does: the list is per-request, not a fixed string. requested holds the
 // betas the caller asked for, which decide the capability flags below.
 //
 // The 2.1.220 baseline was verified against api.anthropic.com with isolated
@@ -86,7 +88,9 @@ var claudeCodeTrailingBetas = []string{
 // cli and sdk-cli entrypoints with an OAuth credential: the header set is the
 // same except that advanced-tool-use is emitted only while tool search is
 // active, and afk-mode-2026-01-31 was added between fast-mode and
-// extended-cache-ttl. The full observed order is:
+// extended-cache-ttl. Claude Code 2.1.280 (measured 2026-09-23) inserts
+// mid-conversation-tool-changes immediately after mid-conversation-system on the
+// same non-legacy models. The full observed order is:
 //
 //	 1 claude-code-20250219
 //	 2 oauth-2025-04-20                  OAuth credentials only
@@ -97,15 +101,16 @@ var claudeCodeTrailingBetas = []string{
 //	 7 context-management-2025-06-27
 //	 8 prompt-caching-scope-2026-01-05
 //	 9 mid-conversation-system-2026-04-07  models accepting a role=system turn
-//	10 advisor-tool-2026-03-01             requests declaring advisor tools or requesting advisor beta
-//	11 advanced-tool-use-2025-11-20       requests using tool search or another advanced tool-use feature
-//	12 effort-2025-11-24
-//	13 server-side-fallback-2026-06-01
-//	14 fallback-credit-2026-06-01
-//	15 fast-mode-2026-02-01               speed:fast requests only
-//	16 afk-mode-2026-01-31                auto-mode sessions, forwarded when the caller sends it
-//	17 extended-cache-ttl-2025-04-11      OAuth credentials only
-//	18 cache-diagnosis-2026-04-07         requests with diagnostics only
+//	10 mid-conversation-tool-changes-2026-07-01  same models as mid-conversation-system
+//	11 advisor-tool-2026-03-01             requests declaring advisor tools or requesting advisor beta
+//	12 advanced-tool-use-2025-11-20       requests using tool search or another advanced tool-use feature
+//	13 effort-2025-11-24
+//	14 server-side-fallback-2026-06-01
+//	15 fallback-credit-2026-06-01
+//	16 fast-mode-2026-02-01               speed:fast requests only
+//	17 afk-mode-2026-01-31                auto-mode sessions, forwarded when the caller sends it
+//	18 extended-cache-ttl-2025-04-11      OAuth credentials only
+//	19 cache-diagnosis-2026-04-07         requests with diagnostics only
 //
 // An empty body keeps the optimistic role=system default, matching the cloaking
 // policy for unknown and future model IDs.
@@ -115,7 +120,7 @@ var claudeCodeTrailingBetas = []string{
 // accompanies every non-empty tool list and afk-mode is never sent, so the beta
 // set stays one that release really emitted.
 func claudeCodeCLIBetas(body []byte, requested map[string]bool, oauthToken bool, legacyWire bool) string {
-	betas := make([]string, 0, len(claudeCodeCLIConstantBetas)+len(claudeCodeTrailingBetas)+7)
+	betas := make([]string, 0, len(claudeCodeCLIConstantBetas)+len(claudeCodeTrailingBetas)+8)
 	betas = append(betas, claudeCodeBeta)
 	if oauthToken {
 		betas = append(betas, claudeOAuthBeta)
@@ -132,6 +137,7 @@ func claudeCodeCLIBetas(body []byte, requested map[string]bool, oauthToken bool,
 	}
 	if !claudeUsesLegacySystemReminder(body) {
 		betas = append(betas, claudeMidConvSystemBeta)
+		betas = append(betas, claudeMidConvToolChangesBeta)
 	}
 	if requested[claudeAdvisorToolBeta] || claudeBodyHasAdvisorTool(body) {
 		betas = append(betas, claudeAdvisorToolBeta)
@@ -976,7 +982,7 @@ func applyClaudeHeadersWithNativeProfile(
 	identityHeader("Anthropic-Version", "2023-06-01")
 	identityHeader("Anthropic-Dangerous-Direct-Browser-Access", "true")
 	identityHeader("X-App", "cli")
-	// Values below match Claude Code 2.1.258 / @anthropic-ai/sdk 0.112.1.
+	// Values below match Claude Code 2.1.280 / @anthropic-ai/sdk 0.112.1.
 	identityHeader("X-Stainless-Retry-Count", "0")
 	identityHeader("X-Stainless-Runtime", "node")
 	identityHeader("X-Stainless-Lang", "js")
