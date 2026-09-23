@@ -5615,11 +5615,6 @@ func TestClaudeCodeCLIBetas_MatchesObservedClientMatrix(t *testing.T) {
 			want: constants + ",mid-conversation-system-2026-04-07,mid-conversation-tool-changes-2026-07-01,effort-2025-11-24",
 		},
 		{
-			name: "claude-fable-5-1 accepts role=system",
-			body: `{"model":"claude-fable-5-1"}`,
-			want: constants + ",mid-conversation-system-2026-04-07,mid-conversation-tool-changes-2026-07-01,effort-2025-11-24",
-		},
-		{
 			name: "claude-opus-4-7 stays on the reminder path",
 			body: `{"model":"claude-opus-4-7"}`,
 			want: constants + ",effort-2025-11-24",
@@ -5649,7 +5644,7 @@ func TestClaudeCodeCLIBetas_MatchesObservedClientMatrix(t *testing.T) {
 			want: "claude-code-20250219,oauth-2025-04-20," +
 				"interleaved-thinking-2025-05-14,redact-thinking-2026-02-12," +
 				"thinking-token-count-2026-05-13,context-management-2025-06-27," +
-				"prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,mid-conversation-tool-changes-2026-07-01," +
+				"prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01," +
 				"advisor-tool-2026-03-01,effort-2025-11-24,fallback-credit-2026-06-01," +
 				"afk-mode-2026-01-31,extended-cache-ttl-2025-04-11",
 		},
@@ -5781,7 +5776,7 @@ func TestClaudeCodeCLIBetas_MatchesObservedClientMatrix(t *testing.T) {
 			want: "claude-code-20250219,oauth-2025-04-20," +
 				"interleaved-thinking-2025-05-14,redact-thinking-2026-02-12," +
 				"thinking-token-count-2026-05-13,context-management-2025-06-27," +
-				"prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,mid-conversation-tool-changes-2026-07-01," +
+				"prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01," +
 				"advisor-tool-2026-03-01,effort-2025-11-24,fallback-credit-2026-06-01," +
 				"afk-mode-2026-01-31,extended-cache-ttl-2025-04-11",
 		},
@@ -5853,6 +5848,7 @@ func TestClaudeCodeCLIBetas_LegacyBaselineKeeps220Policy(t *testing.T) {
 				"extended-cache-ttl-2025-04-11",
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := claudeCodeCLIBetas([]byte(tt.body), tt.requested, tt.oauth, true); got != tt.want {

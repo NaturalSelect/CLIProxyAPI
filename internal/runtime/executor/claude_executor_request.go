@@ -33,23 +33,31 @@ import (
 )
 
 const (
-	claudeTokenCountingBeta      = "token-counting-2024-11-01"
-	claudeFastModeBeta           = "fast-mode-2026-02-01"
-	claudeOAuthBeta              = "oauth-2025-04-20"
-	claudeCodeBeta               = "claude-code-20250219"
-	claudeContext1MBeta          = "context-1m-2025-08-07"
-	claudeMidConvSystemBeta      = "mid-conversation-system-2026-04-07"
-	claudeMidConvToolChangesBeta = "mid-conversation-tool-changes-2026-07-01"
-	claudeAdvisorToolBeta        = "advisor-tool-2026-03-01"
-	claudeAdvancedToolUseBeta    = "advanced-tool-use-2025-11-20"
-	claudeEffortBeta             = "effort-2025-11-24"
-	claudeServerSideFallbackBeta = "server-side-fallback-2026-06-01"
-	claudeFallbackCreditBeta     = "fallback-credit-2026-06-01"
-	claudeStructuredOutputsBeta  = "structured-outputs-2025-12-15"
-	claudeExtendedCacheTTLBeta   = "extended-cache-ttl-2025-04-11"
-	claudeCacheDiagnosisBeta     = "cache-diagnosis-2026-04-07"
-	claudeRedactThinkingBeta     = "redact-thinking-2026-02-12"
-	claudeAFKModeBeta            = "afk-mode-2026-01-31"
+	claudeTokenCountingBeta        = "token-counting-2024-11-01"
+	claudeFastModeBeta             = "fast-mode-2026-02-01"
+	claudeOAuthBeta                = "oauth-2025-04-20"
+	claudeCodeBeta                 = "claude-code-20250219"
+	claudeContext1MBeta            = "context-1m-2025-08-07"
+	claudeMidConvSystemBeta        = "mid-conversation-system-2026-04-07"
+	claudePerTurnControlBeta       = "per-turn-control-2026-07-01"
+	claudePerTurnTimingBeta        = "timing-2026-09-09"
+	claudeMidConvToolChangesBeta   = "mid-conversation-tool-changes-2026-07-01"
+	claudeInlineToolsBeta          = "inline-tools-2026-09-15"
+	claudeMidConvSystemClearAtBeta = "mid-conversation-system-clear-at-2026-08-21"
+	claudeDangerousToolUseBeta     = "dangerous-tool-use-2026-09-03"
+	claudeAdvisorToolBeta          = "advisor-tool-2026-03-01"
+	claudeAdvancedToolUseBeta      = "advanced-tool-use-2025-11-20"
+	claudeEffortBeta               = "effort-2025-11-24"
+	claudeServerSideFallbackBeta   = "server-side-fallback-2026-06-01"
+	claudeFallbackCreditBeta       = "fallback-credit-2026-06-01"
+	claudeStructuredOutputsBeta    = "structured-outputs-2025-12-15"
+	claudeThinkingBindingBeta      = "thinking-binding-controls-2026-08-01"
+	claudeThinkingResumptionBeta   = "thinking-resumption-2026-07-17"
+	claudeExtendedCacheTTLBeta     = "extended-cache-ttl-2025-04-11"
+	claudePromptCachingEvictBeta   = "prompt-caching-evict-2026-05-12"
+	claudeCacheDiagnosisBeta       = "cache-diagnosis-2026-04-07"
+	claudeRedactThinkingBeta       = "redact-thinking-2026-02-12"
+	claudeAFKModeBeta              = "afk-mode-2026-01-31"
 )
 
 // claudeCodeCLIConstantBetas are the betas Claude Code 2.1.258 sends on every
@@ -77,6 +85,7 @@ var claudeCodeTrailingBetas = []string{
 }
 
 
+
 // claudeCodeCLIBetas assembles the Anthropic-Beta baseline the way Claude Code
 // 2.1.280 does: the list is per-request, not a fixed string. requested holds the
 // betas the caller asked for, which decide the capability flags below.
@@ -88,9 +97,11 @@ var claudeCodeTrailingBetas = []string{
 // cli and sdk-cli entrypoints with an OAuth credential: the header set is the
 // same except that advanced-tool-use is emitted only while tool search is
 // active, and afk-mode-2026-01-31 was added between fast-mode and
-// extended-cache-ttl. Claude Code 2.1.280 (measured 2026-09-23) inserts
-// mid-conversation-tool-changes immediately after mid-conversation-system on the
-// same non-legacy models. The full observed order is:
+// extended-cache-ttl. Claude Code 2.1.280 (measured 2026-09-23, binary 80abbfe)
+// inserts mid-conversation-tool-changes immediately after mid-conversation-system
+// on the same non-legacy models. The betas named in issue #6054 are feature-gated
+// in that binary, so they are emitted only for the model capability or body shape
+// that actually sends them, in the same relative order:
 //
 //	 1 claude-code-20250219
 //	 2 oauth-2025-04-20                  OAuth credentials only
@@ -101,16 +112,24 @@ var claudeCodeTrailingBetas = []string{
 //	 7 context-management-2025-06-27
 //	 8 prompt-caching-scope-2026-01-05
 //	 9 mid-conversation-system-2026-04-07  models accepting a role=system turn
-//	10 mid-conversation-tool-changes-2026-07-01  same models as mid-conversation-system
-//	11 advisor-tool-2026-03-01             requests declaring advisor tools or requesting advisor beta
-//	12 advanced-tool-use-2025-11-20       requests using tool search or another advanced tool-use feature
-//	13 effort-2025-11-24
-//	14 server-side-fallback-2026-06-01
-//	15 fallback-credit-2026-06-01
-//	16 fast-mode-2026-02-01               speed:fast requests only
-//	17 afk-mode-2026-01-31                auto-mode sessions, forwarded when the caller sends it
-//	18 extended-cache-ttl-2025-04-11      OAuth credentials only
-//	19 cache-diagnosis-2026-04-07         requests with diagnostics only
+//	10 per-turn-control-2026-07-01        opus-5-5 and fable-5-1, or requested
+//	11 timing-2026-09-09                  per-turn timing body, or requested
+//	12 mid-conversation-tool-changes-2026-07-01  same models as mid-conversation-system
+//	13 inline-tools-2026-09-15            inline tool_addition blocks, or requested
+//	14 advisor-tool-2026-03-01            requests declaring advisor tools or requesting advisor beta
+//	15 advanced-tool-use-2025-11-20       requests using tool search or another advanced tool-use feature
+//	16 mid-conversation-system-clear-at-2026-08-21  messages with clear_at, or requested
+//	17 dangerous-tool-use-2026-09-03      safeguards body, or requested
+//	18 effort-2025-11-24
+//	19 server-side-fallback-2026-06-01
+//	20 fallback-credit-2026-06-01
+//	21 thinking-binding-controls-2026-08-01  thinking.block_binding, or requested
+//	22 thinking-resumption-2026-07-17     requested only; the 2.1.280 flag defaults off
+//	23 fast-mode-2026-02-01               speed:fast requests only
+//	24 afk-mode-2026-01-31                auto-mode sessions, forwarded when the caller sends it
+//	25 extended-cache-ttl-2025-04-11      OAuth credentials only
+//	26 prompt-caching-evict-2026-05-12    evict_on_complete, or requested
+//	27 cache-diagnosis-2026-04-07         requests with diagnostics only
 //
 // An empty body keeps the optimistic role=system default, matching the cloaking
 // policy for unknown and future model IDs.
@@ -137,7 +156,25 @@ func claudeCodeCLIBetas(body []byte, requested map[string]bool, oauthToken bool,
 	}
 	if !claudeUsesLegacySystemReminder(body) {
 		betas = append(betas, claudeMidConvSystemBeta)
+		if claudeIncludePerTurnControl(body, requested) {
+			betas = append(betas, claudePerTurnControlBeta)
+		}
+		if claudeIncludePerTurnTiming(body, requested) {
+			betas = append(betas, claudePerTurnTimingBeta)
+		}
 		betas = append(betas, claudeMidConvToolChangesBeta)
+		if claudeIncludeInlineTools(body, requested) {
+			betas = append(betas, claudeInlineToolsBeta)
+		}
+	} else {
+		// Legacy models have no mid-conversation slot. A caller that still names
+		// these betas keeps them, in the same relative order, ahead of effort.
+		if claudeIncludePerTurnControl(body, requested) {
+			betas = append(betas, claudePerTurnControlBeta)
+		}
+		if claudeIncludePerTurnTiming(body, requested) {
+			betas = append(betas, claudePerTurnTimingBeta)
+		}
 	}
 	if requested[claudeAdvisorToolBeta] || claudeBodyHasAdvisorTool(body) {
 		betas = append(betas, claudeAdvisorToolBeta)
@@ -150,6 +187,12 @@ func claudeCodeCLIBetas(body []byte, requested map[string]bool, oauthToken bool,
 	if advancedToolUse {
 		betas = append(betas, claudeAdvancedToolUseBeta)
 	}
+	if !claudeUsesLegacySystemReminder(body) && claudeIncludeMidConvClearAt(body, requested) {
+		betas = append(betas, claudeMidConvSystemClearAtBeta)
+	}
+	if requested[claudeDangerousToolUseBeta] || gjson.GetBytes(body, "safeguards").Exists() {
+		betas = append(betas, claudeDangerousToolUseBeta)
+	}
 	betas = append(betas, claudeEffortBeta)
 	if oauthToken && !requested[claudeFallbackCreditBeta] {
 		betas = append(betas, claudeFallbackCreditBeta)
@@ -158,6 +201,12 @@ func claudeCodeCLIBetas(body []byte, requested map[string]bool, oauthToken bool,
 		if requested[beta] {
 			betas = append(betas, beta)
 		}
+	}
+	if requested[claudeThinkingBindingBeta] || gjson.GetBytes(body, "thinking.block_binding").Exists() {
+		betas = append(betas, claudeThinkingBindingBeta)
+	}
+	if requested[claudeThinkingResumptionBeta] {
+		betas = append(betas, claudeThinkingResumptionBeta)
 	}
 	if claudeRequestUsesFastMode(body, requested) {
 		betas = append(betas, claudeFastModeBeta)
@@ -168,10 +217,97 @@ func claudeCodeCLIBetas(body []byte, requested map[string]bool, oauthToken bool,
 	if oauthToken {
 		betas = append(betas, claudeExtendedCacheTTLBeta)
 	}
+	if requested[claudePromptCachingEvictBeta] || bytes.Contains(body, []byte(`"evict_on_complete"`)) {
+		betas = append(betas, claudePromptCachingEvictBeta)
+	}
 	if diagnostics := gjson.GetBytes(body, "diagnostics"); diagnostics.IsObject() {
 		betas = append(betas, claudeCacheDiagnosisBeta)
 	}
 	return strings.Join(betas, ",")
+}
+
+func claudeCanonicalModel(model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if slash := strings.LastIndexByte(model, '/'); slash >= 0 {
+		model = model[slash+1:]
+	}
+	return model
+}
+
+// claudeModelHasPerTurnEffort reports models whose 2.1.280 catalog capability
+// per_turn_effort puts per-turn-control-2026-07-01 on every first-party request.
+func claudeModelHasPerTurnEffort(model string) bool {
+	model = claudeCanonicalModel(model)
+	return strings.HasPrefix(model, "claude-opus-5-5") || strings.HasPrefix(model, "claude-fable-5-1")
+}
+
+// claudeModelHasPerTurnTiming reports models whose catalog lists per_turn_timing.
+// Claude Code still withholds timing-2026-09-09 unless CLAUDE_CODE_PER_TURN_TIMING
+// is set, so the beta follows the body or an explicit caller request.
+func claudeModelHasPerTurnTiming(model string) bool {
+	model = claudeCanonicalModel(model)
+	return claudeModelHasPerTurnEffort(model) || strings.HasPrefix(model, "claude-mythos-5-1")
+}
+
+func claudeIncludePerTurnControl(body []byte, requested map[string]bool) bool {
+	if requested[claudePerTurnControlBeta] {
+		return true
+	}
+	return claudeModelHasPerTurnEffort(gjson.GetBytes(body, "model").String())
+}
+
+func claudeIncludePerTurnTiming(body []byte, requested map[string]bool) bool {
+	if requested[claudePerTurnTimingBeta] {
+		return true
+	}
+	if !claudeModelHasPerTurnTiming(gjson.GetBytes(body, "model").String()) {
+		return false
+	}
+	if gjson.GetBytes(body, "output_config.timing").Exists() {
+		return true
+	}
+	found := false
+	gjson.GetBytes(body, "messages").ForEach(func(_, msg gjson.Result) bool {
+		if msg.Get("output_config.timing").Exists() {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func claudeIncludeInlineTools(body []byte, requested map[string]bool) bool {
+	if requested[claudeInlineToolsBeta] {
+		return true
+	}
+	found := false
+	gjson.GetBytes(body, "messages").ForEach(func(_, msg gjson.Result) bool {
+		msg.Get("content").ForEach(func(_, block gjson.Result) bool {
+			if strings.EqualFold(strings.TrimSpace(block.Get("type").String()), "tool_addition") && block.Get("tool.definition").Exists() {
+				found = true
+				return false
+			}
+			return true
+		})
+		return !found
+	})
+	return found
+}
+
+func claudeIncludeMidConvClearAt(body []byte, requested map[string]bool) bool {
+	if requested[claudeMidConvSystemClearAtBeta] {
+		return true
+	}
+	found := false
+	gjson.GetBytes(body, "messages").ForEach(func(_, msg gjson.Result) bool {
+		if msg.Get("clear_at").Exists() {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 // claudeBodyUsesAdvancedToolUse reports whether the request needs
