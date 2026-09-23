@@ -1855,6 +1855,8 @@ func TestModelsWithClientVersionReturnsCodexCatalog(t *testing.T) {
 		},
 		{ID: "grok-imagine-image-quality", Object: "model", OwnedBy: "xai", Type: "openai"},
 		{ID: "gpt-image-2", Object: "model", OwnedBy: "openai", Type: "openai"},
+		{ID: "gpt-image-2.5-flare", Object: "model", OwnedBy: "openai", Type: "openai"},
+		{ID: "gpt-image-2.5-sunburst", Object: "model", OwnedBy: "openai", Type: "openai"},
 		{ID: "grok-imagine-image", Object: "model", OwnedBy: "xai", Type: "openai"},
 		{ID: "grok-imagine-image-2.0", Object: "model", OwnedBy: "xai", Type: "openai"},
 		{ID: "grok-imagine-video", Object: "model", OwnedBy: "xai", Type: "openai"},
@@ -1959,6 +1961,8 @@ func TestModelsWithClientVersionReturnsCodexCatalog(t *testing.T) {
 	hiddenModels := map[string]bool{
 		"grok-imagine-image-quality":     false,
 		"gpt-image-2":                    false,
+		"gpt-image-2.5-flare":            false,
+		"gpt-image-2.5-sunburst":         false,
 		"grok-imagine-image":             false,
 		"grok-imagine-image-2.0":         false,
 		"grok-imagine-video":             false,
