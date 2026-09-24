@@ -677,7 +677,7 @@ func main() {
 				// Standalone mode: start an embedded local server and connect TUI client to it.
 				managementasset.StartAutoUpdater(context.Background(), configFilePath)
 				misc.StartAntigravityVersionUpdater(context.Background())
-				startModelCatalogUpdaters(localModel, cfg.Home.Enabled)
+				startModelCatalogUpdaters(localModel, cfg.Home.Enabled, cfg.ProxyURL)
 				hook := tui.NewLogHook(2000)
 				hook.SetFormatter(&logging.LogFormatter{})
 				log.AddHook(hook)
@@ -751,7 +751,7 @@ func main() {
 			// Start the main proxy service
 			managementasset.StartAutoUpdater(context.Background(), configFilePath)
 			misc.StartAntigravityVersionUpdater(context.Background())
-			startModelCatalogUpdaters(localModel, cfg.Home.Enabled)
+			startModelCatalogUpdaters(localModel, cfg.Home.Enabled, cfg.ProxyURL)
 			cmd.StartServiceWithPluginHost(cfg, configFilePath, password, pluginHost, serverOptions...)
 		}
 	}
@@ -767,7 +767,8 @@ func modelCatalogUpdaterPlan(localModel, homeEnabled bool) (startModels, startCo
 	return !homeEnabled, true
 }
 
-func startModelCatalogUpdaters(localModel, homeEnabled bool) {
+func startModelCatalogUpdaters(localModel, homeEnabled bool, proxyURL string) {
+	registry.SetModelsProxyURL(proxyURL)
 	startModels, startCodexClient := modelCatalogUpdaterPlan(localModel, homeEnabled)
 	if startCodexClient {
 		registry.StartCodexClientModelsUpdater(context.Background())

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -62,6 +63,26 @@ func SetModelRefreshCallback(cb ModelRefreshCallback) {
 	if cb != nil && len(pending) > 0 {
 		cb(pending)
 	}
+}
+
+var (
+	modelsProxyURLMu sync.RWMutex
+	modelsProxyURL   string
+)
+
+// SetModelsProxyURL configures the proxy used when fetching the remote model
+// catalog. Accepts an empty string (system default), "direct", or an
+// http(s)/socks5 URL; see sdk/proxyutil for accepted formats.
+func SetModelsProxyURL(raw string) {
+	modelsProxyURLMu.Lock()
+	modelsProxyURL = strings.TrimSpace(raw)
+	modelsProxyURLMu.Unlock()
+}
+
+func currentModelsProxyURL() string {
+	modelsProxyURLMu.RLock()
+	defer modelsProxyURLMu.RUnlock()
+	return modelsProxyURL
 }
 
 func init() {
@@ -142,6 +163,9 @@ func tryRefreshModels(ctx context.Context, label string) {
 // along with the URL it was fetched from. Returns (nil, "") if all fetches fail.
 func fetchModelsFromRemote(ctx context.Context) (*staticModelsJSON, string) {
 	client := &http.Client{Timeout: modelsFetchTimeout}
+	if transport, _, errProxy := proxyutil.BuildHTTPTransport(currentModelsProxyURL()); errProxy == nil && transport != nil {
+		client.Transport = transport
+	}
 	for _, url := range modelsURLs {
 		reqCtx, cancel := context.WithTimeout(ctx, modelsFetchTimeout)
 		req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
