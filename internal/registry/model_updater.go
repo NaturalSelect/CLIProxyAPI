@@ -16,7 +16,7 @@ import (
 
 const (
 	modelsFetchTimeout    = 30 * time.Second
-	modelsRefreshInterval = 3 * time.Hour
+	modelsRefreshInterval = 5 * time.Minute
 )
 
 var modelsURLs = []string{
