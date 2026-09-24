@@ -3,7 +3,6 @@ package auth
 import (
 	"bytes"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -40,7 +39,6 @@ func rewriteModelInResponse(data []byte, targetModel string) []byte {
 	for _, path := range modelFieldPaths {
 		if gjson.GetBytes(data, path).Exists() {
 			data, _ = sjson.SetBytes(data, path, targetModel)
-			log.Debugf("response rewriter: rewrote model at path %s to %s", path, targetModel)
 		}
 	}
 	return data
