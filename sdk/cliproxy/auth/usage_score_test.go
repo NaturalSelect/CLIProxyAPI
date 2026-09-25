@@ -79,7 +79,7 @@ func TestUsageWindowScore_PastResetNoBonus(t *testing.T) {
 // TestUsageWindowScore_TypicalScenarios tabulates representative
 // utilization/reset combinations to show the max(headroom, urgency) scoring
 // (see usageWindowScore) in action, e.g. "90% used but resets in 10m" scores
-// far higher than "90% used but resets tomorrow" (0.86 vs 0.10) even though
+// far higher than "90% used but resets tomorrow" (1.00 vs 0.10) even though
 // headroom is identical in both, because an imminent reset overwhelms
 // headroom instead of being averaged with it.
 func TestUsageWindowScore_TypicalScenarios(t *testing.T) {
@@ -94,12 +94,12 @@ func TestUsageWindowScore_TypicalScenarios(t *testing.T) {
 		want        float64
 	}{
 		{name: "90% used, resets tomorrow", utilization: 90, resetIn: 24 * time.Hour, want: 0.100000},
-		{name: "90% used, resets in 10m", utilization: 90, resetIn: 10 * time.Minute, want: 0.857143},
+		{name: "90% used, resets in 10m", utilization: 90, resetIn: 10 * time.Minute, want: 1.000000},
 		{name: "90% used, no reset info", utilization: 90, resetIn: 0, want: 0.100000},
 		{name: "50% used, resets in 7d", utilization: 50, resetIn: 7 * 24 * time.Hour, want: 0.500000},
 		{name: "10% used, resets in 7d", utilization: 10, resetIn: 7 * 24 * time.Hour, want: 0.900000},
-		{name: "100% used, resets in 1h", utilization: 100, resetIn: time.Hour, want: 0.500000},
-		{name: "100% used, resets in 5m", utilization: 100, resetIn: 5 * time.Minute, want: 0.923077},
+		{name: "100% used, resets in 1h", utilization: 100, resetIn: time.Hour, want: 0.750000},
+		{name: "100% used, resets in 5m", utilization: 100, resetIn: 5 * time.Minute, want: 1.000000},
 		{name: "0% used, no reset info", utilization: 0, resetIn: 0, want: 1.000000},
 	}
 
@@ -132,10 +132,10 @@ func TestUsageWindowScore_UrgencyOverridesHeadroomNearReset(t *testing.T) {
 		resetIn time.Duration
 		want    float64
 	}{
-		{name: "10m", resetIn: 10 * time.Minute, want: 0.857143},
-		{name: "1h", resetIn: time.Hour, want: 0.500000},
-		{name: "12h", resetIn: 12 * time.Hour, want: 0.076923},
-		{name: "1d", resetIn: 24 * time.Hour, want: 0.050000},
+		{name: "10m", resetIn: 10 * time.Minute, want: 1.000000},
+		{name: "1h", resetIn: time.Hour, want: 0.750000},
+		{name: "12h", resetIn: 12 * time.Hour, want: 0.115385},
+		{name: "1d", resetIn: 24 * time.Hour, want: 0.060000},
 		{name: "3d", resetIn: 3 * 24 * time.Hour, want: 0.050000},
 		{name: "7d", resetIn: 7 * 24 * time.Hour, want: 0.050000},
 	}

@@ -149,10 +149,14 @@ func usageWindowScore(utilization int, resetAt string, now time.Time) float64 {
 
 // resetBonus returns a value in [0, 1] that grows as resetAt approaches now:
 // 1/(1 + minutesUntilReset/60), so an imminent reset scores near 1 while a distant
-// window scores near 0. An empty, unparsable, or already-past resetAt scores 0: a
-// window whose deadline has already passed should soon be reflected in a fresh
-// utilization reading, so treating it as "no bonus" is the safe default rather than
-// guessing at an unbounded bonus.
+// window scores near 0. The raw bonus is amplified by resetBonusWeight so reset
+// urgency dominates headroom over a wider range of reset distances, then clamped
+// back to 1 to preserve the [0, 1] contract. An empty, unparsable, or already-past
+// resetAt scores 0: a window whose deadline has already passed should soon be
+// reflected in a fresh utilization reading, so treating it as "no bonus" is the
+// safe default rather than guessing at an unbounded bonus.
+const resetBonusWeight = 1.5
+
 func resetBonus(resetAt string, now time.Time) float64 {
 	if resetAt == "" {
 		return 0
@@ -162,5 +166,9 @@ func resetBonus(resetAt string, now time.Time) float64 {
 		return 0
 	}
 	minutesUntilReset := reset.Sub(now).Minutes()
-	return 1.0 / (1.0 + minutesUntilReset/60.0)
+	bonus := (1.0 / (1.0 + minutesUntilReset/60.0)) * resetBonusWeight
+	if bonus > 1 {
+		bonus = 1
+	}
+	return bonus
 }
