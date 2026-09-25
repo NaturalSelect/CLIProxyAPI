@@ -1,6 +1,9 @@
 package auth
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // defaultUsageAwareScore is assigned to credentials with no known usage/rate-limit
 // snapshot (any provider other than Claude, Codex, or Antigravity, or one whose
@@ -125,50 +128,52 @@ func appendAntigravityWindow(windows []usageWindow, window *AntigravityQuotaWind
 	return append(windows, usageWindow{utilization: *window.Utilization, resetAt: window.Reset})
 }
 
+// fullScoreUtilizationCeiling and fullScoreResetWindow define the automatic
+// full-score guarantee applied in usageWindowScore: a window with comfortably
+// low utilization that is also about to reset needs no further comparison
+// against other credentials, since whatever quota is unused now is about to
+// be replenished anyway.
+const (
+	fullScoreUtilizationCeiling = 90
+	fullScoreResetWindow        = 24 * time.Hour
+)
+
 // usageWindowScore scores a single utilization/reset window in [0, 1] as the
-// larger of its remaining headroom and its reset urgency (see resetBonus), not
-// a blend of the two. A window about to reset dominates the score regardless
-// of how exhausted it currently looks: whatever quota is unused right now is
-// about to be replaced by a fresh window anyway, so there is no reason to
-// avoid it in favor of a credential that has to make its headroom last
-// longer. A window with no imminent reset, or with comfortable headroom to
-// begin with, is scored on headroom alone.
+// largest of three independent signals, so that whichever one shows the
+// window is safe to route to wins rather than being diluted by the others:
+//   - headroom: the remaining fraction of quota.
+//   - resetUrgency (see minutesUntilReset): grows as the reset approaches,
+//     which matters most when headroom is poor, since an exhausted window
+//     that is about to refresh is as good as a fresh one.
+//   - guaranteedFullScore: the product of two [0, 1] factors, one for
+//     utilization and one for reset timing. A product only reaches 1 when
+//     BOTH factors do, so this expresses "utilization is comfortably under
+//     fullScoreUtilizationCeiling AND the reset is within fullScoreResetWindow"
+//     without branching on either condition individually; missing either one
+//     pulls the product back down and the max falls through to headroom or
+//     resetUrgency instead.
 func usageWindowScore(utilization int, resetAt string, now time.Time) float64 {
-	headroom := (100 - float64(utilization)) / 100.0
-	switch {
-	case headroom < 0:
-		headroom = 0
-	case headroom > 1:
-		headroom = 1
-	}
-	if urgency := resetBonus(resetAt, now); urgency > headroom {
-		return urgency
-	}
-	return headroom
+	headroom := math.Min(1, math.Max(0, (100-float64(utilization))/100.0))
+	remaining := minutesUntilReset(resetAt, now)
+
+	resetUrgency := math.Min(1, 1.0/(1.0+remaining/60.0))
+
+	utilizationFactor := math.Min(1, math.Max(0, fullScoreUtilizationCeiling-float64(utilization)))
+	resetSoonFactor := math.Min(1, fullScoreResetWindow.Minutes()/remaining)
+	guaranteedFullScore := utilizationFactor * resetSoonFactor
+
+	return math.Max(headroom, math.Max(resetUrgency, guaranteedFullScore))
 }
 
-// resetBonus returns a value in [0, 1] that grows as resetAt approaches now:
-// 1/(1 + minutesUntilReset/60), so an imminent reset scores near 1 while a distant
-// window scores near 0. The raw bonus is amplified by resetBonusWeight so reset
-// urgency dominates headroom over a wider range of reset distances, then clamped
-// back to 1 to preserve the [0, 1] contract. An empty, unparsable, or already-past
-// resetAt scores 0: a window whose deadline has already passed should soon be
-// reflected in a fresh utilization reading, so treating it as "no bonus" is the
-// safe default rather than guessing at an unbounded bonus.
-const resetBonusWeight = 1.5
-
-func resetBonus(resetAt string, now time.Time) float64 {
-	if resetAt == "" {
-		return 0
-	}
+// minutesUntilReset parses resetAt and returns the minutes remaining until it
+// elapses, or +Inf when resetAt is empty, unparsable, or already past. +Inf
+// then flows through usageWindowScore's division-based factors and naturally
+// resolves them to 0, so a window with no meaningful upcoming reset needs no
+// separate case in the scoring formula itself.
+func minutesUntilReset(resetAt string, now time.Time) float64 {
 	reset, err := time.Parse(time.RFC3339, resetAt)
 	if err != nil || !reset.After(now) {
-		return 0
+		return math.Inf(1)
 	}
-	minutesUntilReset := reset.Sub(now).Minutes()
-	bonus := (1.0 / (1.0 + minutesUntilReset/60.0)) * resetBonusWeight
-	if bonus > 1 {
-		bonus = 1
-	}
-	return bonus
+	return reset.Sub(now).Minutes()
 }

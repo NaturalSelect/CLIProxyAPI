@@ -79,7 +79,7 @@ func TestUsageWindowScore_PastResetNoBonus(t *testing.T) {
 // TestUsageWindowScore_TypicalScenarios tabulates representative
 // utilization/reset combinations to show the max(headroom, urgency) scoring
 // (see usageWindowScore) in action, e.g. "90% used but resets in 10m" scores
-// far higher than "90% used but resets tomorrow" (1.00 vs 0.10) even though
+// far higher than "90% used but resets tomorrow" (0.86 vs 0.10) even though
 // headroom is identical in both, because an imminent reset overwhelms
 // headroom instead of being averaged with it.
 func TestUsageWindowScore_TypicalScenarios(t *testing.T) {
@@ -94,12 +94,12 @@ func TestUsageWindowScore_TypicalScenarios(t *testing.T) {
 		want        float64
 	}{
 		{name: "90% used, resets tomorrow", utilization: 90, resetIn: 24 * time.Hour, want: 0.100000},
-		{name: "90% used, resets in 10m", utilization: 90, resetIn: 10 * time.Minute, want: 1.000000},
+		{name: "90% used, resets in 10m", utilization: 90, resetIn: 10 * time.Minute, want: 0.857143},
 		{name: "90% used, no reset info", utilization: 90, resetIn: 0, want: 0.100000},
 		{name: "50% used, resets in 7d", utilization: 50, resetIn: 7 * 24 * time.Hour, want: 0.500000},
 		{name: "10% used, resets in 7d", utilization: 10, resetIn: 7 * 24 * time.Hour, want: 0.900000},
-		{name: "100% used, resets in 1h", utilization: 100, resetIn: time.Hour, want: 0.750000},
-		{name: "100% used, resets in 5m", utilization: 100, resetIn: 5 * time.Minute, want: 1.000000},
+		{name: "100% used, resets in 1h", utilization: 100, resetIn: time.Hour, want: 0.500000},
+		{name: "100% used, resets in 5m", utilization: 100, resetIn: 5 * time.Minute, want: 0.923077},
 		{name: "0% used, no reset info", utilization: 0, resetIn: 0, want: 1.000000},
 	}
 
@@ -132,10 +132,10 @@ func TestUsageWindowScore_UrgencyOverridesHeadroomNearReset(t *testing.T) {
 		resetIn time.Duration
 		want    float64
 	}{
-		{name: "10m", resetIn: 10 * time.Minute, want: 1.000000},
-		{name: "1h", resetIn: time.Hour, want: 0.750000},
-		{name: "12h", resetIn: 12 * time.Hour, want: 0.115385},
-		{name: "1d", resetIn: 24 * time.Hour, want: 0.060000},
+		{name: "10m", resetIn: 10 * time.Minute, want: 0.857143},
+		{name: "1h", resetIn: time.Hour, want: 0.500000},
+		{name: "12h", resetIn: 12 * time.Hour, want: 0.076923},
+		{name: "1d", resetIn: 24 * time.Hour, want: 0.050000},
 		{name: "3d", resetIn: 3 * 24 * time.Hour, want: 0.050000},
 		{name: "7d", resetIn: 7 * 24 * time.Hour, want: 0.050000},
 	}
@@ -151,38 +151,94 @@ func TestUsageWindowScore_UrgencyOverridesHeadroomNearReset(t *testing.T) {
 	}
 }
 
+// TestUsageWindowScore_GuaranteedFullScoreNeedsBothConditions exercises the
+// guaranteedFullScore factor in usageWindowScore: a window only reaches the
+// automatic full score of 1 when utilization is under fullScoreUtilizationCeiling
+// (90) AND the reset falls within fullScoreResetWindow (24h). Losing either
+// condition falls back to plain headroom/resetUrgency instead of scoring 1,
+// and crossing just past the reset window decays smoothly rather than
+// dropping straight back to headroom.
+func TestUsageWindowScore_GuaranteedFullScoreNeedsBothConditions(t *testing.T) {
+	t.Parallel()
+
+	// NOTE: truncate so resetAt's seconds-only RFC3339 formatting round-trips exactly.
+	now := time.Now().Truncate(time.Second)
+	tests := []struct {
+		name        string
+		utilization int
+		resetIn     time.Duration
+		want        float64
+	}{
+		{name: "89% used, resets in 24h", utilization: 89, resetIn: 24 * time.Hour, want: 1.000000},
+		{name: "89% used, resets in 12h", utilization: 89, resetIn: 12 * time.Hour, want: 1.000000},
+		{name: "90% used, resets in 12h", utilization: 90, resetIn: 12 * time.Hour, want: 0.100000},
+		{name: "100% used, resets in 1h", utilization: 100, resetIn: time.Hour, want: 0.500000},
+		{name: "50% used, resets in 24h+1m", utilization: 50, resetIn: 24*time.Hour + time.Minute, want: 0.999306},
+		{name: "70% used, resets in 3d", utilization: 70, resetIn: 3 * 24 * time.Hour, want: 0.333333},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resetAt := now.Add(tc.resetIn).UTC().Format(time.RFC3339)
+			got := usageWindowScore(tc.utilization, resetAt, now)
+			if !floatsClose(got, tc.want, 1e-4) {
+				t.Fatalf("usageWindowScore(%d%%, +%s) = %v, want ~%v", tc.utilization, tc.resetIn, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestUsageWindowScore_DominanceMatrix has no assertions: it's a tool for
-// inspecting how max(headroom, resetBonus) behaves, not a regression check.
-// Run it with:
+// inspecting how max(headroom, resetUrgency, guaranteedFullScore) behaves,
+// not a regression check. Run it with:
 //
 //	go test ./sdk/cliproxy/auth/... -run TestUsageWindowScore_DominanceMatrix -v
 //
 // to print the score grid directly instead of hand-computing points after
-// every change to usageWindowScore or resetBonus. Utilization rows are
-// weighted toward the high end and reset columns toward the near term,
-// because that is the only region where resetBonus can exceed headroom and
-// take over the score; elsewhere the grid is flat and headroom-only.
+// every change to usageWindowScore. The 89%/90% rows sit right on
+// fullScoreUtilizationCeiling, so they show the guaranteedFullScore cliff:
+// 89% jumps to 1 for every reset column within fullScoreResetWindow (1d),
+// while 90% never does and instead follows the plain resetUrgency/headroom
+// curve like the higher-utilization rows.
 func TestUsageWindowScore_DominanceMatrix(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
-	utilizations := []int{0, 50, 80, 90, 95, 98, 99, 100}
+	utilizations := []int{0, 50, 80, 89, 90, 95, 98, 99, 100}
 	resets := []struct {
 		label string
 		in    time.Duration
 	}{
 		{"now", 0},
+		{"1m", time.Minute},
+		{"5m", 5 * time.Minute},
 		{"10m", 10 * time.Minute},
+		{"30m", 30 * time.Minute},
 		{"1h", time.Hour},
+		{"2h", 2 * time.Hour},
+		{"3h", 3 * time.Hour},
+		{"4h", 4 * time.Hour},
+		{"5h", 5 * time.Hour},
 		{"6h", 6 * time.Hour},
+		{"8h", 8 * time.Hour},
 		{"12h", 12 * time.Hour},
+		{"18h", 18 * time.Hour},
+		{"23h", 23 * time.Hour},
 		{"1d", 24 * time.Hour},
+		{"25h", 25 * time.Hour},
+		{"30h", 30 * time.Hour},
+		{"36h", 36 * time.Hour},
+		{"42h", 42 * time.Hour},
+		{"2d", 2 * 24 * time.Hour},
 		{"3d", 3 * 24 * time.Hour},
+		{"4d", 4 * 24 * time.Hour},
+		{"5d", 5 * 24 * time.Hour},
+		{"6d", 6 * 24 * time.Hour},
 		{"7d", 7 * 24 * time.Hour},
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "\nscore = max(headroom, resetBonus)\n")
+	fmt.Fprintf(&b, "\nscore = max(headroom, resetUrgency, guaranteedFullScore)\n")
 	fmt.Fprintf(&b, "%-6s", "util\\t")
 	for _, r := range resets {
 		fmt.Fprintf(&b, "%8s", r.label)
