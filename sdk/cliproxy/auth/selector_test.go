@@ -294,7 +294,7 @@ func TestUsageAwareSelectorPick_ZeroScoreNeverBeatsRealHeadroom(t *testing.T) {
 	}
 }
 
-func TestUsageAwareSelectorPick_AllZeroScoresFallBackToLowestID(t *testing.T) {
+func TestUsageAwareSelectorPick_AllZeroScoresSplitEvenly(t *testing.T) {
 	t.Parallel()
 
 	selector := &UsageAwareSelector{}
@@ -303,15 +303,20 @@ func TestUsageAwareSelectorPick_AllZeroScoresFallBackToLowestID(t *testing.T) {
 		{ID: "a-exhausted", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 100}},
 	}
 
-	// Both candidates draw +Inf, so the comparison in Pick never replaces the
-	// first candidate in getAvailableAuths' stable ID-sorted order.
-	for index := 0; index < 20; index++ {
+	// Both candidates draw +Inf, a tie that the pre-draw shuffle breaks by random
+	// position rather than always favoring whichever ID sorts first.
+	counts := make(map[string]int)
+	const trials = 2000
+	for index := 0; index < trials; index++ {
 		got, errPick := selector.Pick(context.Background(), "claude", "", cliproxyexecutor.Options{}, auths)
 		if errPick != nil {
 			t.Fatalf("Pick() #%d error = %v", index, errPick)
 		}
-		if got.ID != "a-exhausted" {
-			t.Fatalf("Pick() #%d auth.ID = %q, want %q (tied +Inf draws fall back to lowest ID)", index, got.ID, "a-exhausted")
+		counts[got.ID]++
+	}
+	for _, id := range []string{"a-exhausted", "b-exhausted"} {
+		if counts[id] < trials*2/5 || counts[id] > trials*3/5 {
+			t.Fatalf("Pick() counts = %#v, want %q near %d/%d", counts, id, trials/2, trials)
 		}
 	}
 }

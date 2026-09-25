@@ -560,11 +560,12 @@ type UsageAwareSelector struct{}
 // smallest draw wins (see straw2Draw). This selects each candidate with
 // probability proportional to its score instead of deterministically always
 // picking the single highest-scored one, which would otherwise send every
-// request to one credential until its cached score next refreshes. Candidates
-// tied at a zero score (fully exhausted with no known imminent reset) all draw
-// +Inf and fall back to the first one in getAvailableAuths' stable ID-sorted
-// candidate order; any other tie (most commonly several credentials sharing
-// the neutral fallback score) is split roughly evenly instead.
+// request to one credential until its cached score next refreshes. The pool
+// is shuffled immediately before the draw, so a tie (most notably several
+// zero-score candidates, which all draw +Inf) is broken by random position
+// rather than always favoring whichever candidate happens to sort first by
+// ID; any other tie (most commonly several credentials sharing the neutral
+// fallback score) was already split roughly evenly by the draw itself.
 //
 // Candidates are further bucketed into usageScoreTierCount score tiers (see
 // usageScoreTier), and the draw is narrowed to only the single highest
@@ -606,6 +607,14 @@ func (s *UsageAwareSelector) Pick(ctx context.Context, provider, model string, o
 			}
 		}
 	}
+
+	// Shuffling before the draw means a tie (most notably several zero-score candidates,
+	// which all draw +Inf per straw2Draw) is broken by random position instead of always
+	// favoring whichever candidate happens to sort first by ID.
+	rand.Shuffle(len(pool), func(i, j int) {
+		pool[i], pool[j] = pool[j], pool[i]
+		poolScores[i], poolScores[j] = poolScores[j], poolScores[i]
+	})
 
 	winner := pool[0]
 	winnerScore := poolScores[0]
