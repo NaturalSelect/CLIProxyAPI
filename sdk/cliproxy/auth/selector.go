@@ -573,14 +573,30 @@ func (s *UsageAwareSelector) Pick(ctx context.Context, provider, model string, o
 		return nil, err
 	}
 	available = preferCodexWebsocketAuths(ctx, provider, available)
+	debugEnabled := log.IsLevelEnabled(log.DebugLevel)
 	winner := available[0]
-	winnerDraw := straw2Draw(usageAwareScore(winner, now))
+	winnerScore := usageAwareScore(winner, now)
+	winnerDraw := straw2Draw(winnerScore)
+	var scores strings.Builder
+	if debugEnabled {
+		fmt.Fprintf(&scores, "%s=%.4f", winner.ID, winnerScore)
+	}
 	for _, candidate := range available[1:] {
-		if draw := straw2Draw(usageAwareScore(candidate, now)); draw < winnerDraw {
+		score := usageAwareScore(candidate, now)
+		if debugEnabled {
+			fmt.Fprintf(&scores, ",%s=%.4f", candidate.ID, score)
+		}
+		if draw := straw2Draw(score); draw < winnerDraw {
 			winner = candidate
+			winnerScore = score
 			winnerDraw = draw
 		}
 	}
+	// NOTE: scores lists every candidate, not just the winner, so a candidate that scores
+	// full marks but still loses the weighted draw is distinguishable from one that never
+	// reached full marks in the first place (e.g. filtered out earlier, or dragged down by
+	// a second usage window).
+	selectorLogEntry(ctx).Debugf("usage-aware: picked auth | auth=%s provider=%s model=%s score=%.4f candidates=%d scores=%s", winner.ID, provider, model, winnerScore, len(available), scores.String())
 	return winner, nil
 }
 
