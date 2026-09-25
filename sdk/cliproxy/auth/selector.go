@@ -565,6 +565,18 @@ type UsageAwareSelector struct{}
 // +Inf and fall back to the first one in getAvailableAuths' stable ID-sorted
 // candidate order; any other tie (most commonly several credentials sharing
 // the neutral fallback score) is split roughly evenly instead.
+//
+// Candidates are further bucketed into usageScoreTierCount score tiers (see
+// usageScoreTier), and the draw is narrowed to only the single highest
+// non-empty tier. Plain proportional weighting would still let a merely-good
+// credential (say 0.7) win a plurality of draws against a clearly-better one
+// (say 0.95), since neither individually dominates the full field; gating on
+// the top tier is what actually makes "clearly safer to use" translate into
+// "gets used", the same way getAvailableAuths already narrows to the highest
+// priority tier before this function ever sees the candidates. Within the
+// winning tier, straw2 still draws proportionally, so tiering sharpens
+// preference across bands without collapsing it into a single deterministic
+// winner inside a band.
 func (s *UsageAwareSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
 	_ = opts
 	now := time.Now()
@@ -573,31 +585,69 @@ func (s *UsageAwareSelector) Pick(ctx context.Context, provider, model string, o
 		return nil, err
 	}
 	available = preferCodexWebsocketAuths(ctx, provider, available)
-	debugEnabled := log.IsLevelEnabled(log.DebugLevel)
-	winner := available[0]
-	winnerScore := usageAwareScore(winner, now)
-	winnerDraw := straw2Draw(winnerScore)
-	var scores strings.Builder
-	if debugEnabled {
-		fmt.Fprintf(&scores, "%s=%.4f", winner.ID, winnerScore)
-	}
-	for _, candidate := range available[1:] {
-		score := usageAwareScore(candidate, now)
-		if debugEnabled {
-			fmt.Fprintf(&scores, ",%s=%.4f", candidate.ID, score)
+
+	scores := make([]float64, len(available))
+	topTier := 0
+	for i, candidate := range available {
+		scores[i] = usageAwareScore(candidate, now)
+		if tier := usageScoreTier(scores[i]); tier > topTier {
+			topTier = tier
 		}
-		if draw := straw2Draw(score); draw < winnerDraw {
-			winner = candidate
-			winnerScore = score
+	}
+
+	pool, poolScores := available, scores
+	if topTier > 0 {
+		pool = make([]*Auth, 0, len(available))
+		poolScores = make([]float64, 0, len(available))
+		for i, candidate := range available {
+			if usageScoreTier(scores[i]) == topTier {
+				pool = append(pool, candidate)
+				poolScores = append(poolScores, scores[i])
+			}
+		}
+	}
+
+	winner := pool[0]
+	winnerScore := poolScores[0]
+	winnerDraw := straw2Draw(winnerScore)
+	for i := 1; i < len(pool); i++ {
+		if draw := straw2Draw(poolScores[i]); draw < winnerDraw {
+			winner = pool[i]
+			winnerScore = poolScores[i]
 			winnerDraw = draw
 		}
 	}
-	// NOTE: scores lists every candidate, not just the winner, so a candidate that scores
-	// full marks but still loses the weighted draw is distinguishable from one that never
-	// reached full marks in the first place (e.g. filtered out earlier, or dragged down by
-	// a second usage window).
-	selectorLogEntry(ctx).Debugf("usage-aware: picked auth | auth=%s provider=%s model=%s score=%.4f candidates=%d scores=%s", winner.ID, provider, model, winnerScore, len(available), scores.String())
+
+	if log.IsLevelEnabled(log.DebugLevel) {
+		// NOTE: summary lists every candidate, not just the winner, so a candidate that
+		// scores full marks but still isn't picked is distinguishable from one that never
+		// reached full marks in the first place (e.g. filtered out earlier, or dragged down
+		// by a second usage window). pool shows how many candidates the top-score gate left.
+		var summary strings.Builder
+		for i, candidate := range available {
+			if i > 0 {
+				summary.WriteByte(',')
+			}
+			fmt.Fprintf(&summary, "%s=%.4f", candidate.ID, scores[i])
+		}
+		selectorLogEntry(ctx).Debugf("usage-aware: picked auth | auth=%s provider=%s model=%s score=%.4f candidates=%d pool=%d scores=%s", winner.ID, provider, model, winnerScore, len(available), len(pool), summary.String())
+	}
 	return winner, nil
+}
+
+// usageScoreTierCount is the number of equal-width bands [0, 1] is divided into
+// by usageScoreTier. Higher means finer-grained preference across bands (closer
+// to plain proportional weighting); lower means coarser, more decisive
+// preference for the better band.
+const usageScoreTierCount = 10
+
+// usageScoreTier buckets a [0,1] usage-aware score into [0, usageScoreTierCount),
+// higher meaning safer to route to. Floor plus clamp (mirroring usageWindowScore's
+// own math.Min/Max style) keeps this branch-free; a score of exactly 1 lands in
+// the top tier, and a score sitting exactly on a boundary (e.g. 0.5) falls into
+// the band starting there rather than the one below it.
+func usageScoreTier(score float64) int {
+	return int(math.Min(usageScoreTierCount-1, math.Max(0, math.Floor(score*usageScoreTierCount))))
 }
 
 // straw2Draw returns a weighted random draw for score, following Ceph CRUSH's
