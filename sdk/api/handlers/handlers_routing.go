@@ -202,10 +202,6 @@ func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowIma
 	}
 
 	if len(providers) == 0 {
-		// The client asked for a model this proxy cannot route. Report it as a request
-		// error so streaming clients receive an actionable message instead of a
-		// gateway failure they would keep retrying. 400 is used rather than 404 to keep
-		// it distinguishable from an unregistered HTTP route.
 		// The model name is client supplied, so it is inserted through sjson rather
 		// than formatted into the JSON literal: an unescaped quote would otherwise
 		// corrupt the body or let the caller overwrite the error code.
@@ -215,7 +211,7 @@ func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowIma
 			body = `{"error":{"message":"unknown provider for model","type":"invalid_request_error","code":"model_not_found","param":"model"}}`
 		}
 		return nil, "", &interfaces.ErrorMessage{
-			StatusCode: http.StatusBadRequest,
+			StatusCode: http.StatusInternalServerError,
 			Error:      errors.New(body),
 		}
 	}

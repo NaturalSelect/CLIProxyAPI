@@ -143,8 +143,8 @@ func TestGetRequestDetails_UnknownModelErrorResistsJSONInjection(t *testing.T) {
 			if errMsg == nil || errMsg.Error == nil {
 				t.Fatal("expected an error for an unroutable model")
 			}
-			if errMsg.StatusCode != http.StatusBadRequest {
-				t.Fatalf("status = %d, want %d", errMsg.StatusCode, http.StatusBadRequest)
+			if errMsg.StatusCode != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d", errMsg.StatusCode, http.StatusInternalServerError)
 			}
 			body := errMsg.Error.Error()
 			if !json.Valid([]byte(body)) {
