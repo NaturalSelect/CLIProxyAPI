@@ -14,6 +14,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	internalsignature "github.com/router-for-me/CLIProxyAPI/v7/internal/signature"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -186,6 +187,62 @@ func TestSanitizeAntigravityGeminiRequestSignaturesFinalizesParallelCalls(t *tes
 				t.Fatalf("functionResponse role = %q, want native Antigravity model role; output=%s", got, output)
 			}
 		})
+	}
+}
+
+func TestAntigravityGeminiSignatureNormalizationDoesNotRepeatLogs(t *testing.T) {
+	hook := newSignatureDebugHook(t)
+	payload := []byte(`{"contents":[{"role":"model","parts":[` +
+		`{"functionCall":{"name":"first","args":{}},"thoughtSignature":"` + issue4959GeminiThoughtSignature() + `"},` +
+		`{"functionCall":{"name":"second","args":{}},"thoughtSignature":"skip_thought_signature_validator"},` +
+		`{"functionCall":{"name":"third","args":{}},"thoughtSignature":"google#skip_thought_signature_validator"}]}]}`)
+	original, working := helps.TranslateRequestPairWithCodexMultiAgentV2(t.Context(), nil, &config.Config{},
+		sdktranslator.FormatGemini, sdktranslator.FormatAntigravity, "gemini-3.8-flash-high", payload, payload, true)
+	working = sanitizeAntigravityGeminiRequestSignatures("gemini-3.8-flash-high", working)
+
+	if got := gjson.GetBytes(working, "request.contents.0.parts.0.thoughtSignature").String(); got != issue4959GeminiThoughtSignature() {
+		t.Fatalf("native signature changed: %s", working)
+	}
+	for _, body := range [][]byte{original, working} {
+		for _, index := range []int{1, 2} {
+			if gjson.GetBytes(body, fmt.Sprintf("request.contents.0.parts.%d.thoughtSignature", index)).Exists() {
+				t.Fatalf("sibling bypass was not removed: %s", body)
+			}
+		}
+	}
+	sanitizeLogs := 0
+	for _, entry := range hook.AllEntries() {
+		if strings.HasPrefix(entry.Message, "gemini request: suppressed repeated thoughtSignature sanitizations") {
+			t.Fatalf("suppressed repeated log should no longer be emitted: %q", entry.Message)
+		}
+		if strings.HasPrefix(entry.Message, "gemini request: sanitized ") {
+			sanitizeLogs++
+		}
+	}
+	if sanitizeLogs != 1 {
+		t.Fatalf("expected exactly 1 aggregate log entry, got %d", sanitizeLogs)
+	}
+}
+
+func TestAntigravityDefaultFingerprintsObfuscatesSystemInstructionOnly(t *testing.T) {
+	executor := NewAntigravityExecutor(&config.Config{})
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"You are a Claude agent, built on Anthropic's Claude Agent SDK.\n<system-conventions>\nRFC 2119: MUST, REQUIRED, SHOULD, RECOMMENDED, MAY, OPTIONAL.\n</system-conventions>"}]},"contents":[{"role":"user","parts":[{"text":"Claude Agent SDK and RFC 2119 remain unchanged in user content"}]}]}}`)
+
+	got := executor.obfuscateSensitiveWords(payload)
+	systemText := gjson.GetBytes(got, "request.systemInstruction.parts.0.text").String()
+	if strings.Contains(systemText, "Claude Agent SDK") {
+		t.Fatalf("system instruction retained raw 'Claude Agent SDK': %q", systemText)
+	}
+	if strings.Contains(systemText, "<system-conventions>") {
+		t.Fatalf("system instruction retained raw '<system-conventions>': %q", systemText)
+	}
+	if strings.Contains(systemText, "RFC 2119") {
+		t.Fatalf("system instruction retained raw 'RFC 2119': %q", systemText)
+	}
+
+	wantContent := "Claude Agent SDK and RFC 2119 remain unchanged in user content"
+	if contentText := gjson.GetBytes(got, "request.contents.0.parts.0.text").String(); contentText != wantContent {
+		t.Fatalf("content text = %q, want unchanged %q", contentText, wantContent)
 	}
 }
 
