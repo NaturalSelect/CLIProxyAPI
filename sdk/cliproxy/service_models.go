@@ -29,6 +29,7 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	if ctx.Err() != nil {
 		return
 	}
+	s.cancelStaleAntigravityProbes(a.ID)
 	if a.Disabled {
 		GlobalModelRegistry().UnregisterClient(a.ID)
 		return
@@ -102,6 +103,11 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 		models = applyExcludedModels(models, excluded)
 	case "antigravity":
 		models = registry.GetAntigravityModels()
+		if !s.antigravityHomeEnabled() {
+			hints := s.cachedAntigravityHints(a)
+			models = filterAntigravityModels(models, hints)
+			models = applyAntigravityFetchedModelCapabilities(models, hints)
+		}
 		models = applyExcludedModels(models, excluded)
 	case "claude":
 		models = registry.GetClaudeModels()
@@ -280,6 +286,9 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	}
 
 	GlobalModelRegistry().UnregisterClient(a.ID)
+	if provider == "antigravity" {
+		s.asyncProbeAntigravityCapabilities(ctx, a, key)
+	}
 }
 
 // refreshModelRegistrationForAuth re-applies the latest model registration for
@@ -311,7 +320,7 @@ func (s *Service) refreshModelRegistrationForAuthWithContext(ctx context.Context
 		s.ensureExecutorsForAuthWithContext(ctx, current, false)
 	}
 	s.registerModelsForAuthWithCache(ctx, current, compatCache)
-	s.coreManager.ReconcileRegistryModelStates(ctx, current.ID)
+	s.reconcileRegisteredModelStates(ctx, current)
 	if ctx.Err() != nil {
 		return false
 	}
@@ -331,7 +340,7 @@ func (s *Service) refreshModelRegistrationForAuthWithContext(ctx context.Context
 	if ctx.Err() != nil {
 		return false
 	}
-	s.coreManager.ReconcileRegistryModelStates(ctx, latest.ID)
+	s.reconcileRegisteredModelStates(ctx, latest)
 	s.coreManager.RefreshSchedulerEntry(current.ID)
 	return true
 }
