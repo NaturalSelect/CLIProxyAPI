@@ -579,7 +579,9 @@ func (m *Manager) refreshAuthForRequest(ctx context.Context, id, failedAccessTok
 	if m.shouldRefresh(updated, now) {
 		updated.NextRefreshAfter = now.Add(refreshIneffectiveBackoff)
 	}
-	saved, errUpdate := m.Update(ctx, updated)
+	// A successful refresh may have rotated upstream tokens after cancellation.
+	// Commit its result with context values intact.
+	saved, errUpdate := m.Update(context.WithoutCancel(ctx), updated)
 	for _, model := range modelsToResume {
 		registry.GetGlobalRegistry().ResumeClientModel(id, model)
 	}

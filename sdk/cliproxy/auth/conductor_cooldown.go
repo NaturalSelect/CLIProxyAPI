@@ -444,6 +444,8 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 	registeredModels := modelsForRegisteredAuth(authID)
 	cooldownStateChanged := false
 
+	releaseMutation := m.lockAuthMutation(authID)
+	defer releaseMutation()
 	m.mu.Lock()
 	auth, ok := m.auths[authID]
 	if !ok || auth == nil {
@@ -485,7 +487,7 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		auth.Status = StatusActive
 	}
 	auth.UpdatedAt = now
-	if errPersist := m.persist(ctx, auth); errPersist != nil {
+	if errPersist := m.persistLocked(ctx, auth); errPersist != nil {
 		m.mu.Unlock()
 		return nil, nil, errPersist
 	}
@@ -495,6 +497,7 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		cooldownStateChanged = !cooldownStateRecordsEqual(cooldownRecordsBefore, cooldownRecordsAfter)
 	}
 	m.mu.Unlock()
+	releaseMutation()
 
 	for _, modelKey := range models {
 		registry.GetGlobalRegistry().ClearModelQuotaExceeded(authID, modelKey)
@@ -715,6 +718,8 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	var authSnapshot *Auth
 	cooldownStateChanged := false
 
+	releaseMutation := m.lockAuthMutation(result.AuthID)
+	defer releaseMutation()
 	m.mu.Lock()
 	if auth, ok := m.auths[result.AuthID]; ok && auth != nil {
 		now := time.Now()
@@ -923,7 +928,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			applyRateLimitHeaders(auth, result.ResponseHeaders, result.ObservedAt)
 		}
 
-		_ = m.persist(ctx, auth)
+		_ = m.persistLocked(ctx, auth)
 		authSnapshot = auth.Clone()
 		if trackCooldownState {
 			cooldownRecordsAfter := m.cooldownStateRecordsForAuthLocked(auth, now)
@@ -931,6 +936,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		}
 	}
 	m.mu.Unlock()
+	releaseMutation()
 	if m.scheduler != nil && authSnapshot != nil {
 		m.scheduler.upsertAuth(authSnapshot)
 	}
@@ -993,6 +999,8 @@ func (m *Manager) recordAvailabilityNeutralResult(ctx context.Context, result Re
 	}
 
 	var authSnapshot *Auth
+	releaseMutation := m.lockAuthMutation(result.AuthID)
+	defer releaseMutation()
 	m.mu.Lock()
 	if auth, ok := m.auths[result.AuthID]; ok && auth != nil {
 		now := time.Now()
@@ -1002,10 +1010,11 @@ func (m *Manager) recordAvailabilityNeutralResult(ctx context.Context, result Re
 		} else {
 			auth.Failed++
 		}
-		_ = m.persist(ctx, auth)
+		_ = m.persistLocked(ctx, auth)
 		authSnapshot = auth.Clone()
 	}
 	m.mu.Unlock()
+	releaseMutation()
 
 	m.hook.OnResult(ctx, result)
 	m.publishErrorEvent(result, authSnapshot)
@@ -1111,6 +1120,30 @@ func mergeModelState(target, source *ModelState) *ModelState {
 	}
 	*target = merged
 	return target
+}
+
+func existingModelState(auth *Auth, model string) *ModelState {
+	model = canonicalModelKey(model)
+	if auth == nil || model == "" {
+		return nil
+	}
+	return auth.ModelStates[model]
+}
+
+func isModelStateActiveCooldown(state *ModelState, now time.Time) bool {
+	if state == nil {
+		return false
+	}
+	if state.Status == StatusDisabled {
+		return true
+	}
+	if !state.NextRetryAfter.IsZero() && state.NextRetryAfter.After(now) {
+		return true
+	}
+	if !state.Quota.NextRecoverAt.IsZero() && state.Quota.NextRecoverAt.After(now) {
+		return true
+	}
+	return state.Quota.Exceeded && state.Quota.NextRecoverAt.IsZero()
 }
 
 func resetModelState(state *ModelState, now time.Time) {

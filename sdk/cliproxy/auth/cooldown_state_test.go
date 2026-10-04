@@ -256,7 +256,7 @@ func TestManager_MarkResult_PersistsCooldownOnlyWhenStateChanges(t *testing.T) {
 	}
 }
 
-func TestManager_ReconcileRegistryModelStates_PersistsCooldownRemoval(t *testing.T) {
+func TestManager_ReconcileRegistryModelStates_PreservesActiveCooldown(t *testing.T) {
 	store := &recordingCooldownStateStore{}
 	manager := NewManager(nil, nil, nil)
 	manager.SetCooldownStateStore(store)
@@ -298,14 +298,14 @@ func TestManager_ReconcileRegistryModelStates_PersistsCooldownRemoval(t *testing
 	}
 
 	manager.ReconcileRegistryModelStates(context.Background(), auth.ID)
-	if got := store.saveCount.Load(); got != 2 {
-		t.Fatalf("reconcile saved state %d times, want 2", got)
+	if got := store.saveCount.Load(); got != 1 {
+		t.Fatalf("reconcile of an active cooldown saved state %d times, want 1", got)
 	}
 	store.mu.Lock()
 	recordsAfterReconcile := cloneCooldownStateRecords(store.records)
 	store.mu.Unlock()
-	if len(recordsAfterReconcile) != 0 {
-		t.Fatalf("records after reconcile = %+v, want no stale cooldown", recordsAfterReconcile)
+	if len(recordsAfterReconcile) != len(recordsBeforeReconcile) {
+		t.Fatalf("records after reconcile = %+v, want active cooldown preserved (%+v)", recordsAfterReconcile, recordsBeforeReconcile)
 	}
 }
 

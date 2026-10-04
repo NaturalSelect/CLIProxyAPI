@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -10,6 +11,7 @@ import (
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"golang.org/x/sync/semaphore"
 )
 
 // ProviderExecutor defines the contract required by Manager to execute provider calls.
@@ -123,7 +125,9 @@ type Manager struct {
 	configCooldownMu          sync.Mutex
 	auths                     map[string]*Auth
 	authChangeWatchers        map[string]map[chan struct{}]struct{}
-	scheduler                 *authScheduler
+	// authEpochs keeps registration epochs monotonic across Remove, Load and re-Register.
+	authEpochs map[string]uint64
+	scheduler  *authScheduler
 	// pluginScheduler runs outside m.mu before falling back to native selection.
 	pluginScheduler PluginScheduler
 	// homeRuntimeAuths retains legacy session auth lookups for non-execution callers.
@@ -172,6 +176,13 @@ type Manager struct {
 	// refreshLocks serializes credential refresh per auth ID so concurrent
 	// 401 recoveries and auto-refresh workers do not race the same refresh_token.
 	refreshLocks sync.Map
+	// authMutationLocks coordinate credential mutations without blocking unrelated readers.
+	authMutationLocks sync.Map
+	// authLoadGate allows concurrent credential transactions, but excludes whole-store reloads.
+	// Mutations acquire one permit; Load acquires all permits before reading the store.
+	authLoadGate *semaphore.Weighted
+	// persistLocks serializes disk persistence per auth ID and drops out-of-order writes.
+	persistLocks sync.Map
 }
 
 // NewManager constructs a manager with optional custom selector and hook.
@@ -184,6 +195,8 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 	}
 	manager := &Manager{
 		store:                 store,
+		authLoadGate:          semaphore.NewWeighted(math.MaxInt64),
+		authEpochs:            make(map[string]uint64),
 		executors:             make(map[string]ProviderExecutor),
 		selector:              selector,
 		hook:                  hook,
