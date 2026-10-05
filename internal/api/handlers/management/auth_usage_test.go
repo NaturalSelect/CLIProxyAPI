@@ -165,6 +165,38 @@ func TestListAuthFileUsage_ClaudeFableWindowReturnsSeparateEntry(t *testing.T) {
 	}
 }
 
+func TestListAuthFileUsage_CodexMapsSecondaryToWeeklyAndPrimaryToFiveHour(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	manager := coreauth.NewManager(nil, &coreauth.BalancedHashSelector{}, nil)
+	auth := &coreauth.Auth{ID: "auth-codex-1", Provider: "codex", FileName: "codex-1.json"}
+	auth.RateLimits = map[string]any{
+		"primary_used_percent":   0,
+		"primary_reset_at":       "2026-10-05T22:20:31Z",
+		"secondary_used_percent": 5,
+		"secondary_reset_at":     "2026-10-10T08:23:29Z",
+		"observed_at":            "2026-10-05T17:20:31Z",
+	}
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+
+	usage := listAuthFileUsage(t, manager)
+	if len(usage) != 1 {
+		t.Fatalf("len(usage) = %d, want 1: %+v", len(usage), usage)
+	}
+	entry := usage[0]
+	window7d, ok := entry["usage_7d"].(map[string]any)
+	if !ok || int(window7d["percent"].(float64)) != 5 || window7d["reset_at"] != "2026-10-10T08:23:29Z" {
+		t.Fatalf("usage_7d = %+v, want the secondary window", entry["usage_7d"])
+	}
+	window5h, ok := entry["usage_5h"].(map[string]any)
+	if !ok || int(window5h["percent"].(float64)) != 0 || window5h["reset_at"] != "2026-10-05T22:20:31Z" {
+		t.Fatalf("usage_5h = %+v, want the primary window", entry["usage_5h"])
+	}
+}
+
 // listAuthFileUsage calls ListAuthFileUsage through the HTTP handler and
 // decodes the "usage" array, exercising sorting and JSON encoding along with
 // buildAuthUsageEntries.

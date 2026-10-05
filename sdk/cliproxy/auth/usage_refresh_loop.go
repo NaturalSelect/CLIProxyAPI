@@ -31,24 +31,24 @@ const (
 	usageRefreshBetweenProbes = 5 * time.Second
 )
 
-// usageRefreshProviders lists the providers the prober will probe: claude and
-// codex have rate-limit header tracking wired up in rate_limit_headers.go,
-// and antigravity has a dedicated quota endpoint wired up in
-// antigravity_quota.go (its usage is not reported via response headers).
-// Probing any other provider would send a real API call for data the prober
-// has no parser for.
+// usageRefreshProviders lists the providers the prober will probe: claude has
+// rate-limit header tracking wired up in rate_limit_headers.go, codex has the
+// wham/usage endpoint wired up in codex_usage.go, and antigravity has a
+// dedicated quota endpoint wired up in antigravity_quota.go (neither reports
+// usage via a probe's response headers). Probing any other provider would send
+// a real API call for data the prober has no parser for.
 var usageRefreshProviders = map[string]bool{
 	"claude":      true,
 	"codex":       true,
 	"antigravity": true,
 }
 
-// StartUsageRefresh launches a background loop that periodically sends a
-// minimal probe request through Claude/Codex auths whose cached RateLimits
-// snapshot (see rate_limit_headers.go) is missing or older than
-// usageRefreshStaleAfter, purely to harvest fresh usage headers for auths
-// that have not served real traffic recently. Only one loop is kept alive;
-// starting a new one cancels the previous run.
+// StartUsageRefresh launches a background loop that periodically refreshes
+// the cached RateLimits snapshot (see rate_limit_headers.go) of Claude, Codex,
+// and Antigravity auths whose snapshot is missing or older than
+// usageRefreshStaleAfter, for auths that have not served real traffic
+// recently. Only one loop is kept alive; starting a new one cancels the
+// previous run.
 func (m *Manager) StartUsageRefresh(parent context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = usageRefreshCheckInterval
@@ -95,8 +95,8 @@ func (m *Manager) runUsageRefreshLoop(ctx context.Context, interval time.Duratio
 	}
 }
 
-// runUsageRefreshPass scans all auths once and probes every stale Claude/Codex
-// credential, sequentially and with a short delay between calls.
+// runUsageRefreshPass scans all auths once and probes every stale credential,
+// sequentially and with a short delay between calls.
 func (m *Manager) runUsageRefreshPass(ctx context.Context) {
 	now := time.Now()
 	m.mu.RLock()
@@ -193,8 +193,12 @@ func (m *Manager) probeUsage(ctx context.Context, authID string) {
 		return
 	}
 
-	if a.Provider == "antigravity" {
+	switch a.Provider {
+	case "antigravity":
 		m.probeAntigravityUsage(ctx, authID, a, exec)
+		return
+	case "codex":
+		m.probeCodexUsage(ctx, authID, a, exec)
 		return
 	}
 
@@ -218,14 +222,57 @@ func (m *Manager) probeUsage(ctx context.Context, authID string) {
 	m.mu.Unlock()
 }
 
+// probeCodexUsage fetches a fresh usage snapshot for a codex auth from the
+// ChatGPT wham/usage endpoint, which reports both windows without spending a
+// model call. Like the other probes, failures are silent aside from a debug
+// log: a probe is not "real" traffic and must not affect the auth's
+// availability or cooldown state.
+func (m *Manager) probeCodexUsage(ctx context.Context, authID string, a *Auth, exec ProviderExecutor) {
+	accountID := codexUsageAccountID(a)
+	if accountID == "" {
+		log.Debugf("usage-refresh prober: codex auth %s has no ChatGPT account id, skipping probe", authID)
+		return
+	}
+
+	httpReq, errReq := http.NewRequestWithContext(ctx, http.MethodGet, codexUsageURL, nil)
+	if errReq != nil {
+		log.Debugf("usage-refresh prober: codex auth %s: build usage request error: %v", authID, errReq)
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", codexUsageUserAgent)
+	httpReq.Header.Set("Chatgpt-Account-Id", accountID)
+
+	resp, errDo := exec.HttpRequest(ctx, a, httpReq)
+	if errDo != nil {
+		log.Debugf("usage-refresh prober: codex auth %s: usage request failed: %v", authID, errDo)
+		return
+	}
+	respBody, ok := readProbeResponse(resp)
+	if !ok {
+		log.Debugf("usage-refresh prober: codex auth %s: usage response not usable", authID)
+		return
+	}
+	snapshot, parsed := parseCodexUsageResponse(respBody)
+	if !parsed {
+		log.Debugf("usage-refresh prober: probe for auth %s (codex) returned no usage windows", authID)
+		return
+	}
+
+	m.mu.Lock()
+	if current := m.auths[authID]; current != nil {
+		applyRateLimitSnapshot(current, snapshot, time.Now())
+	}
+	m.mu.Unlock()
+}
+
 // probeAntigravityUsage fetches a fresh quota snapshot for an antigravity auth
 // via the dedicated retrieveUserQuotaSummary endpoint: antigravity does not
-// report usage on response headers like Claude/Codex (see
-// usageRefreshProviders), so it needs its own request/response handling
-// instead of buildUsageProbeRequest's Execute()+headers path. Like the
-// Claude/Codex path, failures are silent aside from a debug log: a probe is
-// not "real" traffic and must not affect the auth's availability or cooldown
-// state.
+// report usage on response headers like Claude (see usageRefreshProviders), so
+// it needs its own request/response handling instead of
+// buildUsageProbeRequest's Execute()+headers path. Like the other probes,
+// failures are silent aside from a debug log: a probe is not "real" traffic
+// and must not affect the auth's availability or cooldown state.
 func (m *Manager) probeAntigravityUsage(ctx context.Context, authID string, a *Auth, exec ProviderExecutor) {
 	projectID := antigravityQuotaProjectID(a)
 	if projectID == "" {
@@ -253,7 +300,7 @@ func (m *Manager) probeAntigravityUsage(ctx context.Context, authID string, a *A
 			log.Debugf("usage-refresh prober: antigravity auth %s: quota request to %s failed: %v", authID, base, errDo)
 			continue
 		}
-		respBody, ok := readAntigravityQuotaResponse(resp)
+		respBody, ok := readProbeResponse(resp)
 		if !ok {
 			log.Debugf("usage-refresh prober: antigravity auth %s: quota response from %s not usable", authID, base)
 			continue
@@ -276,15 +323,15 @@ func (m *Manager) probeAntigravityUsage(ctx context.Context, authID string, a *A
 	m.mu.Unlock()
 }
 
-// readAntigravityQuotaResponse reads and closes resp's body, reporting
-// ok=false for a nil response, a non-2xx status, or a body read error.
-func readAntigravityQuotaResponse(resp *http.Response) ([]byte, bool) {
+// readProbeResponse reads and closes resp's body, reporting ok=false for a
+// nil response, a non-2xx status, or a body read error.
+func readProbeResponse(resp *http.Response) ([]byte, bool) {
 	if resp == nil {
 		return nil, false
 	}
 	defer func() {
 		if errClose := resp.Body.Close(); errClose != nil {
-			log.Debugf("usage-refresh prober: close antigravity quota response body error: %v", errClose)
+			log.Debugf("usage-refresh prober: close probe response body error: %v", errClose)
 		}
 	}()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
@@ -304,11 +351,10 @@ func readAntigravityQuotaResponse(resp *http.Response) ([]byte, bool) {
 // ok=false when no safe probe model is registered, in which case the caller
 // skips the probe rather than falling back to an arbitrary business model.
 //
-// Both branches use a real, un-cached provider call (not a token-count/local
-// endpoint): Claude's count_tokens endpoint is not confirmed to return the
-// same Anthropic-Ratelimit-Unified-* headers as a real Messages call, and
-// Codex's CountTokens never reaches the upstream at all, so neither is a
-// reliable header source.
+// It uses a real, un-cached provider call (not a token-count/local endpoint):
+// Claude's count_tokens endpoint is not confirmed to return the same
+// Anthropic-Ratelimit-Unified-* headers as a real Messages call, so it is not
+// a reliable header source.
 func buildUsageProbeRequest(a *Auth) (cliproxyexecutor.Request, cliproxyexecutor.Options, bool) {
 	models := registry.GetGlobalRegistry().GetModelsForClient(a.ID)
 	if len(models) == 0 {
@@ -328,20 +374,6 @@ func buildUsageProbeRequest(a *Auth) (cliproxyexecutor.Request, cliproxyexecutor
 		opts := cliproxyexecutor.Options{
 			SourceFormat:   sdktranslator.FormatClaude,
 			ResponseFormat: sdktranslator.FormatClaude,
-		}
-		return req, opts, true
-	case "codex":
-		model := pickProbeModel(models, "luna")
-		if model == "" {
-			return cliproxyexecutor.Request{}, cliproxyexecutor.Options{}, false
-		}
-		req := cliproxyexecutor.Request{
-			Model:   model,
-			Payload: []byte(`{"input":"hi","max_output_tokens":64}`),
-		}
-		opts := cliproxyexecutor.Options{
-			SourceFormat:   sdktranslator.FormatCodex,
-			ResponseFormat: sdktranslator.FormatCodex,
 		}
 		return req, opts, true
 	default:

@@ -34,16 +34,9 @@ func TestBuildUsageProbeRequestSelectsOnlySafeProviderModel(t *testing.T) {
 			expectedOK: false,
 		},
 		{
-			name:          "codex selects luna after other models",
-			provider:      "codex",
-			modelIDs:      []string{"gpt-5.6-sol", "gpt-5.6-luna"},
-			expectedModel: "gpt-5.6-luna",
-			expectedOK:    true,
-		},
-		{
-			name:       "codex rejects models without luna",
+			name:       "codex has no model probe because it uses wham usage",
 			provider:   "codex",
-			modelIDs:   []string{"gpt-5.6-sol", "gpt-5.6-codex"},
+			modelIDs:   []string{"gpt-5.6-sol", "gpt-5.6-luna"},
 			expectedOK: false,
 		},
 	}

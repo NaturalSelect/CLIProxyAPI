@@ -32,7 +32,7 @@ const (
 const ClaudeRateLimitFableGroup = "claude-fable"
 
 // ChatGPT/Codex sends these headers on /backend-api/codex/responses responses to
-// report the primary (weekly) and secondary (short window, e.g. 5h) usage windows
+// report the primary (short window, e.g. 5h) and secondary (weekly) usage windows
 // for the credential.
 const (
 	codexRateLimitPrimaryUsedPercentHeader          = "X-Codex-Primary-Used-Percent"
@@ -156,8 +156,8 @@ func copyMissingRateLimitKeys(dst, src map[string]any, keys ...string) {
 	}
 }
 
-// parseCodexRateLimitHeaders reads the primary (typically weekly) and secondary
-// (typically 5h) usage windows Codex reports on /responses. The window duration is
+// parseCodexRateLimitHeaders reads the primary (typically 5h) and secondary
+// (typically weekly) usage windows Codex reports on /responses. The window duration is
 // data-driven via the *-window-minutes headers rather than assumed, since OpenAI
 // controls how long each window is.
 func parseCodexRateLimitHeaders(headers http.Header) (map[string]any, bool) {

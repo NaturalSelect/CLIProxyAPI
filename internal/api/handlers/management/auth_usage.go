@@ -70,11 +70,11 @@ func buildAuthUsageEntries(auth *coreauth.Auth) []gin.H {
 			rateLimitWindow(auth.RateLimits, "5h_utilization", "5h_reset"))
 		return append(entries, claudeGroupUsageEntries(auth, name)...)
 	case "codex":
-		// Codex's "primary" window is the long/weekly window and "secondary" is
-		// the short window; both map onto the 7d/5h response shape for display.
+		// Codex's "primary" window is the short (5h) window and "secondary" is
+		// the long (7d) window.
 		return authUsageEntrySlice(auth, name,
-			rateLimitWindow(auth.RateLimits, "primary_used_percent", "primary_reset_at"),
-			rateLimitWindow(auth.RateLimits, "secondary_used_percent", "secondary_reset_at"))
+			rateLimitWindow(auth.RateLimits, "secondary_used_percent", "secondary_reset_at"),
+			rateLimitWindow(auth.RateLimits, "primary_used_percent", "primary_reset_at"))
 	case "antigravity":
 		return antigravityUsageEntries(auth, name)
 	default:
