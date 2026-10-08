@@ -190,6 +190,9 @@ type XAIConfig struct {
 
 // AntigravityConfig configures provider-wide Antigravity request behavior.
 type AntigravityConfig struct {
+	// IdentityConfuse prepends the native Antigravity identity to the system instruction,
+	// masking the real client identity from upstream content filtering.
+	IdentityConfuse bool `yaml:"identity-confuse" json:"identity-confuse"`
 	// SensitiveWords is a list of words to obfuscate with zero-width characters in system instructions.
 	SensitiveWords []string `yaml:"sensitive-words,omitempty" json:"sensitive-words,omitempty"`
 }

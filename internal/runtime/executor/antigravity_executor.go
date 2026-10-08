@@ -63,6 +63,13 @@ func NewAntigravityExecutor(cfg *config.Config) *AntigravityExecutor {
 	return &AntigravityExecutor{cfg: cfg}
 }
 
+func (e *AntigravityExecutor) prependIdentityInstruction(payload []byte) []byte {
+	if e == nil || e.cfg == nil || !e.cfg.Antigravity.IdentityConfuse {
+		return payload
+	}
+	return helps.PrependAntigravityIdentityInstruction(payload)
+}
+
 func (e *AntigravityExecutor) obfuscateSensitiveWords(payload []byte) []byte {
 	if e == nil || e.cfg == nil || len(e.cfg.Antigravity.SensitiveWords) == 0 {
 		return payload

@@ -283,6 +283,7 @@ codex:
 
 # Antigravity provider behavior.
 # antigravity:
+#   identity-confuse: false        # optional: prepend the native Antigravity identity to the system instruction
 #   sensitive-words:             # optional: words to obfuscate with zero-width characters in system instructions
 #     - "API"
 #     - "proxy"
