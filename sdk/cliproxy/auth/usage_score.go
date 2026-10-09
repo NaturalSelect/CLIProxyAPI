@@ -11,6 +11,9 @@ import (
 // relative to credentials with real headroom data.
 const defaultUsageAwareScore = 0.5
 
+// NOTE: Remaining quota alone caps below 1 so an untouched window can never tie a window resetting within a day.
+const maxHeadroomScore = 0.9
+
 // usageWindow is a normalized utilization/reset pair extracted from a credential's
 // provider-specific auth.RateLimits snapshot (see rate_limit_headers.go and
 // antigravity_quota.go for how that snapshot is populated).
@@ -141,7 +144,8 @@ const (
 // usageWindowScore scores a single utilization/reset window in [0, 1] as the
 // largest of three independent signals, so that whichever one shows the
 // window is safe to route to wins rather than being diluted by the others:
-//   - headroom: the remaining fraction of quota.
+//   - headroom: the remaining fraction of quota, scaled to [0, maxHeadroomScore]
+//     so it alone can never reach a full score.
 //   - resetUrgency (see minutesUntilReset): grows as the reset approaches,
 //     which matters most when headroom is poor, since an exhausted window
 //     that is about to refresh is as good as a fresh one.
@@ -153,7 +157,7 @@ const (
 //     pulls the product back down and the max falls through to headroom or
 //     resetUrgency instead.
 func usageWindowScore(utilization int, resetAt string, now time.Time) float64 {
-	headroom := math.Min(1, math.Max(0, (100-float64(utilization))/100.0))
+	headroom := maxHeadroomScore * math.Min(1, math.Max(0, (100-float64(utilization))/100.0))
 	remaining := minutesUntilReset(resetAt, now)
 
 	resetUrgency := math.Min(1, 1.0/(1.0+remaining/60.0))

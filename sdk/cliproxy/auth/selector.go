@@ -642,27 +642,23 @@ func (s *UsageAwareSelector) Pick(ctx context.Context, provider, model string, o
 	return winner, nil
 }
 
-// usageScoreTierCount is the number of equal-width bands [0, 1] is divided into
+// usageScoreTierCount is the number of equal-width bands [0, 1) is divided into
 // by usageScoreTier. Higher means finer-grained preference across bands (closer
 // to plain proportional weighting); lower means coarser, more decisive
-// preference for the better band.
+// preference for the better band. A score of exactly 1 sits alone in one extra
+// tier above these bands.
 const usageScoreTierCount = 10
 
-// usageScoreTier buckets a [0,1] usage-aware score into [0, usageScoreTierCount),
+// usageScoreTier buckets a [0,1] usage-aware score into [0, usageScoreTierCount],
 // higher meaning safer to route to. Floor plus clamp (mirroring usageWindowScore's
 // own math.Min/Max style) keeps this branch-free; a score of exactly 1 lands in
-// the top tier, and a score sitting exactly on a boundary (e.g. 0.5) falls into
-// the band starting there rather than the one below it.
+// its own top tier so no lower score can share a draw with it, and a score sitting
+// exactly on a boundary (e.g. 0.5) falls into the band starting there rather than
+// the one below it.
 func usageScoreTier(score float64) int {
-	return int(math.Min(usageScoreTierCount-1, math.Max(0, math.Floor(score*usageScoreTierCount))))
+	return int(math.Min(usageScoreTierCount, math.Max(0, math.Floor(score*usageScoreTierCount))))
 }
 
-// straw2Draw returns a weighted random draw for score, following Ceph CRUSH's
-// straw2 bucket algorithm: an Exp(1) random variable scaled by 1/score. Across a
-// set of candidates, the one with the smallest draw wins with probability
-// proportional to its score, rather than the highest score always winning. A
-// non-positive score draws +Inf so it never outranks a candidate with any real
-// headroom.
 // straw2Draw returns a weighted random draw for score, following Ceph CRUSH's
 // straw2 bucket algorithm: an Exp(1) random variable divided by the candidate's
 // weight. Across a set of candidates, the one with the smallest draw wins with

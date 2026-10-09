@@ -134,9 +134,9 @@ func TestUsageAwareSelectorPick_HigherTierAlwaysWinsOverLowerTier(t *testing.T) 
 
 	selector := &UsageAwareSelector{}
 	auths := []*Auth{
-		{ID: "hot", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 90}},  // headroom 0.1 -> tier 1
-		{ID: "cool", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 20}}, // headroom 0.8 -> tier 8
-		{ID: "warm", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 60}}, // headroom 0.4 -> tier 4
+		{ID: "hot", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 90}},  // score 0.09 -> tier 0
+		{ID: "cool", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 20}}, // score 0.72 -> tier 7
+		{ID: "warm", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 60}}, // score 0.36 -> tier 3
 	}
 
 	counts := make(map[string]int)
@@ -164,8 +164,8 @@ func TestUsageAwareSelectorPick_ProportionalWithinSameTier(t *testing.T) {
 
 	selector := &UsageAwareSelector{}
 	auths := []*Auth{
-		{ID: "less-headroom", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 30}}, // headroom 0.70 -> tier 7
-		{ID: "more-headroom", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 21}}, // headroom 0.79 -> tier 7
+		{ID: "less-headroom", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 30}}, // score 0.630 -> tier 6
+		{ID: "more-headroom", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 25}}, // score 0.675 -> tier 6
 	}
 
 	counts := make(map[string]int)
@@ -177,7 +177,7 @@ func TestUsageAwareSelectorPick_ProportionalWithinSameTier(t *testing.T) {
 		}
 		counts[got.ID]++
 	}
-	// Both land in score tier 7, so the top-tier gate keeps both in the pool and straw2
+	// Both land in score tier 6, so the top-tier gate keeps both in the pool and straw2
 	// still draws between them proportionally to their slightly different scores, rather
 	// than the gate collapsing the tier to a coin flip or a deterministic pick.
 	if !(counts["more-headroom"] > counts["less-headroom"]) {
@@ -220,7 +220,7 @@ func TestUsageAwareSelectorPick_UnmeasuredCredentialOutranksLowHeadroomCredentia
 
 	selector := &UsageAwareSelector{}
 	auths := []*Auth{
-		{ID: "busy-claude", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 80}}, // headroom 0.2 -> tier 2
+		{ID: "busy-claude", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 80}}, // score 0.18 -> tier 1
 		{ID: "no-data", Provider: "gemini"}, // neutral 0.5 -> tier 5
 	}
 
@@ -233,8 +233,8 @@ func TestUsageAwareSelectorPick_UnmeasuredCredentialOutranksLowHeadroomCredentia
 		}
 		counts[got.ID]++
 	}
-	// no-data's neutral 0.5 score lands in a strictly higher tier than busy-claude's 0.2
-	// headroom, so the top-tier gate excludes busy-claude entirely.
+	// no-data's neutral 0.5 score lands in a strictly higher tier than busy-claude's 0.18
+	// score, so the top-tier gate excludes busy-claude entirely.
 	if counts["no-data"] != trials {
 		t.Fatalf("Pick() counts = %#v, want no-data to win all %d draws (higher tier excludes lower tiers)", counts, trials)
 	}
@@ -248,7 +248,7 @@ func TestUsageAwareSelectorPick_HighHeadroomCredentialOutranksUnmeasuredCredenti
 
 	selector := &UsageAwareSelector{}
 	auths := []*Auth{
-		{ID: "fresh-claude", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 10}}, // headroom 0.9 -> tier 9
+		{ID: "fresh-claude", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 10}}, // score 0.81 -> tier 8
 		{ID: "no-data", Provider: "gemini"}, // neutral 0.5 -> tier 5
 	}
 
@@ -261,13 +261,36 @@ func TestUsageAwareSelectorPick_HighHeadroomCredentialOutranksUnmeasuredCredenti
 		}
 		counts[got.ID]++
 	}
-	// fresh-claude's 0.9 headroom lands in a strictly higher tier than no-data's neutral
+	// fresh-claude's 0.81 score lands in a strictly higher tier than no-data's neutral
 	// 0.5 score, so the top-tier gate excludes no-data entirely.
 	if counts["fresh-claude"] != trials {
 		t.Fatalf("Pick() counts = %#v, want fresh-claude to win all %d draws (higher tier excludes lower tiers)", counts, trials)
 	}
 	if counts["no-data"] != 0 {
 		t.Fatalf("Pick() counts = %#v, want no-data to never win while a higher tier is available", counts)
+	}
+}
+
+func TestUsageAwareSelectorPick_ResetWithinOneDayAlwaysBeatsEmptyWindow(t *testing.T) {
+	t.Parallel()
+
+	selector := &UsageAwareSelector{}
+	resetSoon := time.Now().Add(12 * time.Hour).UTC().Format(time.RFC3339)
+	auths := []*Auth{
+		{ID: "empty", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 0}},
+		{ID: "expiring", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 60, "7d_reset": resetSoon}},
+	}
+
+	// A fully empty window tops out below 1, while a window resetting within a day scores
+	// a full 1, so the top-tier gate must always leave expiring as the only candidate.
+	for index := 0; index < 200; index++ {
+		got, errPick := selector.Pick(context.Background(), "claude", "", cliproxyexecutor.Options{}, auths)
+		if errPick != nil {
+			t.Fatalf("Pick() #%d error = %v", index, errPick)
+		}
+		if got.ID != "expiring" {
+			t.Fatalf("Pick() #%d auth.ID = %q, want %q (empty window must not outdraw a reset within 1d)", index, got.ID, "expiring")
+		}
 	}
 }
 
@@ -335,9 +358,9 @@ func TestUsageScoreTier(t *testing.T) {
 		{name: "sitting on a boundary rounds up", score: 0.5, want: 5},
 		{name: "just below a boundary stays in the lower band", score: 0.499999, want: 4},
 		{name: "just below max", score: 0.999999, want: 9},
-		{name: "max score", score: 1.0, want: 9},
+		{name: "max score gets its own tier", score: 1.0, want: 10},
 		{name: "negative score clamps to lowest tier", score: -1, want: 0},
-		{name: "score above max clamps to top tier", score: 1.5, want: 9},
+		{name: "score above max clamps to top tier", score: 1.5, want: 10},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

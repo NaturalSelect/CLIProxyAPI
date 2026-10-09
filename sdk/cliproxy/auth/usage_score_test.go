@@ -19,8 +19,22 @@ func TestUsageWindowScore_FullHeadroom(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
-	if got := usageWindowScore(0, "", now); got != 1 {
-		t.Fatalf("usageWindowScore(0, \"\", now) = %v, want 1 (full headroom, no reset)", got)
+	if got := usageWindowScore(0, "", now); got != maxHeadroomScore {
+		t.Fatalf("usageWindowScore(0, \"\", now) = %v, want %v (full headroom, no reset)", got, maxHeadroomScore)
+	}
+}
+
+func TestUsageWindowScore_EmptyWindowLosesToResetWithinOneDay(t *testing.T) {
+	t.Parallel()
+
+	// NOTE: truncate so resetAt's seconds-only RFC3339 formatting round-trips exactly.
+	now := time.Now().Truncate(time.Second)
+	empty := usageWindowScore(0, now.Add(7*24*time.Hour).UTC().Format(time.RFC3339), now)
+	for _, resetIn := range []time.Duration{time.Minute, time.Hour, 12 * time.Hour, 24 * time.Hour} {
+		expiring := usageWindowScore(50, now.Add(resetIn).UTC().Format(time.RFC3339), now)
+		if expiring <= empty {
+			t.Fatalf("usageWindowScore(50%%, +%s) = %v, want > empty window score %v", resetIn, expiring, empty)
+		}
 	}
 }
 
@@ -79,7 +93,7 @@ func TestUsageWindowScore_PastResetNoBonus(t *testing.T) {
 // TestUsageWindowScore_TypicalScenarios tabulates representative
 // utilization/reset combinations to show the max(headroom, urgency) scoring
 // (see usageWindowScore) in action, e.g. "90% used but resets in 10m" scores
-// far higher than "90% used but resets tomorrow" (0.86 vs 0.10) even though
+// far higher than "90% used but resets tomorrow" (0.86 vs 0.09) even though
 // headroom is identical in both, because an imminent reset overwhelms
 // headroom instead of being averaged with it.
 func TestUsageWindowScore_TypicalScenarios(t *testing.T) {
@@ -93,14 +107,14 @@ func TestUsageWindowScore_TypicalScenarios(t *testing.T) {
 		resetIn     time.Duration // 0 means no reset info at all
 		want        float64
 	}{
-		{name: "90% used, resets tomorrow", utilization: 90, resetIn: 24 * time.Hour, want: 0.100000},
+		{name: "90% used, resets tomorrow", utilization: 90, resetIn: 24 * time.Hour, want: 0.090000},
 		{name: "90% used, resets in 10m", utilization: 90, resetIn: 10 * time.Minute, want: 0.857143},
-		{name: "90% used, no reset info", utilization: 90, resetIn: 0, want: 0.100000},
-		{name: "50% used, resets in 7d", utilization: 50, resetIn: 7 * 24 * time.Hour, want: 0.500000},
-		{name: "10% used, resets in 7d", utilization: 10, resetIn: 7 * 24 * time.Hour, want: 0.900000},
+		{name: "90% used, no reset info", utilization: 90, resetIn: 0, want: 0.090000},
+		{name: "50% used, resets in 7d", utilization: 50, resetIn: 7 * 24 * time.Hour, want: 0.450000},
+		{name: "10% used, resets in 7d", utilization: 10, resetIn: 7 * 24 * time.Hour, want: 0.810000},
 		{name: "100% used, resets in 1h", utilization: 100, resetIn: time.Hour, want: 0.500000},
 		{name: "100% used, resets in 5m", utilization: 100, resetIn: 5 * time.Minute, want: 0.923077},
-		{name: "0% used, no reset info", utilization: 0, resetIn: 0, want: 1.000000},
+		{name: "0% used, no reset info", utilization: 0, resetIn: 0, want: 0.900000},
 	}
 
 	for _, tc := range tests {
@@ -118,9 +132,9 @@ func TestUsageWindowScore_TypicalScenarios(t *testing.T) {
 }
 
 // TestUsageWindowScore_UrgencyOverridesHeadroomNearReset holds utilization
-// fixed at 95% (0.05 headroom) and sweeps the reset distance from minutes to
-// days. While reset is imminent, urgency overwhelms the poor headroom; once
-// reset is far enough out that urgency drops below 0.05, the score falls back
+// fixed at 95% (0.045 headroom score) and sweeps the reset distance from minutes
+// to days. While reset is imminent, urgency overwhelms the poor headroom; once
+// reset is far enough out that urgency drops below 0.045, the score falls back
 // to plain headroom and stays flat.
 func TestUsageWindowScore_UrgencyOverridesHeadroomNearReset(t *testing.T) {
 	t.Parallel()
@@ -135,9 +149,9 @@ func TestUsageWindowScore_UrgencyOverridesHeadroomNearReset(t *testing.T) {
 		{name: "10m", resetIn: 10 * time.Minute, want: 0.857143},
 		{name: "1h", resetIn: time.Hour, want: 0.500000},
 		{name: "12h", resetIn: 12 * time.Hour, want: 0.076923},
-		{name: "1d", resetIn: 24 * time.Hour, want: 0.050000},
-		{name: "3d", resetIn: 3 * 24 * time.Hour, want: 0.050000},
-		{name: "7d", resetIn: 7 * 24 * time.Hour, want: 0.050000},
+		{name: "1d", resetIn: 24 * time.Hour, want: 0.045000},
+		{name: "3d", resetIn: 3 * 24 * time.Hour, want: 0.045000},
+		{name: "7d", resetIn: 7 * 24 * time.Hour, want: 0.045000},
 	}
 
 	for _, tc := range tests {
@@ -171,7 +185,7 @@ func TestUsageWindowScore_GuaranteedFullScoreNeedsBothConditions(t *testing.T) {
 	}{
 		{name: "89% used, resets in 24h", utilization: 89, resetIn: 24 * time.Hour, want: 1.000000},
 		{name: "89% used, resets in 12h", utilization: 89, resetIn: 12 * time.Hour, want: 1.000000},
-		{name: "90% used, resets in 12h", utilization: 90, resetIn: 12 * time.Hour, want: 0.100000},
+		{name: "90% used, resets in 12h", utilization: 90, resetIn: 12 * time.Hour, want: 0.090000},
 		{name: "100% used, resets in 1h", utilization: 100, resetIn: time.Hour, want: 0.500000},
 		{name: "50% used, resets in 24h+1m", utilization: 50, resetIn: 24*time.Hour + time.Minute, want: 0.999306},
 		{name: "70% used, resets in 3d", utilization: 70, resetIn: 3 * 24 * time.Hour, want: 0.333333},
