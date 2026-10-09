@@ -557,15 +557,12 @@ type UsageAwareSelector struct{}
 
 // Pick draws one available auth using Ceph CRUSH's "straw2" algorithm: every
 // candidate gets an independent straw2Draw from its usage-aware score, and the
-// smallest draw wins (see straw2Draw). This selects each candidate with
-// probability proportional to its score instead of deterministically always
-// picking the single highest-scored one, which would otherwise send every
-// request to one credential until its cached score next refreshes. The pool
-// is shuffled immediately before the draw, so a tie (most notably several
-// zero-score candidates, which all draw +Inf) is broken by random position
-// rather than always favoring whichever candidate happens to sort first by
-// ID; any other tie (most commonly several credentials sharing the neutral
-// fallback score) was already split roughly evenly by the draw itself.
+// smallest draw wins (see straw2Draw). The draw weight is 1/(1.01-score),
+// which amplifies differences near the top of the [0,1] range so that a
+// higher-scored candidate wins significantly more often rather than a near
+// coin flip. The pool is shuffled immediately before the draw, so candidates
+// with equal scores are broken by random position rather than always favoring
+// whichever candidate happens to sort first by ID.
 //
 // Candidates are further bucketed into usageScoreTierCount score tiers (see
 // usageScoreTier), and the draw is narrowed to only the single highest
@@ -608,9 +605,10 @@ func (s *UsageAwareSelector) Pick(ctx context.Context, provider, model string, o
 		}
 	}
 
-	// Shuffling before the draw means a tie (most notably several zero-score candidates,
-	// which all draw +Inf per straw2Draw) is broken by random position instead of always
-	// favoring whichever candidate happens to sort first by ID.
+	// Shuffling before the draw means a tie (most notably several candidates with
+	// the same score and therefore the same straw2 weight) is broken by random
+	// position instead of always favoring whichever candidate happens to sort first
+	// by ID.
 	rand.Shuffle(len(pool), func(i, j int) {
 		pool[i], pool[j] = pool[j], pool[i]
 		poolScores[i], poolScores[j] = poolScores[j], poolScores[i]
@@ -665,11 +663,22 @@ func usageScoreTier(score float64) int {
 // proportional to its score, rather than the highest score always winning. A
 // non-positive score draws +Inf so it never outranks a candidate with any real
 // headroom.
+// straw2Draw returns a weighted random draw for score, following Ceph CRUSH's
+// straw2 bucket algorithm: an Exp(1) random variable divided by the candidate's
+// weight. Across a set of candidates, the one with the smallest draw wins with
+// probability proportional to its weight.
+//
+// Weight is 1/(1.01-score), which amplifies differences near the top of the
+// [0,1] range: a score of 1.0 gets weight 100 while 0.99 gets ~50, making the
+// higher-score candidate roughly twice as likely to win rather than a coin flip.
+// A non-positive score produces weight ≤0 and draws +Inf, so it never outranks
+// a candidate with any real headroom.
 func straw2Draw(score float64) float64 {
-	if score <= 0 {
+	weight := 1.0 / (1.01 - score)
+	if weight <= 0 {
 		return math.Inf(1)
 	}
-	return rand.ExpFloat64() / score
+	return rand.ExpFloat64() / weight
 }
 
 func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, blockReason, time.Time) {

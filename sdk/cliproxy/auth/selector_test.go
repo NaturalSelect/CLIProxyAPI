@@ -280,9 +280,9 @@ func TestUsageAwareSelectorPick_ZeroScoreNeverBeatsRealHeadroom(t *testing.T) {
 		{ID: "half", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 50}},
 	}
 
-	// A zero score (no headroom, no imminent reset) draws +Inf (see straw2Draw),
-	// so it must lose to any candidate with a positive score on every draw, not
-	// just on average.
+	// A zero score (no headroom, no imminent reset) lands in tier 0, far below
+	// any candidate with real headroom, so the tier gate excludes it from the
+	// pool entirely.
 	for index := 0; index < 200; index++ {
 		got, errPick := selector.Pick(context.Background(), "claude", "", cliproxyexecutor.Options{}, auths)
 		if errPick != nil {
@@ -303,8 +303,9 @@ func TestUsageAwareSelectorPick_AllZeroScoresSplitEvenly(t *testing.T) {
 		{ID: "a-exhausted", Provider: "claude", RateLimits: map[string]any{"7d_utilization": 100}},
 	}
 
-	// Both candidates draw +Inf, a tie that the pre-draw shuffle breaks by random
-	// position rather than always favoring whichever ID sorts first.
+	// Both candidates have the same zero score and therefore the same straw2
+	// weight, a tie that the pre-draw shuffle breaks by random position rather
+	// than always favoring whichever ID sorts first.
 	counts := make(map[string]int)
 	const trials = 2000
 	for index := 0; index < trials; index++ {
