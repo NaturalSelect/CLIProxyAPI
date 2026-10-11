@@ -191,6 +191,14 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 	} else {
 		auth.Generation++
 	}
+	if existing.Metadata != nil {
+		if persistedHints, hasHints := existing.Metadata["antigravity_capability_hints"]; hasHints {
+			if auth.Metadata == nil {
+				auth.Metadata = make(map[string]any)
+			}
+			auth.Metadata["antigravity_capability_hints"] = persistedHints
+		}
+	}
 	// NOTE: Runtime-only changes made during store I/O are merged below, never overwritten.
 	existingBeforeSave := existing.Clone()
 	if errPersist := m.persistLocked(ctx, auth); errPersist != nil {
@@ -394,6 +402,11 @@ func (m *Manager) persist(ctx context.Context, auth *Auth) error {
 	}
 	pLock.lastEpoch = auth.RegistrationEpoch
 	pLock.lastGeneration = auth.Generation
+	releaseForeground, errWait := m.beginForegroundStoreSave(ctx)
+	if errWait != nil {
+		return errWait
+	}
+	defer releaseForeground()
 	_, err := store.Save(ctx, auth)
 	return err
 }
