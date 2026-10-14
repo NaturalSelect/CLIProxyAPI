@@ -3,7 +3,7 @@ package registry
 import "testing"
 
 func TestModelOverrideHeadersFromEmbeddedModels(t *testing.T) {
-	const wantUA = "codex-tui/0.144.0 (Mac OS 26.5.1; arm64) iTerm.app/3.6.11 (codex-tui; 0.144.0)"
+	const wantUA = "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
 	got := ModelOverrideHeaders("gpt-5.6-luna")
 	if got == nil {
 		t.Fatal("ModelOverrideHeaders(gpt-5.6-luna) = nil, want headers")

@@ -163,6 +163,9 @@
     },
     {
       "id": "claude-opus-5",
+      "native_capabilities": {
+        "web_search": true
+      },
       "object": "model",
       "created": 1784038800,
       "owned_by": "anthropic",
@@ -263,6 +266,102 @@
         "min": 1024,
         "max": 128000,
         "zero_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "claude-opus-5-5",
+      "native_capabilities": {
+        "web_search": true
+      },
+      "object": "model",
+      "created": 1790035200,
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Opus 5.5",
+      "description": "Latest premium model combining maximum intelligence with practical performance",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000,
+      "thinking": {
+        "zero_allowed": true,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "native_capabilities": {
+        "web_search": true
+      },
+      "object": "model",
+      "created": 1790553600,
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Sonnet 5.5",
+      "description": "Anthropic's agentic Sonnet model for coding, tool use, and enterprise workflows",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000,
+      "thinking": {
+        "zero_allowed": true,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "claude-haiku-5-5",
+      "native_capabilities": {
+        "web_search": true
+      },
+      "object": "model",
+      "created": 1790553600,
+      "owned_by": "anthropic",
+      "type": "claude",
+      "display_name": "Claude Haiku 5.5",
+      "description": "For high-volume, latency-sensitive tasks such as classification, extraction, and routing.",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000,
+      "thinking": {
+        "zero_allowed": true,
+        "dynamic_allowed": true,
         "levels": [
           "low",
           "medium",
@@ -429,7 +528,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-2.5-flash",
@@ -462,7 +564,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-2.5-flash-lite",
@@ -495,7 +600,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-pro-preview",
@@ -532,7 +640,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-pro-preview",
@@ -570,7 +681,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-flash-image-preview",
@@ -606,7 +720,10 @@
       "supportedOutputModalities": [
         "text",
         "image"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-flash-preview",
@@ -645,7 +762,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-flash-lite-preview",
@@ -682,7 +802,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-pro-image-preview",
@@ -718,7 +841,10 @@
       "supportedOutputModalities": [
         "text",
         "image"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.5-flash",
@@ -757,7 +883,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.5-flash-lite",
@@ -796,7 +925,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.6-flash",
@@ -835,7 +967,44 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "object": "model",
+      "owned_by": "google",
+      "type": "gemini",
+      "display_name": "Gemini 3.8 Flash",
+      "name": "models/gemini-3.8-flash",
+      "version": "3.8",
+      "description": "Gemini 3.8 Flash",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "min": 128,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image",
+        "audio",
+        "video"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     }
   ],
   "vertex": [
@@ -870,7 +1039,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-2.5-flash",
@@ -903,7 +1075,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-2.5-flash-image",
@@ -935,7 +1110,10 @@
       "supportedOutputModalities": [
         "text",
         "image"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-2.5-flash-lite",
@@ -968,7 +1146,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-pro",
@@ -1005,7 +1186,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-flash",
@@ -1044,7 +1228,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-pro",
@@ -1082,7 +1269,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-pro-preview",
@@ -1120,7 +1310,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-flash-image",
@@ -1156,7 +1349,10 @@
       "supportedOutputModalities": [
         "text",
         "image"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-flash-lite",
@@ -1195,7 +1391,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-pro-image",
@@ -1231,7 +1430,10 @@
       "supportedOutputModalities": [
         "text",
         "image"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "imagen-4.0-generate-001",
@@ -1370,7 +1572,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.5-flash-lite",
@@ -1409,7 +1614,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.6-flash",
@@ -1448,7 +1656,76 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "object": "model",
+      "owned_by": "google",
+      "type": "gemini",
+      "display_name": "Gemini 3.8 Flash",
+      "name": "gemini-3.8-flash",
+      "description": "Gemini 3.8 Flash",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "min": 128,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image",
+        "audio",
+        "video"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
+    },
+    {
+      "id": "gemini-4-argon",
+      "object": "model",
+      "owned_by": "google",
+      "type": "gemini",
+      "display_name": "Gemini 4 Argon",
+      "name": "gemini-4-argon",
+      "description": "Gemini 4 Argon",
+      "context_length": 1048576,
+      "max_completion_tokens": 1048576,
+      "thinking": {
+        "min": 128,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image",
+        "audio",
+        "video"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     }
   ],
   "gemini-cli": [
@@ -1483,7 +1760,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-2.5-flash",
@@ -1516,7 +1796,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-2.5-flash-lite",
@@ -1549,7 +1832,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-pro-preview",
@@ -1586,7 +1872,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-pro-preview",
@@ -1624,7 +1913,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-flash-preview",
@@ -1663,7 +1955,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-flash-lite-preview",
@@ -1702,7 +1997,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     }
   ],
   "aistudio": [
@@ -1737,7 +2035,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-2.5-flash",
@@ -1770,7 +2071,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-2.5-flash-lite",
@@ -1803,7 +2107,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-pro-preview",
@@ -1836,7 +2143,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-pro-preview",
@@ -1869,7 +2179,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-flash-preview",
@@ -1902,7 +2215,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-flash-lite-preview",
@@ -1941,7 +2257,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-pro-latest",
@@ -1974,7 +2293,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-flash-latest",
@@ -2007,7 +2329,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-flash-lite-latest",
@@ -2041,7 +2366,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-2.5-flash-image",
@@ -2068,7 +2396,10 @@
       "supportedOutputModalities": [
         "text",
         "image"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.5-flash",
@@ -2107,7 +2438,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.5-flash-lite",
@@ -2146,7 +2480,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.6-flash",
@@ -2185,20 +2522,57 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "object": "model",
+      "owned_by": "google",
+      "type": "gemini",
+      "display_name": "Gemini 3.8 Flash",
+      "name": "models/gemini-3.8-flash",
+      "version": "3.8",
+      "description": "Gemini 3.8 Flash",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "min": 128,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image",
+        "audio",
+        "video"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     }
   ],
   "codex-free": [
     {
-      "id": "gpt-5.4-mini",
+      "id": "gpt-6-luna",
       "object": "model",
-      "created": 1773705600,
+      "created": 1790035200,
       "owned_by": "openai",
       "type": "openai",
-      "display_name": "GPT 5.4 Mini",
-      "version": "gpt-5.4-mini",
-      "description": "GPT-5.4 mini brings the strengths of GPT-5.4 to a faster, more efficient model designed for high-volume workloads.",
-      "context_length": 400000,
+      "display_name": "GPT 6.0 Luna",
+      "version": "gpt-6.0",
+      "description": "GPT-6 Luna Codex model.",
+      "context_length": 272000,
       "max_completion_tokens": 128000,
       "supported_parameters": [
         "tools"
@@ -2208,7 +2582,8 @@
           "low",
           "medium",
           "high",
-          "xhigh"
+          "xhigh",
+          "max"
         ]
       },
       "supportedInputModalities": [
@@ -2217,7 +2592,11 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-5.5",
@@ -2247,7 +2626,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gpt-5.6-terra",
@@ -2278,7 +2660,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gpt-5.6-luna",
@@ -2305,7 +2690,7 @@
       },
       "config": {
         "override_header": {
-          "user-agent": "codex-tui/0.144.0 (Mac OS 26.5.1; arm64) iTerm.app/3.6.11 (codex-tui; 0.144.0)",
+          "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)",
           "originator": "codex-tui"
         }
       },
@@ -2315,7 +2700,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "codex-auto-review",
@@ -2345,71 +2733,14 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     }
   ],
   "codex-team": [
     {
-      "id": "gpt-5.4",
-      "object": "model",
-      "created": 1772668800,
-      "owned_by": "openai",
-      "type": "openai",
-      "display_name": "GPT 5.4",
-      "version": "gpt-5.4",
-      "description": "Stable version of GPT 5.4",
-      "context_length": 1050000,
-      "max_completion_tokens": 128000,
-      "supported_parameters": [
-        "tools"
-      ],
-      "thinking": {
-        "levels": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ]
-      },
-      "supportedInputModalities": [
-        "text",
-        "image"
-      ],
-      "supportedOutputModalities": [
-        "text"
-      ]
-    },
-    {
-      "id": "gpt-5.4-mini",
-      "object": "model",
-      "created": 1773705600,
-      "owned_by": "openai",
-      "type": "openai",
-      "display_name": "GPT 5.4 Mini",
-      "version": "gpt-5.4-mini",
-      "description": "GPT-5.4 mini brings the strengths of GPT-5.4 to a faster, more efficient model designed for high-volume workloads.",
-      "context_length": 400000,
-      "max_completion_tokens": 128000,
-      "supported_parameters": [
-        "tools"
-      ],
-      "thinking": {
-        "levels": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ]
-      },
-      "supportedInputModalities": [
-        "text",
-        "image"
-      ],
-      "supportedOutputModalities": [
-        "text"
-      ]
-    },
-    {
       "id": "gpt-5.5",
       "object": "model",
       "created": 1776902400,
@@ -2437,7 +2768,150 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
+    },
+    {
+      "id": "gpt-6-astra",
+      "object": "model",
+      "created": 1783616400,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.0 Astra",
+      "version": "gpt-6.0",
+      "description": "GPT-6 Astra is our most intelligent model yet, with state-of-the-art performance in computer use, browsing, software engineering, science, and professional work.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
+    },
+    {
+      "id": "gpt-6-sol",
+      "object": "model",
+      "created": 1790035200,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.0 Sol",
+      "version": "gpt-6.0",
+      "description": "GPT-6 Sol Codex model.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "object": "model",
+      "created": 1790640000,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.1 Sol",
+      "version": "gpt-6.0",
+      "description": "Latest workhorse model for coding and everyday work.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
+    },
+    {
+      "id": "gpt-6-luna",
+      "object": "model",
+      "created": 1790035200,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.0 Luna",
+      "version": "gpt-6.0",
+      "description": "GPT-6 Luna Codex model.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-5.6-sol",
@@ -2468,7 +2942,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gpt-5.6-terra",
@@ -2499,7 +2976,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gpt-5.6-luna",
@@ -2526,7 +3006,7 @@
       },
       "config": {
         "override_header": {
-          "user-agent": "codex-tui/0.144.0 (Mac OS 26.5.1; arm64) iTerm.app/3.6.11 (codex-tui; 0.144.0)",
+          "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)",
           "originator": "codex-tui"
         }
       },
@@ -2536,7 +3016,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "codex-auto-review",
@@ -2566,100 +3049,14 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     }
   ],
   "codex-plus": [
     {
-      "id": "gpt-5.3-codex-spark",
-      "object": "model",
-      "created": 1770912000,
-      "owned_by": "openai",
-      "type": "openai",
-      "display_name": "GPT 5.3 Codex Spark",
-      "version": "gpt-5.3",
-      "description": "Ultra-fast coding model.",
-      "context_length": 128000,
-      "max_completion_tokens": 128000,
-      "supported_parameters": [
-        "tools"
-      ],
-      "thinking": {
-        "levels": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ]
-      },
-      "supportedInputModalities": [
-        "text"
-      ],
-      "supportedOutputModalities": [
-        "text"
-      ]
-    },
-    {
-      "id": "gpt-5.4",
-      "object": "model",
-      "created": 1772668800,
-      "owned_by": "openai",
-      "type": "openai",
-      "display_name": "GPT 5.4",
-      "version": "gpt-5.4",
-      "description": "Stable version of GPT 5.4",
-      "context_length": 1050000,
-      "max_completion_tokens": 128000,
-      "supported_parameters": [
-        "tools"
-      ],
-      "thinking": {
-        "levels": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ]
-      },
-      "supportedInputModalities": [
-        "text",
-        "image"
-      ],
-      "supportedOutputModalities": [
-        "text"
-      ]
-    },
-    {
-      "id": "gpt-5.4-mini",
-      "object": "model",
-      "created": 1773705600,
-      "owned_by": "openai",
-      "type": "openai",
-      "display_name": "GPT 5.4 Mini",
-      "version": "gpt-5.4-mini",
-      "description": "GPT-5.4 mini brings the strengths of GPT-5.4 to a faster, more efficient model designed for high-volume workloads.",
-      "context_length": 400000,
-      "max_completion_tokens": 128000,
-      "supported_parameters": [
-        "tools"
-      ],
-      "thinking": {
-        "levels": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ]
-      },
-      "supportedInputModalities": [
-        "text",
-        "image"
-      ],
-      "supportedOutputModalities": [
-        "text"
-      ]
-    },
-    {
       "id": "gpt-5.5",
       "object": "model",
       "created": 1776902400,
@@ -2687,7 +3084,150 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
+    },
+    {
+      "id": "gpt-6-astra",
+      "object": "model",
+      "created": 1783616400,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.0 Astra",
+      "version": "gpt-6.0",
+      "description": "GPT-6 Astra is our most intelligent model yet, with state-of-the-art performance in computer use, browsing, software engineering, science, and professional work.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
+    },
+    {
+      "id": "gpt-6-sol",
+      "object": "model",
+      "created": 1790035200,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.0 Sol",
+      "version": "gpt-6.0",
+      "description": "GPT-6 Sol Codex model.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "object": "model",
+      "created": 1790640000,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.1 Sol",
+      "version": "gpt-6.0",
+      "description": "Latest workhorse model for coding and everyday work.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
+    },
+    {
+      "id": "gpt-6-luna",
+      "object": "model",
+      "created": 1790035200,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.0 Luna",
+      "version": "gpt-6.0",
+      "description": "GPT-6 Luna Codex model.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-5.6-sol",
@@ -2718,7 +3258,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gpt-5.6-terra",
@@ -2749,7 +3292,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gpt-5.6-luna",
@@ -2776,7 +3322,7 @@
       },
       "config": {
         "override_header": {
-          "user-agent": "codex-tui/0.144.0 (Mac OS 26.5.1; arm64) iTerm.app/3.6.11 (codex-tui; 0.144.0)",
+          "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)",
           "originator": "codex-tui"
         }
       },
@@ -2786,7 +3332,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "codex-auto-review",
@@ -2816,100 +3365,14 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     }
   ],
   "codex-pro": [
     {
-      "id": "gpt-5.3-codex-spark",
-      "object": "model",
-      "created": 1770912000,
-      "owned_by": "openai",
-      "type": "openai",
-      "display_name": "GPT 5.3 Codex Spark",
-      "version": "gpt-5.3",
-      "description": "Ultra-fast coding model.",
-      "context_length": 128000,
-      "max_completion_tokens": 128000,
-      "supported_parameters": [
-        "tools"
-      ],
-      "thinking": {
-        "levels": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ]
-      },
-      "supportedInputModalities": [
-        "text"
-      ],
-      "supportedOutputModalities": [
-        "text"
-      ]
-    },
-    {
-      "id": "gpt-5.4",
-      "object": "model",
-      "created": 1772668800,
-      "owned_by": "openai",
-      "type": "openai",
-      "display_name": "GPT 5.4",
-      "version": "gpt-5.4",
-      "description": "Stable version of GPT 5.4",
-      "context_length": 1050000,
-      "max_completion_tokens": 128000,
-      "supported_parameters": [
-        "tools"
-      ],
-      "thinking": {
-        "levels": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ]
-      },
-      "supportedInputModalities": [
-        "text",
-        "image"
-      ],
-      "supportedOutputModalities": [
-        "text"
-      ]
-    },
-    {
-      "id": "gpt-5.4-mini",
-      "object": "model",
-      "created": 1773705600,
-      "owned_by": "openai",
-      "type": "openai",
-      "display_name": "GPT 5.4 Mini",
-      "version": "gpt-5.4-mini",
-      "description": "GPT-5.4 mini brings the strengths of GPT-5.4 to a faster, more efficient model designed for high-volume workloads.",
-      "context_length": 400000,
-      "max_completion_tokens": 128000,
-      "supported_parameters": [
-        "tools"
-      ],
-      "thinking": {
-        "levels": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ]
-      },
-      "supportedInputModalities": [
-        "text",
-        "image"
-      ],
-      "supportedOutputModalities": [
-        "text"
-      ]
-    },
-    {
       "id": "gpt-5.5",
       "object": "model",
       "created": 1776902400,
@@ -2937,7 +3400,150 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
+    },
+    {
+      "id": "gpt-6-astra",
+      "object": "model",
+      "created": 1783616400,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.0 Astra",
+      "version": "gpt-6.0",
+      "description": "GPT-6 Astra is our most intelligent model yet, with state-of-the-art performance in computer use, browsing, software engineering, science, and professional work.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
+    },
+    {
+      "id": "gpt-6-sol",
+      "object": "model",
+      "created": 1790035200,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.0 Sol",
+      "version": "gpt-6.0",
+      "description": "GPT-6 Sol Codex model.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "object": "model",
+      "created": 1790640000,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.1 Sol",
+      "version": "gpt-6.0",
+      "description": "Latest workhorse model for coding and everyday work.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
+    },
+    {
+      "id": "gpt-6-luna",
+      "object": "model",
+      "created": 1790035200,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 6.0 Luna",
+      "version": "gpt-6.0",
+      "description": "GPT-6 Luna Codex model.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      },
+      "support_configuration_update": true
     },
     {
       "id": "gpt-5.6-sol",
@@ -2968,7 +3574,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gpt-5.6-terra",
@@ -2999,7 +3608,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gpt-5.6-luna",
@@ -3026,7 +3638,7 @@
       },
       "config": {
         "override_header": {
-          "user-agent": "codex-tui/0.144.0 (Mac OS 26.5.1; arm64) iTerm.app/3.6.11 (codex-tui; 0.144.0)",
+          "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)",
           "originator": "codex-tui"
         }
       },
@@ -3036,7 +3648,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "codex-auto-review",
@@ -3066,7 +3681,10 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     }
   ],
   "kimi": [
@@ -3216,6 +3834,60 @@
       ]
     },
     {
+      "id": "kimi-k2.8",
+      "object": "model",
+      "created": 1789115500,
+      "owned_by": "moonshot",
+      "type": "kimi",
+      "display_name": "Kimi K2.8 Preview",
+      "description": "Kimi K2.8 Preview - Lightweight coding and agent model with near-K3 performance and 1M context window",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "zero_allowed": true,
+        "levels": [
+          "low",
+          "high",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "kimi-k2.8-code",
+      "object": "model",
+      "created": 1789115500,
+      "owned_by": "moonshot",
+      "type": "kimi",
+      "display_name": "Kimi K2.8 Code Preview",
+      "description": "Kimi K2.8 Code Preview - Lightweight coding and agent model with near-K3 performance and 1M context window",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "zero_allowed": true,
+        "levels": [
+          "low",
+          "high",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
       "id": "kimi-k3",
       "object": "model",
       "created": 1784073600,
@@ -3226,7 +3898,7 @@
       "context_length": 1048576,
       "max_completion_tokens": 65536,
       "thinking": {
-        "zero_allowed": false,
+        "zero_allowed": true,
         "levels": [
           "low",
           "high",
@@ -3253,7 +3925,7 @@
       "context_length": 262144,
       "max_completion_tokens": 65536,
       "thinking": {
-        "zero_allowed": false,
+        "zero_allowed": true,
         "levels": [
           "low",
           "high",
@@ -3319,52 +3991,69 @@
       ]
     },
     {
-      "id": "gemini-3.6-flash-high",
+      "id": "claude-opus-5-5-high",
       "object": "model",
       "owned_by": "antigravity",
       "type": "antigravity",
-      "display_name": "Gemini 3.6 Flash",
-      "name": "gemini-3.6-flash-high",
-      "description": "Gemini 3.6 Flash (High)",
-      "context_length": 1048576,
-      "max_completion_tokens": 65536,
+      "display_name": "Claude Opus 5.5 (High)",
+      "name": "claude-opus-5-5-high",
+      "description": "Claude Opus 5.5 (High)",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000,
       "thinking": {
-        "min": 1,
-        "max": 65535,
-        "dynamic_allowed": true,
-        "levels": [
-          "minimal",
-          "low",
-          "medium",
-          "high"
-        ]
+        "min": 1024,
+        "max": 64000,
+        "zero_allowed": true,
+        "dynamic_allowed": true
       },
       "supportedInputModalities": [
         "text",
-        "image",
-        "audio",
-        "video"
+        "image"
       ],
       "supportedOutputModalities": [
         "text"
       ]
     },
     {
-      "id": "gemini-3.7-flash-high",
+      "id": "claude-sonnet-5-5-high",
       "object": "model",
       "owned_by": "antigravity",
       "type": "antigravity",
-      "display_name": "Gemini 3.7 Flash",
-      "name": "gemini-3.7-flash-high",
-      "description": "Gemini 3.7 Flash (High)",
+      "display_name": "Claude Sonnet 5.5 (High)",
+      "name": "claude-sonnet-5-5-high",
+      "description": "Claude Sonnet 5.5 (High)",
+      "context_length": 1000000,
+      "max_completion_tokens": 128000,
+      "thinking": {
+        "min": 1024,
+        "max": 64000,
+        "zero_allowed": true,
+        "dynamic_allowed": true
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "gemini-4-argon-high",
+      "object": "model",
+      "owned_by": "antigravity",
+      "type": "antigravity",
+      "supports_web_search": true,
+      "display_name": "Gemini 4 Argon",
+      "name": "gemini-4-argon-high",
+      "description": "Gemini 4 Argon (High)",
       "context_length": 1048576,
-      "max_completion_tokens": 65536,
+      "max_completion_tokens": 1048576,
       "thinking": {
         "min": 1,
         "max": 65535,
         "dynamic_allowed": true,
         "levels": [
-          "minimal",
           "low",
           "medium",
           "high"
@@ -3378,13 +4067,51 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
+    },
+    {
+      "id": "gemini-3.8-flash-high",
+      "object": "model",
+      "owned_by": "antigravity",
+      "type": "antigravity",
+      "supports_web_search": true,
+      "display_name": "Gemini 3.8 Flash",
+      "name": "gemini-3.8-flash-high",
+      "description": "Gemini 3.8 Flash (High)",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "min": 1,
+        "max": 65535,
+        "dynamic_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image",
+        "audio",
+        "video"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3-flash",
       "object": "model",
       "owned_by": "antigravity",
       "type": "antigravity",
+      "supports_web_search": true,
       "display_name": "Gemini 3 Flash",
       "name": "gemini-3-flash",
       "description": "Gemini 3 Flash",
@@ -3409,44 +4136,17 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
-    },
-    {
-      "id": "gemini-3-flash-agent",
-      "object": "model",
-      "owned_by": "antigravity",
-      "type": "antigravity",
-      "display_name": "Gemini 3.5 Flash (High)",
-      "name": "gemini-3-flash-agent",
-      "description": "Gemini 3.5 Flash (High)",
-      "context_length": 1048576,
-      "max_completion_tokens": 65536,
-      "thinking": {
-        "min": 128,
-        "max": 32768,
-        "dynamic_allowed": true,
-        "levels": [
-          "minimal",
-          "low",
-          "medium",
-          "high"
-        ]
-      },
-      "supportedInputModalities": [
-        "text",
-        "image",
-        "audio",
-        "video"
       ],
-      "supportedOutputModalities": [
-        "text"
-      ]
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gemini-3.1-flash-image",
       "object": "model",
       "owned_by": "antigravity",
       "type": "antigravity",
+      "supports_web_search": true,
       "display_name": "Gemini 3.1 Flash Image",
       "name": "gemini-3.1-flash-image",
       "description": "Gemini 3.1 Flash Image",
@@ -3466,67 +4166,10 @@
       "supportedOutputModalities": [
         "text",
         "image"
-      ]
-    },
-    {
-      "id": "gemini-pro-agent",
-      "object": "model",
-      "owned_by": "antigravity",
-      "type": "antigravity",
-      "display_name": "Gemini 3.1 Pro (High)",
-      "name": "gemini-pro-agent",
-      "description": "Gemini 3.1 Pro (High)",
-      "context_length": 1048576,
-      "max_completion_tokens": 65535,
-      "thinking": {
-        "min": 1,
-        "max": 65535,
-        "dynamic_allowed": true,
-        "levels": [
-          "low",
-          "medium",
-          "high"
-        ]
-      },
-      "supportedInputModalities": [
-        "text",
-        "image",
-        "audio",
-        "video"
       ],
-      "supportedOutputModalities": [
-        "text"
-      ]
-    },
-    {
-      "id": "gemini-3.1-pro-low",
-      "object": "model",
-      "owned_by": "antigravity",
-      "type": "antigravity",
-      "display_name": "Gemini 3.1 Pro (Low)",
-      "name": "gemini-3.1-pro-low",
-      "description": "Gemini 3.1 Pro (Low)",
-      "context_length": 1048576,
-      "max_completion_tokens": 65535,
-      "thinking": {
-        "min": 1,
-        "max": 65535,
-        "dynamic_allowed": true,
-        "levels": [
-          "low",
-          "medium",
-          "high"
-        ]
-      },
-      "supportedInputModalities": [
-        "text",
-        "image",
-        "audio",
-        "video"
-      ],
-      "supportedOutputModalities": [
-        "text"
-      ]
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
       "id": "gpt-oss-120b-medium",
@@ -3550,6 +4193,7 @@
       "object": "model",
       "owned_by": "antigravity",
       "type": "antigravity",
+      "supports_web_search": true,
       "display_name": "Gemini 3.1 Flash Lite",
       "name": "gemini-3.1-flash-lite",
       "description": "Gemini 3.1 Flash Lite",
@@ -3575,16 +4219,20 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
+      ],
+      "native_capabilities": {
+        "web_search": true
+      }
     },
     {
-      "id": "gemini-3.5-flash-low",
+      "id": "gemini-3.5-flash-lite",
       "object": "model",
       "owned_by": "antigravity",
       "type": "antigravity",
-      "display_name": "Gemini 3.5 Flash (Medium)",
-      "name": "gemini-3.5-flash-low",
-      "description": "Gemini 3.5 Flash (Medium)",
+      "supports_web_search": true,
+      "display_name": "Gemini 3.5 Flash Lite",
+      "name": "gemini-3.5-flash-lite",
+      "description": "Gemini 3.5 Flash Lite",
       "context_length": 1048576,
       "max_completion_tokens": 65535,
       "thinking": {
@@ -3592,6 +4240,7 @@
         "max": 65535,
         "dynamic_allowed": true,
         "levels": [
+          "minimal",
           "low",
           "medium",
           "high"
@@ -3605,42 +4254,80 @@
       ],
       "supportedOutputModalities": [
         "text"
-      ]
-    },
-    {
-      "id": "gemini-3.5-flash-extra-low",
-      "object": "model",
-      "owned_by": "antigravity",
-      "type": "antigravity",
-      "display_name": "Gemini 3.5 Flash (Low)",
-      "name": "gemini-3.5-flash-extra-low",
-      "description": "Gemini 3.5 Flash (Low)",
-      "context_length": 1048576,
-      "max_completion_tokens": 65535,
-      "thinking": {
-        "min": 1,
-        "max": 65535,
-        "dynamic_allowed": true,
-        "levels": [
-          "low",
-          "medium",
-          "high"
-        ]
-      },
-      "supportedInputModalities": [
-        "text",
-        "image",
-        "audio",
-        "video"
       ],
-      "supportedOutputModalities": [
-        "text"
-      ]
+      "native_capabilities": {
+        "web_search": true
+      }
     }
   ],
   "xai": [
     {
+      "id": "grok-4.7",
+      "native_capabilities": {
+        "web_search": true
+      },
+      "object": "model",
+      "created": 1789948800,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok 4.7",
+      "name": "grok-4.7",
+      "description": "SpaceXAI's frontier model for coding, agentic tasks, and knowledge work.",
+      "context_length": 500000,
+      "max_completion_tokens": 500000,
+      "thinking": {
+        "zero_allowed": false,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "grok-4.7-build-fast",
+      "native_capabilities": {
+        "web_search": true
+      },
+      "object": "model",
+      "created": 1789948800,
+      "owned_by": "xai",
+      "type": "xai",
+      "display_name": "Grok 4.7 Fast",
+      "name": "grok-4.7-build-fast",
+      "description": "Grok 4.7 Fast as served by the Grok Build chat-proxy. Same model as grok-4.7 on the faster tier.",
+      "context_length": 500000,
+      "max_completion_tokens": 500000,
+      "thinking": {
+        "zero_allowed": false,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
       "id": "grok-4.6",
+      "native_capabilities": {
+        "web_search": true
+      },
       "object": "model",
       "created": 1785974400,
       "owned_by": "xai",
@@ -3866,6 +4553,210 @@
       "description": "xAI Composer 2.5 Fast model for the Responses API.",
       "context_length": 200000,
       "max_completion_tokens": 32768
+    }
+  ],
+  "meta": [
+    {
+      "id": "muse-wonder-1.0",
+      "object": "model",
+      "created": 1791763200,
+      "owned_by": "meta",
+      "type": "meta",
+      "display_name": "Muse Wonder 1.0",
+      "name": "muse-wonder-1.0",
+      "description": "Meta's most capable model, built for complex software engineering and long-horizon agentic work.",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "levels": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image",
+        "video",
+        "audio"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "muse-wonder-1.0-contributor",
+      "object": "model",
+      "created": 1791763200,
+      "owned_by": "meta",
+      "type": "meta",
+      "display_name": "Muse Wonder 1.0 Contributor",
+      "name": "muse-wonder-1.0-contributor",
+      "description": "Meta's most capable model, built for complex software engineering and long-horizon agentic work.",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "levels": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image",
+        "video",
+        "audio"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "muse-spark-1.3",
+      "object": "model",
+      "created": 1788307200,
+      "owned_by": "meta",
+      "type": "meta",
+      "display_name": "Muse Spark 1.3",
+      "name": "muse-spark-1.3",
+      "description": "Meta Muse Spark 1.3 flagship reasoning and agentic coding model",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "levels": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "muse-spark-1.3-contributor",
+      "object": "model",
+      "created": 1788307200,
+      "owned_by": "meta",
+      "type": "meta",
+      "display_name": "Muse Spark 1.3 Contributor",
+      "name": "muse-spark-1.3-contributor",
+      "description": "Meta Muse Spark 1.3 contributor model",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "levels": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "muse-spark-1.2",
+      "object": "model",
+      "created": 1785888000,
+      "owned_by": "meta",
+      "type": "meta",
+      "display_name": "Muse Spark 1.2",
+      "name": "muse-spark-1.2",
+      "description": "Meta Muse Spark 1.2 reasoning and agentic coding model",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "levels": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "muse-spark-1.2-contributor",
+      "object": "model",
+      "created": 1785888000,
+      "owned_by": "meta",
+      "type": "meta",
+      "display_name": "Muse Spark 1.2 Contributor",
+      "name": "muse-spark-1.2-contributor",
+      "description": "Meta Muse Spark 1.2 contributor model",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "levels": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "supportedInputModalities": [
+        "text",
+        "image"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "muse-spark-1.1",
+      "object": "model",
+      "created": 1783555200,
+      "owned_by": "meta",
+      "type": "meta",
+      "display_name": "Muse Spark 1.1",
+      "name": "muse-spark-1.1",
+      "description": "Meta Muse Spark 1.1 reasoning model",
+      "context_length": 1048576,
+      "max_completion_tokens": 65536,
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "supportedInputModalities": [
+        "text"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
     }
   ]
 }
