@@ -84,8 +84,6 @@ var claudeCodeTrailingBetas = []string{
 	claudeStructuredOutputsBeta,
 }
 
-
-
 // claudeCodeCLIBetas assembles the Anthropic-Beta baseline the way Claude Code
 // 2.1.280 does: the list is per-request, not a fixed string. requested holds the
 // betas the caller asked for, which decide the capability flags below.
