@@ -381,17 +381,19 @@ func buildUsageProbeRequest(a *Auth) (cliproxyexecutor.Request, cliproxyexecutor
 	}
 }
 
-// pickProbeModel returns a model whose ID contains preferred using a
-// case-insensitive substring match. It returns an empty string when no safe
-// probe model is registered instead of falling back to an arbitrary model.
+// pickProbeModel returns the lexicographically greatest model ID that contains
+// preferred using a case-insensitive substring match, which favors the newest
+// version when several match. It returns an empty string when no safe probe
+// model is registered instead of falling back to an arbitrary model.
 func pickProbeModel(models []*registry.ModelInfo, preferred string) string {
+	newest := ""
 	for _, m := range models {
 		if m == nil || m.ID == "" {
 			continue
 		}
-		if strings.Contains(strings.ToLower(m.ID), preferred) {
-			return m.ID
+		if strings.Contains(strings.ToLower(m.ID), preferred) && m.ID > newest {
+			newest = m.ID
 		}
 	}
-	return ""
+	return newest
 }

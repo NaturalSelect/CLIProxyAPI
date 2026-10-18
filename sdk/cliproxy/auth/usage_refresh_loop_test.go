@@ -166,6 +166,18 @@ func TestPickProbeModelReturnsEmptyWithoutPreferredModel(t *testing.T) {
 			expected:  "Claude-HAIKU-4-5",
 		},
 		{
+			name: "picks lexicographically greatest among multiple matches",
+			models: []*registry.ModelInfo{
+				{ID: "claude-haiku-4-5-20251001"},
+				{ID: "claude-3-5-haiku-20241022"},
+				{ID: "claude-haiku-4-5"},
+				{ID: "claude-haiku-5-5"},
+				{ID: "claude-sonnet-5"},
+			},
+			preferred: "haiku",
+			expected:  "claude-haiku-5-5",
+		},
+		{
 			name:      "rejects valid models without preferred substring",
 			models:    []*registry.ModelInfo{{ID: "deepseek-v4-flash"}, {ID: "MiniMax-M3"}},
 			preferred: "haiku",
