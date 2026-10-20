@@ -386,11 +386,17 @@ func buildBaseURL(auth *cliproxyauth.Auth) string {
 	return antigravityBaseURLDaily
 }
 
-func antigravityLoadCodeAssistBaseURL(auth *cliproxyauth.Auth) string {
+// resolveAntigravityRequestBaseURL selects one request endpoint without cross-tier fallback.
+// Consumer credentials default to daily; enterprise/GCP credentials can set base_url explicitly.
+func resolveAntigravityRequestBaseURL(auth *cliproxyauth.Auth) string {
 	if base := resolveCustomAntigravityBaseURL(auth); base != "" {
 		return base
 	}
-	return antigravityBaseURLProd
+	return antigravityBaseURLDaily
+}
+
+func antigravityLoadCodeAssistBaseURL(auth *cliproxyauth.Auth) string {
+	return resolveAntigravityRequestBaseURL(auth)
 }
 
 func resolveHost(base string) string {
