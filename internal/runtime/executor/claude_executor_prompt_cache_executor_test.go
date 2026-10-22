@@ -229,6 +229,77 @@ func TestClaudeExecutorAdaptiveStripsAndReplansUserCacheControl(t *testing.T) {
 	}
 }
 
+func TestClaudeExecutorAdaptiveHonorsDownstreamOneHourTTL(t *testing.T) {
+	executor := NewClaudeExecutor(&config.Config{
+		ClaudePromptCache: config.ClaudePromptCacheConfig{Mode: config.ClaudePromptCacheModeAdaptive},
+	})
+	auth := &cliproxyauth.Auth{ID: "one-hour-auth"}
+
+	payload := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"tools":[{"name":"Read","input_schema":{"type":"object"}}],
+		"system":[{"type":"text","text":"system","cache_control":{"type":"ephemeral","ttl":"1h"}}],
+		"messages":[
+			{"role":"user","content":[{"type":"text","text":"first"}]},
+			{"role":"assistant","content":[{"type":"text","text":"answer"}]},
+			{"role":"user","content":[{"type":"text","text":"second"}]}
+		]
+	}`)
+
+	plannedBody, plan := executor.planAdaptiveClaudePromptCache(
+		context.Background(),
+		auth,
+		"key-one-hour",
+		"https://api.anthropic.com",
+		"claude-sonnet-4-5",
+		bytes.Clone(payload),
+	)
+
+	if plan == nil {
+		t.Fatal("adaptive planner must produce a plan")
+	}
+	for _, path := range []string{
+		"cache_control.ttl",
+		"tools.0.cache_control.ttl",
+		"system.0.cache_control.ttl",
+		"messages.0.content.0.cache_control.ttl",
+	} {
+		if got := gjson.GetBytes(plannedBody, path).String(); got != "1h" {
+			t.Fatalf("%s = %q, want 1h: %s", path, got, plannedBody)
+		}
+	}
+}
+
+func TestClaudeExecutorAdaptiveKeepsDefaultTTLForFiveMinuteClient(t *testing.T) {
+	executor := NewClaudeExecutor(&config.Config{
+		ClaudePromptCache: config.ClaudePromptCacheConfig{Mode: config.ClaudePromptCacheModeAdaptive},
+	})
+	auth := &cliproxyauth.Auth{ID: "five-minute-auth"}
+
+	payload := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"tools":[{"name":"Read","input_schema":{"type":"object"}}],
+		"system":[{"type":"text","text":"system","cache_control":{"type":"ephemeral","ttl":"5m"}}],
+		"messages":[{"role":"user","content":[{"type":"text","text":"first"}]}]
+	}`)
+
+	plannedBody, _ := executor.planAdaptiveClaudePromptCache(
+		context.Background(),
+		auth,
+		"key-five-minute",
+		"https://api.anthropic.com",
+		"claude-sonnet-4-5",
+		bytes.Clone(payload),
+	)
+
+	if gjson.GetBytes(plannedBody, "system.0.cache_control.ttl").Exists() {
+		t.Fatalf("explicit 5m client must not be upgraded to 1h: %s", plannedBody)
+	}
+	if gjson.GetBytes(plannedBody, "cache_control.ttl").Exists() {
+		t.Fatalf("top-level cache_control must stay on the default TTL: %s", plannedBody)
+	}
+}
+
 func TestClaudeExecutorAdaptiveReplansOverLimitUserCacheControl(t *testing.T) {
 	executor := NewClaudeExecutor(&config.Config{
 		ClaudePromptCache: config.ClaudePromptCacheConfig{Mode: config.ClaudePromptCacheModeAdaptive},

@@ -30,6 +30,7 @@ const (
 	claudePromptCacheDefaultSafetyMargin   = 30 * time.Second
 	claudePromptCacheExtendedSafetyMargin  = 2 * time.Minute
 	claudePromptCacheAutomaticControlJSON  = `{"type":"ephemeral"}`
+	claudePromptCacheExtendedControlJSON   = `{"type":"ephemeral","ttl":"1h"}`
 	claudePromptCacheFingerprintDomain     = "claude-prompt-cache-tool-v1"
 	claudePromptCachePrefixFingerprintV1   = "claude-prompt-cache-prefix-v1"
 )
@@ -38,6 +39,7 @@ const (
 type ClaudePromptCacheCapabilities struct {
 	AutomaticHistory bool
 	ExplicitHistory  bool
+	ExtendedTTL      bool
 }
 
 // ClaudePromptCachePlanSummary contains non-sensitive planner diagnostics.
@@ -300,6 +302,7 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 	runtime.initialize()
 
 	now := runtime.now()
+	controlJSON := claudePromptCacheControlJSON(capabilities.ExtendedTTL)
 	toolFingerprints, toolPrefixKeys := fingerprintClaudeTools(payload)
 	existingLocations, invalidPaths := collectClaudeCacheBreakpoints(payload)
 
@@ -340,7 +343,7 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 	if remainingSlots > 0 && len(toolFingerprints) > 0 {
 		path := fmt.Sprintf("tools.%d.cache_control", len(toolFingerprints)-1)
 		if _, exists := selectedPaths[path]; !exists {
-			if nextPayload, errSet := sjson.SetRawBytes(updatedPayload, path, []byte(claudePromptCacheAutomaticControlJSON)); errSet == nil {
+			if nextPayload, errSet := sjson.SetRawBytes(updatedPayload, path, controlJSON); errSet == nil {
 				updatedPayload = nextPayload
 				selectedPaths[path] = struct{}{}
 				addedPaths[path] = struct{}{}
@@ -353,7 +356,7 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 	if remainingSlots > 0 {
 		var added bool
 		var addedPath string
-		updatedPayload, added, addedPath = addClaudeSystemTailBreakpoint(updatedPayload, selectedPaths)
+		updatedPayload, added, addedPath = addClaudeSystemTailBreakpoint(updatedPayload, selectedPaths, controlJSON)
 		if added {
 			addedPaths[addedPath] = struct{}{}
 			remainingSlots--
@@ -364,7 +367,7 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 	if remainingSlots > 0 && capabilities.ExplicitHistory {
 		var added bool
 		var addedPath string
-		updatedPayload, added, addedPath = addClaudeHistoryBreakpoint(updatedPayload, selectedPaths)
+		updatedPayload, added, addedPath = addClaudeHistoryBreakpoint(updatedPayload, selectedPaths, controlJSON)
 		if added {
 			addedPaths[addedPath] = struct{}{}
 			remainingSlots--
@@ -380,7 +383,7 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 			if cacheControl.Exists() {
 				updatedPayload, _ = sjson.DeleteBytes(updatedPayload, "cache_control")
 			}
-			if nextPayload, errSet := sjson.SetRawBytes(updatedPayload, "cache_control", []byte(claudePromptCacheAutomaticControlJSON)); errSet == nil {
+			if nextPayload, errSet := sjson.SetRawBytes(updatedPayload, "cache_control", controlJSON); errSet == nil {
 				updatedPayload = nextPayload
 				automaticHistory = true
 				automaticHistoryAdded = true
@@ -953,6 +956,30 @@ func (runtime *ClaudePromptCacheRuntime) trimDiagnosticsLocked() {
 	}
 }
 
+func claudePromptCacheControlJSON(extendedTTL bool) []byte {
+	if extendedTTL {
+		return []byte(claudePromptCacheExtendedControlJSON)
+	}
+	return []byte(claudePromptCacheAutomaticControlJSON)
+}
+
+func HasClaudeExtendedCacheTTL(payload []byte) bool {
+	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+		return false
+	}
+	topLevel := gjson.GetBytes(payload, "cache_control")
+	if isValidClaudeCacheControl(topLevel) && claudeCacheControlTTL(topLevel.Raw) == claudePromptCacheExtendedTTL {
+		return true
+	}
+	locations, _ := collectClaudeCacheBreakpoints(payload)
+	for _, location := range locations {
+		if claudeCacheControlTTL(location.cacheControl) == claudePromptCacheExtendedTTL {
+			return true
+		}
+	}
+	return false
+}
+
 // StripAllClaudeCacheControls removes every client/top-level/in-body cache_control
 // marker so adaptive planning can re-apply CPA's breakpoint strategy from scratch.
 func StripAllClaudeCacheControls(payload []byte) []byte {
@@ -1108,6 +1135,7 @@ func selectExistingClaudeBreakpoints(locations []claudeBreakpointLocation, maxBr
 func addClaudeSystemTailBreakpoint(
 	payload []byte,
 	selectedPaths map[string]struct{},
+	controlJSON []byte,
 ) ([]byte, bool, string) {
 	system := gjson.GetBytes(payload, "system")
 	if !system.Exists() {
@@ -1118,8 +1146,9 @@ func addClaudeSystemTailBreakpoint(
 		if strings.TrimSpace(text) == "" {
 			return payload, false, ""
 		}
-		block := []byte(`{"type":"text","text":"","cache_control":{"type":"ephemeral"}}`)
+		block := []byte(`{"type":"text","text":""}`)
 		block, _ = sjson.SetBytes(block, "text", text)
+		block, _ = sjson.SetRawBytes(block, "cache_control", controlJSON)
 		updated, errSet := sjson.SetRawBytes(payload, "system", []byte("["+string(block)+"]"))
 		if errSet != nil {
 			return payload, false, ""
@@ -1139,7 +1168,7 @@ func addClaudeSystemTailBreakpoint(
 	if _, exists := selectedPaths[path]; exists || gjson.GetBytes(payload, path).Exists() {
 		return payload, false, ""
 	}
-	updated, errSet := sjson.SetRawBytes(payload, path, []byte(claudePromptCacheAutomaticControlJSON))
+	updated, errSet := sjson.SetRawBytes(payload, path, controlJSON)
 	if errSet != nil {
 		return payload, false, ""
 	}
@@ -1150,6 +1179,7 @@ func addClaudeSystemTailBreakpoint(
 func addClaudeHistoryBreakpoint(
 	payload []byte,
 	selectedPaths map[string]struct{},
+	controlJSON []byte,
 ) ([]byte, bool, string) {
 	messages := gjson.GetBytes(payload, "messages")
 	if !messages.IsArray() {
@@ -1169,8 +1199,9 @@ func addClaudeHistoryBreakpoint(
 	contentPath := fmt.Sprintf("messages.%d.content", messageIndex)
 	content := gjson.GetBytes(payload, contentPath)
 	if content.Type == gjson.String {
-		block := []byte(`{"type":"text","text":"","cache_control":{"type":"ephemeral"}}`)
+		block := []byte(`{"type":"text","text":""}`)
 		block, _ = sjson.SetBytes(block, "text", content.String())
+		block, _ = sjson.SetRawBytes(block, "cache_control", controlJSON)
 		updated, errSet := sjson.SetRawBytes(payload, contentPath, []byte("["+string(block)+"]"))
 		if errSet != nil {
 			return payload, false, ""
@@ -1190,7 +1221,7 @@ func addClaudeHistoryBreakpoint(
 	if _, exists := selectedPaths[path]; exists || gjson.GetBytes(payload, path).Exists() {
 		return payload, false, ""
 	}
-	updated, errSet := sjson.SetRawBytes(payload, path, []byte(claudePromptCacheAutomaticControlJSON))
+	updated, errSet := sjson.SetRawBytes(payload, path, controlJSON)
 	if errSet != nil {
 		return payload, false, ""
 	}

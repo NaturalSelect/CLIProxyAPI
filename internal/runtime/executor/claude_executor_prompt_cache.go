@@ -98,6 +98,8 @@ func (e *ClaudeExecutor) planAdaptiveClaudePromptCache(
 	// Official Anthropic gets tools-tail + system-tail + second-to-last user +
 	// top-level automatic history so conversation forks can still read the
 	// stable history prefix.
+	// NOTE: Detect the client's one-hour TTL before the strip discards it.
+	extendedTTL := helps.HasClaudeExtendedCacheTTL(body)
 	body = helps.StripAllClaudeCacheControls(body)
 	officialAnthropic := isOfficialAnthropicBaseURL(baseURL)
 	scopeKey := claudePromptCacheScopeKey(auth, apiKey, baseURL, baseModel)
@@ -108,6 +110,7 @@ func (e *ClaudeExecutor) planAdaptiveClaudePromptCache(
 		helps.ClaudePromptCacheCapabilities{
 			AutomaticHistory: officialAnthropic,
 			ExplicitHistory:  true,
+			ExtendedTTL:      extendedTTL,
 		},
 	)
 	if plan != nil {
@@ -115,6 +118,7 @@ func (e *ClaudeExecutor) planAdaptiveClaudePromptCache(
 			"component":            "claude_prompt_cache",
 			"mode":                 config.ClaudePromptCacheModeAdaptive,
 			"official_anthropic":   officialAnthropic,
+			"extended_ttl":         extendedTTL,
 			"existing_breakpoints": plan.Summary.ExistingBreakpoints,
 			"added_breakpoints":    plan.Summary.AddedBreakpoints,
 			"removed_breakpoints":  plan.Summary.RemovedBreakpoints,

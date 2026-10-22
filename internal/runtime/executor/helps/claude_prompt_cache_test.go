@@ -678,6 +678,83 @@ func TestStripAllClaudeCacheControlsRemovesTopLevelAndInBody(t *testing.T) {
 	}
 }
 
+func TestPlanClaudePromptCacheWritesOneHourTTLWhenExtendedTTLRequested(t *testing.T) {
+	runtime := NewClaudePromptCacheRuntime()
+	payload := buildClaudePromptCacheTestPayload([]string{"Read", "Bash"}, false)
+
+	plannedPayload, plan := runtime.PlanClaudePromptCache(
+		"extended-ttl-scope",
+		payload,
+		ClaudePromptCacheCapabilities{AutomaticHistory: true, ExplicitHistory: true, ExtendedTTL: true},
+	)
+
+	if plan == nil {
+		t.Fatal("PlanClaudePromptCache() plan = nil")
+	}
+	for _, path := range []string{
+		"cache_control.ttl",
+		"tools.1.cache_control.ttl",
+		"system.0.cache_control.ttl",
+		"messages.0.content.0.cache_control.ttl",
+	} {
+		if got := gjson.GetBytes(plannedPayload, path).String(); got != "1h" {
+			t.Fatalf("%s = %q, want 1h: %s", path, got, plannedPayload)
+		}
+	}
+	for _, prefix := range plan.Prefixes {
+		if prefix.TTL != claudePromptCacheExtendedTTL {
+			t.Fatalf("prefix %s TTL = %s, want %s", prefix.Kind, prefix.TTL, claudePromptCacheExtendedTTL)
+		}
+	}
+}
+
+func TestPlanClaudePromptCacheKeepsDefaultTTLWithoutExtendedTTL(t *testing.T) {
+	runtime := NewClaudePromptCacheRuntime()
+	payload := buildClaudePromptCacheTestPayload([]string{"Read", "Bash"}, false)
+
+	plannedPayload, _ := runtime.PlanClaudePromptCache(
+		"default-ttl-scope",
+		payload,
+		ClaudePromptCacheCapabilities{AutomaticHistory: true, ExplicitHistory: true},
+	)
+
+	for _, path := range []string{
+		"cache_control.ttl",
+		"tools.1.cache_control.ttl",
+		"system.0.cache_control.ttl",
+		"messages.0.content.0.cache_control.ttl",
+	} {
+		if gjson.GetBytes(plannedPayload, path).Exists() {
+			t.Fatalf("%s must stay unset without extended TTL: %s", path, plannedPayload)
+		}
+	}
+}
+
+func TestHasClaudeExtendedCacheTTL(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    bool
+	}{
+		{name: "top-level 1h", payload: `{"cache_control":{"type":"ephemeral","ttl":"1h"}}`, want: true},
+		{name: "tool 1h", payload: `{"tools":[{"name":"t","cache_control":{"type":"ephemeral","ttl":"1h"}}]}`, want: true},
+		{name: "system 1h", payload: `{"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral","ttl":"1h"}}]}`, want: true},
+		{name: "message 1h", payload: `{"messages":[{"role":"user","content":[{"type":"text","text":"u","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}`, want: true},
+		{name: "explicit 5m", payload: `{"cache_control":{"type":"ephemeral","ttl":"5m"}}`, want: false},
+		{name: "default ttl", payload: `{"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}]}`, want: false},
+		{name: "invalid ttl", payload: `{"cache_control":{"type":"ephemeral","ttl":"2h"}}`, want: false},
+		{name: "no cache control", payload: `{"messages":[{"role":"user","content":"u"}]}`, want: false},
+		{name: "invalid json", payload: `not json`, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := HasClaudeExtendedCacheTTL([]byte(test.payload)); got != test.want {
+				t.Fatalf("HasClaudeExtendedCacheTTL() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func buildClaudePromptCacheTestPayload(toolNames []string, includeTopLevelCacheControl bool) []byte {
 	tools := make([]map[string]any, 0, len(toolNames))
 	for _, toolName := range toolNames {
