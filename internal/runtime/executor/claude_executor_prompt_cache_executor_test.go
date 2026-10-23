@@ -201,6 +201,7 @@ func TestClaudeExecutorAdaptiveStripsAndReplansUserCacheControl(t *testing.T) {
 		"https://api.anthropic.com",
 		"claude-sonnet-4-5",
 		bytes.Clone(payload),
+		false,
 	)
 
 	if plan == nil {
@@ -253,6 +254,7 @@ func TestClaudeExecutorAdaptiveHonorsDownstreamOneHourTTL(t *testing.T) {
 		"https://api.anthropic.com",
 		"claude-sonnet-4-5",
 		bytes.Clone(payload),
+		false,
 	)
 
 	if plan == nil {
@@ -290,6 +292,7 @@ func TestClaudeExecutorAdaptiveKeepsDefaultTTLForFiveMinuteClient(t *testing.T) 
 		"https://api.anthropic.com",
 		"claude-sonnet-4-5",
 		bytes.Clone(payload),
+		false,
 	)
 
 	if gjson.GetBytes(plannedBody, "system.0.cache_control.ttl").Exists() {
@@ -297,6 +300,94 @@ func TestClaudeExecutorAdaptiveKeepsDefaultTTLForFiveMinuteClient(t *testing.T) 
 	}
 	if gjson.GetBytes(plannedBody, "cache_control.ttl").Exists() {
 		t.Fatalf("top-level cache_control must stay on the default TTL: %s", plannedBody)
+	}
+}
+
+func TestClaudeExecutorAdaptiveKeepsOneHourTTLThroughCloaking(t *testing.T) {
+	tests := []struct {
+		name    string
+		apiKey  string
+		oauth   bool
+		ttl     string
+		wantTTL string
+	}{
+		{name: "api key cloaked 1h", apiKey: "key-adaptive-cloak-1h", ttl: "1h", wantTTL: "1h"},
+		{name: "oauth cloaked 1h", apiKey: "sk-ant-oat-adaptive-cloak-1h", oauth: true, ttl: "1h", wantTTL: "1h"},
+		{name: "api key cloaked 5m", apiKey: "key-adaptive-cloak-5m", ttl: "5m", wantTTL: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var seenBody []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenBody, _ = io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-opus-4-6","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+			}))
+			defer server.Close()
+
+			executor := NewClaudeExecutor(&config.Config{
+				ClaudePromptCache: config.ClaudePromptCacheConfig{Mode: config.ClaudePromptCacheModeAdaptive},
+			})
+			auth := &cliproxyauth.Auth{
+				ID: "adaptive-cloak-" + test.name,
+				Attributes: map[string]string{
+					"api_key":    test.apiKey,
+					"base_url":   server.URL,
+					"cloak_mode": "always",
+				},
+			}
+			if test.oauth {
+				auth.Metadata = claudeOAuthTestMetadata()
+			}
+			payload := `{
+				"model":"claude-opus-4-6",
+				"max_tokens":16,
+				"tools":[{"name":"Read","input_schema":{"type":"object"}}],
+				"system":[{"type":"text","text":"system","cache_control":{"type":"ephemeral","ttl":"` + test.ttl + `"}}],
+				"messages":[
+					{"role":"user","content":[{"type":"text","text":"first"}]},
+					{"role":"assistant","content":[{"type":"text","text":"answer"}]},
+					{"role":"user","content":[{"type":"text","text":"second","cache_control":{"type":"ephemeral","ttl":"` + test.ttl + `"}}]}
+				]
+			}`
+			_, errExecute := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+				Model:   "claude-opus-4-6",
+				Payload: []byte(payload),
+			}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude})
+			if errExecute != nil {
+				t.Fatalf("Execute() error = %v", errExecute)
+			}
+
+			breakpoints := 0
+			check := func(path string, block gjson.Result) {
+				cacheControl := block.Get("cache_control")
+				if !cacheControl.Exists() {
+					return
+				}
+				breakpoints++
+				if got := cacheControl.Get("ttl").String(); got != test.wantTTL {
+					t.Errorf("%s ttl = %q, want %q: %s", path, got, test.wantTTL, seenBody)
+				}
+			}
+			gjson.GetBytes(seenBody, "tools").ForEach(func(index, block gjson.Result) bool {
+				check("tools."+index.String(), block)
+				return true
+			})
+			gjson.GetBytes(seenBody, "system").ForEach(func(index, block gjson.Result) bool {
+				check("system."+index.String(), block)
+				return true
+			})
+			gjson.GetBytes(seenBody, "messages").ForEach(func(messageIndex, message gjson.Result) bool {
+				message.Get("content").ForEach(func(contentIndex, block gjson.Result) bool {
+					check("messages."+messageIndex.String()+".content."+contentIndex.String(), block)
+					return true
+				})
+				return true
+			})
+			if breakpoints == 0 {
+				t.Fatalf("upstream body carries no cache_control: %s", seenBody)
+			}
+		})
 	}
 }
 
@@ -326,6 +417,7 @@ func TestClaudeExecutorAdaptiveReplansOverLimitUserCacheControl(t *testing.T) {
 		"https://api.anthropic.com",
 		"claude-sonnet-4-5",
 		bytes.Clone(payload),
+		false,
 	)
 
 	if plan == nil {

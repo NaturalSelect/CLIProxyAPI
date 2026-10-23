@@ -89,6 +89,7 @@ func (e *ClaudeExecutor) planAdaptiveClaudePromptCache(
 	baseURL string,
 	baseModel string,
 	body []byte,
+	clientExtendedTTL bool,
 ) ([]byte, *helps.ClaudePromptCachePlan) {
 	if e == nil || e.promptCacheRuntime == nil || e.claudePromptCacheMode() != config.ClaudePromptCacheModeAdaptive {
 		return body, nil
@@ -98,8 +99,8 @@ func (e *ClaudeExecutor) planAdaptiveClaudePromptCache(
 	// Official Anthropic gets tools-tail + system-tail + second-to-last user +
 	// top-level automatic history so conversation forks can still read the
 	// stable history prefix.
-	// NOTE: Detect the client's one-hour TTL before the strip discards it.
-	extendedTTL := helps.HasClaudeExtendedCacheTTL(body)
+	// NOTE: Cloaking adds a default-TTL marker and normalization then downgrades later 1h markers, so callers pass the pre-cloaking result.
+	extendedTTL := clientExtendedTTL || helps.HasClaudeExtendedCacheTTL(body)
 	body = helps.StripAllClaudeCacheControls(body)
 	officialAnthropic := isOfficialAnthropicBaseURL(baseURL)
 	scopeKey := claudePromptCacheScopeKey(auth, apiKey, baseURL, baseModel)

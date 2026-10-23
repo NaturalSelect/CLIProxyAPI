@@ -180,7 +180,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	bodyForUpstream = stripDefaultKimiClaudeCodeAttribution(auth, url, fp.ProfileClaudeCodeCLI, bodyForUpstream)
 	var promptCachePlan *helps.ClaudePromptCachePlan
 	if cacheMode == config.ClaudePromptCacheModeAdaptive {
-		bodyForUpstream, promptCachePlan = e.planAdaptiveClaudePromptCache(ctx, auth, apiKey, baseURL, baseModel, bodyForUpstream)
+		bodyForUpstream, promptCachePlan = e.planAdaptiveClaudePromptCache(ctx, auth, apiKey, baseURL, baseModel, bodyForUpstream, helps.HasClaudeExtendedCacheTTL(bodyBeforeCloaking))
 	}
 	cchBilling := ""
 	if cchSigning {
