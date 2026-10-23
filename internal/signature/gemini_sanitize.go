@@ -41,7 +41,28 @@ func SanitizeGeminiRequestThoughtSignatures(payload []byte, contentsPath string)
 
 	contentsChanged := false
 	contentItems := make([][]byte, 0, int(contents.Get("#").Int()))
-	contents.ForEach(func(contentIdx, content gjson.Result) bool {
+	type sanitizeLogKey struct {
+		action           SignatureCompatibilityAction
+		reason           string
+		blockKind        SignatureBlockKind
+		detectedProvider SignatureProvider
+	}
+	sanitizeCounts := make(map[sanitizeLogKey]int)
+	var sanitizeOrder []sanitizeLogKey
+	countSanitize := func(decision SignatureCompatibilityDecision) {
+		key := sanitizeLogKey{
+			action:           decision.Action,
+			reason:           decision.Reason,
+			blockKind:        decision.BlockKind,
+			detectedProvider: decision.DetectedProvider,
+		}
+		if sanitizeCounts[key] == 0 {
+			sanitizeOrder = append(sanitizeOrder, key)
+		}
+		sanitizeCounts[key]++
+	}
+
+	contents.ForEach(func(_, content gjson.Result) bool {
 		parts := content.Get("parts")
 		if !parts.IsArray() {
 			contentItems = append(contentItems, []byte(content.Raw))
@@ -52,19 +73,20 @@ func SanitizeGeminiRequestThoughtSignatures(payload []byte, contentsPath string)
 		firstFunctionCallSeen := false
 		partsChanged := false
 		partItems := make([][]byte, 0, int(parts.Get("#").Int()))
-		parts.ForEach(func(partIdx, part gjson.Result) bool {
+		parts.ForEach(func(_, part gjson.Result) bool {
 			partJSON := []byte(part.Raw)
 			rawSignature, hasSignature := geminiPartThoughtSignature(part)
 			if part.Get("functionResponse").Exists() {
 				if hasSignature {
 					partJSON = deleteGeminiPartThoughtSignatureFields(partJSON)
 					partsChanged = true
-					logGeminiThoughtSignatureSanitize(contentsPath, int(contentIdx.Int()), int(partIdx.Int()), SignatureCompatibilityDecision{
-						TargetProvider: SignatureProviderGemini,
-						BlockKind:      SignatureBlockKindGeminiModelPart,
-						Action:         SignatureActionDropSignature,
-						Reason:         "functionResponse parts cannot replay thought signatures",
-					}, rawSignature, true)
+					countSanitize(SignatureCompatibilityDecision{
+						TargetProvider:   SignatureProviderGemini,
+						DetectedProvider: DetectSignatureProviderForBlock(rawSignature, SignatureBlockKindGeminiModelPart),
+						BlockKind:        SignatureBlockKindGeminiModelPart,
+						Action:           SignatureActionDropSignature,
+						Reason:           "functionResponse parts cannot replay thought signatures",
+					})
 				}
 				partItems = append(partItems, partJSON)
 				return true
@@ -119,7 +141,7 @@ func SanitizeGeminiRequestThoughtSignatures(payload []byte, contentsPath string)
 			if partChanged {
 				partsChanged = true
 				if decision.Action != SignatureActionPreserve {
-					logGeminiThoughtSignatureSanitize(contentsPath, int(contentIdx.Int()), int(partIdx.Int()), decision, rawSignature, hasSignature)
+					countSanitize(decision)
 				}
 			}
 			partItems = append(partItems, partJSON)
@@ -141,6 +163,21 @@ func SanitizeGeminiRequestThoughtSignatures(payload []byte, contentsPath string)
 	updated, errSet := sjson.SetRawBytes(payload, contentsPath, joinGeminiSignatureRawArray(contentItems))
 	if errSet != nil {
 		return payload
+	}
+	for _, key := range sanitizeOrder {
+		count := sanitizeCounts[key]
+		noun := "thoughtSignature"
+		if count > 1 {
+			noun = "thoughtSignatures"
+		}
+		log.Debugf("gemini request: sanitized %d %s action=%s part=%s sig_type=%s path=%s reason=%q",
+			count,
+			noun,
+			sanitizeActionName(key.action),
+			sanitizeKindName(key.blockKind),
+			sanitizeSigTypeName(key.detectedProvider),
+			contentsPath,
+			key.reason)
 	}
 	return updated
 }
@@ -193,20 +230,37 @@ func geminiContentsThoughtSignaturesNeedSanitize(contents gjson.Result) bool {
 	return needsSanitize
 }
 
-func logGeminiThoughtSignatureSanitize(contentsPath string, contentIndex, partIndex int, decision SignatureCompatibilityDecision, rawSignature string, hasSignature bool) {
-	log.WithFields(log.Fields{
-		"component":         "signature_sanitizer",
-		"target_provider":   string(SignatureProviderGemini),
-		"action":            string(decision.Action),
-		"reason":            decision.Reason,
-		"contents_path":     contentsPath,
-		"content_index":     contentIndex,
-		"part_index":        partIndex,
-		"block_kind":        string(decision.BlockKind),
-		"detected_provider": string(decision.DetectedProvider),
-		"has_signature":     hasSignature,
-		"signature_length":  len(strings.TrimSpace(rawSignature)),
-	}).Debug("gemini request: sanitized thoughtSignature before upstream")
+func sanitizeActionName(action SignatureCompatibilityAction) string {
+	switch action {
+	case SignatureActionDropSignature:
+		return "drop"
+	case SignatureActionReplaceWithGeminiBypass:
+		return "replace_bypass"
+	case SignatureActionDropBlock:
+		return "drop_block"
+	default:
+		return string(action)
+	}
+}
+
+func sanitizeKindName(kind SignatureBlockKind) string {
+	switch kind {
+	case SignatureBlockKindGeminiFunctionCall:
+		return "function_call"
+	case SignatureBlockKindGeminiModelPart:
+		return "model_part"
+	default:
+		return strings.TrimPrefix(string(kind), "gemini_")
+	}
+}
+
+func sanitizeSigTypeName(provider SignatureProvider) string {
+	switch provider {
+	case SignatureProviderGeminiBypass:
+		return "bypass"
+	default:
+		return string(provider)
+	}
 }
 
 var geminiPartThoughtSignaturePaths = []string{

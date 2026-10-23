@@ -179,25 +179,49 @@ func TestSanitizeGeminiRequestThoughtSignaturesLogsBypassReplacement(t *testing.
 		t.Fatalf("thoughtSignature = %q, want bypass sentinel. Output: %s", got, string(out))
 	}
 
-	found := false
-	for _, entry := range hook.AllEntries() {
-		if entry.Level != log.DebugLevel {
-			continue
-		}
-		if entry.Data["component"] != "signature_sanitizer" ||
-			entry.Data["target_provider"] != string(SignatureProviderGemini) ||
-			entry.Data["action"] != "replace_with_gemini_bypass" {
-			continue
-		}
-		if entry.Data["block_kind"] != string(SignatureBlockKindGeminiFunctionCall) {
-			t.Fatalf("block_kind = %v, want %s", entry.Data["block_kind"], SignatureBlockKindGeminiFunctionCall)
-		}
-		found = true
+	entries := hook.AllEntries()
+	if len(entries) != 1 || entries[0].Level != log.DebugLevel {
+		t.Fatalf("expected one debug log for bypass replacement, got %v", entries)
 	}
-	if !found {
-		t.Fatal("expected debug log for Gemini thoughtSignature bypass replacement")
+	entry := entries[0]
+	if len(entry.Data) != 0 {
+		t.Fatalf("sanitizer log must not rely on structured fields: %v", entry.Data)
+	}
+	for _, field := range []string{
+		"sanitized 1 thoughtSignature",
+		"action=replace_bypass",
+		"part=function_call",
+	} {
+		if !strings.Contains(entry.Message, field) {
+			t.Fatalf("console message omits %q: %q", field, entry.Message)
+		}
 	}
 	assertSignatureDebugDoesNotLeak(t, hook, sig)
+}
+
+func TestSanitizeGeminiRequestThoughtSignaturesAggregatesRepeatedLogs(t *testing.T) {
+	hook := newSignatureDebugHook(t)
+	input := []byte(`{"contents":[{"role":"model","parts":[` +
+		`{"functionCall":{"name":"first","args":{}},"thoughtSignature":"` + GeminiSkipThoughtSignatureValidator + `"},` +
+		`{"functionCall":{"name":"second","args":{}},"thoughtSignature":"` + GeminiSkipThoughtSignatureValidator + `"},` +
+		`{"functionCall":{"name":"third","args":{}},"thoughtSignature":"` + GeminiSkipThoughtSignatureValidator + `"}]}]}`)
+
+	out := SanitizeGeminiRequestThoughtSignatures(input, "contents")
+
+	for _, index := range []int{1, 2} {
+		if gjson.GetBytes(out, fmt.Sprintf("contents.0.parts.%d.thoughtSignature", index)).Exists() {
+			t.Fatalf("sibling bypass was not removed: %s", out)
+		}
+	}
+	entries := hook.AllEntries()
+	if len(entries) != 1 || entries[0].Level != log.DebugLevel {
+		t.Fatalf("expected one aggregated debug log, got %v", entries)
+	}
+	for _, field := range []string{"sanitized 2 thoughtSignatures", "action=drop", "part=function_call", "sig_type=bypass"} {
+		if !strings.Contains(entries[0].Message, field) {
+			t.Fatalf("console message omits %q: %q", field, entries[0].Message)
+		}
+	}
 }
 
 func TestSanitizeGeminiRequestThoughtSignaturesPreservesField2WrappedUUIDFunctionCall(t *testing.T) {
