@@ -46,7 +46,7 @@ func assertUnsupportedImagesModelResponse(t *testing.T, resp *httptest.ResponseR
 	}
 
 	message := gjson.GetBytes(resp.Body.Bytes(), "error.message").String()
-	expectedMessage := "Model " + model + " is not supported on " + imagesGenerationsPath + " or " + imagesEditsPath + ". Use " + gptImage15Model + ", " + defaultImagesToolModel + ", " + gptImage25FlareModel + ", " + gptImage25SunburstModel + ", " + gptImage25Model + ", " + gptImage26FlareModel + ", " + gptImage26SunburstModel + ", " + gptImage26Model + ", " + defaultXAIImagesModel + ", " + xaiImagesQualityModel + ", " + xaiImages20Model + ", or a configured openai-compatibility image model."
+	expectedMessage := "Model " + model + " is not supported on " + imagesGenerationsPath + " or " + imagesEditsPath + ". Use " + gptImage15Model + ", " + defaultImagesToolModel + ", " + gptImage25FlareModel + ", " + gptImage25SunburstModel + ", " + gptImage25Model + ", " + gptImage26FlareModel + ", " + gptImage26SunburstModel + ", " + gptImage26Model + ", " + defaultXAIImagesModel + ", " + xaiImagesQualityModel + ", " + xaiImages20Model + ", a Gemini image model (gemini-*-image*), or a configured openai-compatibility image model."
 	if message != expectedMessage {
 		t.Fatalf("error message = %q, want %q", message, expectedMessage)
 	}
@@ -79,6 +79,10 @@ func TestImagesModelValidationAllowsGPTImageAndXAIModels(t *testing.T) {
 		"xai/grok-imagine-image-quality",
 		"grok-imagine-image-2.0",
 		"xai/grok-imagine-image-2.0",
+		"gemini-2.5-flash-image",
+		"gemini-3-pro-image-preview",
+		"gemini-3.1-flash-image",
+		"foo/gemini-2.5-flash-image",
 	} {
 		if !isSupportedImagesModel(model) {
 			t.Fatalf("expected %s to be supported", model)

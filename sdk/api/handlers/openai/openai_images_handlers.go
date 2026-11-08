@@ -240,7 +240,7 @@ func isSupportedImagesModel(model string) bool {
 	if isCodexImagesToolModel(model) {
 		return true
 	}
-	return isXAIImagesModel(model) || isOpenAICompatImagesModel(model)
+	return isXAIImagesModel(model) || isOpenAICompatImagesModel(model) || isGeminiImagesModel(model)
 }
 
 func isCodexImagesToolModel(model string) bool {
@@ -268,7 +268,7 @@ func rejectUnsupportedImagesModel(c *gin.Context, model string) bool {
 
 	c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
 		Error: handlers.ErrorDetail{
-			Message: fmt.Sprintf("Model %s is not supported on %s or %s. Use %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, or a configured openai-compatibility image model.", model, imagesGenerationsPath, imagesEditsPath, gptImage15Model, defaultImagesToolModel, gptImage25FlareModel, gptImage25SunburstModel, gptImage25Model, gptImage26FlareModel, gptImage26SunburstModel, gptImage26Model, defaultXAIImagesModel, xaiImagesQualityModel, xaiImages20Model),
+			Message: fmt.Sprintf("Model %s is not supported on %s or %s. Use %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, a Gemini image model (gemini-*-image*), or a configured openai-compatibility image model.", model, imagesGenerationsPath, imagesEditsPath, gptImage15Model, defaultImagesToolModel, gptImage25FlareModel, gptImage25SunburstModel, gptImage25Model, gptImage26FlareModel, gptImage26SunburstModel, gptImage26Model, defaultXAIImagesModel, xaiImagesQualityModel, xaiImages20Model),
 			Type:    "invalid_request_error",
 		},
 	})
@@ -672,6 +672,17 @@ func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
 		h.handleOpenAICompatImages(c, compatReq, imageModel, responseFormat, "image_generation", stream)
 		return
 	}
+	if isGeminiImagesModel(imageModel) {
+		aspectRatio, imageSize, n := geminiImagesOptionsFromJSON(rawJSON)
+		h.handleGeminiImages(c, geminiImagesRequest{
+			Model:       imageModel,
+			Prompt:      prompt,
+			AspectRatio: aspectRatio,
+			ImageSize:   imageSize,
+			N:           n,
+		}, responseFormat, "image_generation", stream)
+		return
+	}
 
 	tool := []byte(`{"type":"image_generation","action":"generate"}`)
 	tool, _ = sjson.SetBytes(tool, "model", imageModel)
@@ -841,6 +852,36 @@ func (h *OpenAIAPIHandler) imagesEditsFromMultipart(c *gin.Context) {
 		h.handleOpenAICompatImages(c, compatReq, imageModel, responseFormat, "image_edit", stream)
 		return
 	}
+	if isGeminiImagesModel(imageModel) {
+		mask := ""
+		if maskFiles := form.File["mask"]; len(maskFiles) > 0 && maskFiles[0] != nil {
+			dataURL, errMask := multipartFileToDataURL(maskFiles[0])
+			if errMask != nil {
+				c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+					Error: handlers.ErrorDetail{
+						Message: fmt.Sprintf("Invalid request: %v", errMask),
+						Type:    "invalid_request_error",
+					},
+				})
+				return
+			}
+			mask = dataURL
+		}
+		r := geminiImagesRequest{
+			Model:       imageModel,
+			Prompt:      prompt,
+			Images:      images,
+			Mask:        mask,
+			AspectRatio: geminiImagesAspectRatio(c.PostForm("size"), c.PostForm("aspect_ratio")),
+			ImageSize:   geminiImagesImageSize(firstNonEmpty(c.PostForm("image_size"), c.PostForm("resolution"))),
+			N:           clampGeminiImagesN(parseIntField(c.PostForm("n"), 1)),
+		}
+		if !validateGeminiImagesEditInputs(c, r) {
+			return
+		}
+		h.handleGeminiImages(c, r, responseFormat, "image_edit", stream)
+		return
+	}
 
 	var maskDataURL *string
 	if maskFiles := form.File["mask"]; len(maskFiles) > 0 && maskFiles[0] != nil {
@@ -968,6 +1009,33 @@ func (h *OpenAIAPIHandler) imagesEditsFromJSON(c *gin.Context) {
 	if isOpenAICompatImagesModel(imageModel) {
 		compatReq := buildOpenAICompatImagesJSONRequest(rawJSON, imageModel, stream)
 		h.handleOpenAICompatImages(c, compatReq, imageModel, responseFormat, "image_edit", stream)
+		return
+	}
+	if isGeminiImagesModel(imageModel) {
+		images := collectXAIImagesFromJSON(rawJSON)
+		if len(images) == 0 {
+			c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+				Error: handlers.ErrorDetail{
+					Message: "Invalid request: image is required",
+					Type:    "invalid_request_error",
+				},
+			})
+			return
+		}
+		aspectRatio, imageSize, n := geminiImagesOptionsFromJSON(rawJSON)
+		r := geminiImagesRequest{
+			Model:       imageModel,
+			Prompt:      prompt,
+			Images:      images,
+			Mask:        geminiImagesMaskFromJSON(rawJSON),
+			AspectRatio: aspectRatio,
+			ImageSize:   imageSize,
+			N:           n,
+		}
+		if !validateGeminiImagesEditInputs(c, r) {
+			return
+		}
+		h.handleGeminiImages(c, r, responseFormat, "image_edit", stream)
 		return
 	}
 
@@ -1452,14 +1520,22 @@ func (h *OpenAIAPIHandler) collectXAIImages(c *gin.Context, xaiReq []byte, respo
 	h.collectImagesWithModel(c, xaiReq, model, responseFormat)
 }
 
+type imagesExecuteFunc func(ctx context.Context) ([]byte, http.Header, *interfaces.ErrorMessage)
+
 func (h *OpenAIAPIHandler) collectImagesWithModel(c *gin.Context, imageReq []byte, model string, responseFormat string) {
+	model = strings.TrimSpace(model)
+	h.collectImagesWithExecute(c, responseFormat, func(ctx context.Context) ([]byte, http.Header, *interfaces.ErrorMessage) {
+		return h.ExecuteImageWithAuthManager(ctx, xaiImagesHandlerType, model, imageReq, "")
+	})
+}
+
+func (h *OpenAIAPIHandler) collectImagesWithExecute(c *gin.Context, responseFormat string, execute imagesExecuteFunc) {
 	c.Header("Content-Type", "application/json")
 
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 	stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
 
-	model = strings.TrimSpace(model)
-	resp, upstreamHeaders, errMsg := h.ExecuteImageWithAuthManager(cliCtx, xaiImagesHandlerType, model, imageReq, "")
+	resp, upstreamHeaders, errMsg := execute(cliCtx)
 	stopKeepAlive()
 	if errMsg != nil {
 		h.WriteErrorResponse(c, errMsg)
@@ -1490,6 +1566,13 @@ func (h *OpenAIAPIHandler) streamXAIImages(c *gin.Context, xaiReq []byte, respon
 }
 
 func (h *OpenAIAPIHandler) streamImagesWithModel(c *gin.Context, imageReq []byte, model string, responseFormat string, streamPrefix string) {
+	model = strings.TrimSpace(model)
+	h.streamImagesWithExecute(c, responseFormat, streamPrefix, func(ctx context.Context) ([]byte, http.Header, *interfaces.ErrorMessage) {
+		return h.ExecuteImageWithAuthManager(ctx, xaiImagesHandlerType, model, imageReq, "")
+	})
+}
+
+func (h *OpenAIAPIHandler) streamImagesWithExecute(c *gin.Context, responseFormat string, streamPrefix string, execute imagesExecuteFunc) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, handlers.ErrorResponse{
@@ -1502,7 +1585,6 @@ func (h *OpenAIAPIHandler) streamImagesWithModel(c *gin.Context, imageReq []byte
 	}
 
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
-	model = strings.TrimSpace(model)
 	type imageStreamResult struct {
 		resp            []byte
 		upstreamHeaders http.Header
@@ -1510,7 +1592,7 @@ func (h *OpenAIAPIHandler) streamImagesWithModel(c *gin.Context, imageReq []byte
 	}
 	resultChan := make(chan imageStreamResult, 1)
 	go func() {
-		resp, upstreamHeaders, errMsg := h.ExecuteImageWithAuthManager(cliCtx, xaiImagesHandlerType, model, imageReq, "")
+		resp, upstreamHeaders, errMsg := execute(cliCtx)
 		resultChan <- imageStreamResult{resp: resp, upstreamHeaders: upstreamHeaders, errMsg: errMsg}
 	}()
 
