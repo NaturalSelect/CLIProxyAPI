@@ -276,7 +276,7 @@ func TestUsageAwareScore_NoData_ReturnsFallback(t *testing.T) {
 	t.Parallel()
 
 	auth := &Auth{ID: "a", Provider: "gemini"}
-	if got := usageAwareScore(auth, time.Now()); got != defaultUsageAwareScore {
+	if got := usageAwareScore(auth, "", time.Now()); got != defaultUsageAwareScore {
 		t.Fatalf("usageAwareScore(no data) = %v, want %v", got, defaultUsageAwareScore)
 	}
 }
@@ -285,7 +285,7 @@ func TestUsageAwareScore_UnparsedRateLimitValue_ReturnsFallback(t *testing.T) {
 	t.Parallel()
 
 	auth := &Auth{ID: "a", Provider: "claude", RateLimits: map[string]any{"7d_utilization": "n/a"}}
-	if got := usageAwareScore(auth, time.Now()); got != defaultUsageAwareScore {
+	if got := usageAwareScore(auth, "", time.Now()); got != defaultUsageAwareScore {
 		t.Fatalf("usageAwareScore(unparsed) = %v, want %v", got, defaultUsageAwareScore)
 	}
 }
@@ -296,7 +296,7 @@ func TestUsageAwareScore_ClaudeIgnores5hWindow(t *testing.T) {
 	// The 5h and 7d windows aren't on the same scale, so a lone 5h reading must
 	// not feed the score; only 7d (and 7d_oi) windows should.
 	auth := &Auth{ID: "a", Provider: "claude", RateLimits: map[string]any{"5h_utilization": 95}}
-	if got := usageAwareScore(auth, time.Now()); got != defaultUsageAwareScore {
+	if got := usageAwareScore(auth, "", time.Now()); got != defaultUsageAwareScore {
 		t.Fatalf("usageAwareScore(5h only) = %v, want %v", got, defaultUsageAwareScore)
 	}
 }
@@ -313,7 +313,7 @@ func TestUsageAwareScore_ClaudeMultiWindowTakesWorst(t *testing.T) {
 			"7d_oi_utilization": 80,
 		},
 	}
-	got := usageAwareScore(auth, now)
+	got := usageAwareScore(auth, "", now)
 	want := usageWindowScore(80, "", now)
 	if got != want {
 		t.Fatalf("usageAwareScore(mixed windows) = %v, want worst window score %v", got, want)
@@ -332,7 +332,7 @@ func TestUsageAwareScore_CodexWindows(t *testing.T) {
 			"secondary_used_percent": 5,
 		},
 	}
-	got := usageAwareScore(auth, now)
+	got := usageAwareScore(auth, "", now)
 	// primary (10%) has less headroom than secondary (5%), so it is the
 	// binding/worst window and should determine the score.
 	want := usageWindowScore(10, "", now)
@@ -358,7 +358,7 @@ func TestUsageAwareScore_AntigravityWindows(t *testing.T) {
 	if !SetAntigravityQuotaGroups(auth, groups, now) {
 		t.Fatalf("SetAntigravityQuotaGroups() = false, want true")
 	}
-	got := usageAwareScore(auth, now)
+	got := usageAwareScore(auth, "", now)
 	want := usageWindowScore(shortUtil, "", now)
 	if got != want {
 		t.Fatalf("usageAwareScore(antigravity) = %v, want worst window score %v", got, want)
@@ -379,7 +379,94 @@ func TestUsageAwareScore_AntigravityWindowsWithNilUtilization(t *testing.T) {
 	// The only window has no Utilization value, so it contributes nothing and the
 	// credential must fall back to the neutral score rather than treating a
 	// reset-only window as 0% or 100% utilized.
-	if got := usageAwareScore(auth, now); got != defaultUsageAwareScore {
+	if got := usageAwareScore(auth, "", now); got != defaultUsageAwareScore {
 		t.Fatalf("usageAwareScore(nil utilization) = %v, want %v", got, defaultUsageAwareScore)
+	}
+}
+
+func TestAntigravityQuotaGroupForModel(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"":                              "",
+		"gemini-3-flash":                "gemini",
+		"gemini-3.8-flash-high":         "gemini",
+		"gemini-3.1-flash-image":        "gemini",
+		"gemini-4-argon":                "gemini",
+		"gemini-4-argon-high":           "gemini",
+		"gemini-3-flash(high)":          "gemini",
+		"team/gemini-3-flash":           "gemini",
+		"Gemini-3-Flash":                "gemini",
+		"claude-sonnet-4-6":             "3p",
+		"claude-opus-5-5-high":          "3p",
+		"gpt-oss-120b-medium":           "3p",
+		"team/claude-opus-4-6-thinking": "3p",
+	}
+	for model, want := range cases {
+		if got := antigravityQuotaGroupForModel(model); got != want {
+			t.Errorf("antigravityQuotaGroupForModel(%q) = %q, want %q", model, got, want)
+		}
+	}
+}
+
+func newAntigravityTwoGroupAuth(t *testing.T, now time.Time, geminiUtil, thirdPartyUtil int) *Auth {
+	t.Helper()
+
+	auth := &Auth{ID: "a", Provider: "antigravity"}
+	groups := []AntigravityQuotaGroup{
+		{GroupID: "gemini", Long: &AntigravityQuotaWindow{Utilization: &geminiUtil}},
+		{GroupID: "3p", Long: &AntigravityQuotaWindow{Utilization: &thirdPartyUtil}},
+	}
+	if !SetAntigravityQuotaGroups(auth, groups, now) {
+		t.Fatalf("SetAntigravityQuotaGroups() = false, want true")
+	}
+	return auth
+}
+
+func TestUsageAwareScore_AntigravityScoresOnlyTheModelsGroup(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	// gemini group is nearly empty, 3p group is exhausted.
+	auth := newAntigravityTwoGroupAuth(t, now, 10, 100)
+
+	if got, want := usageAwareScore(auth, "gemini-3-flash", now), usageWindowScore(10, "", now); got != want {
+		t.Fatalf("usageAwareScore(gemini model) = %v, want gemini group score %v", got, want)
+	}
+	if got, want := usageAwareScore(auth, "gemini-4-argon", now), usageWindowScore(10, "", now); got != want {
+		t.Fatalf("usageAwareScore(argon model) = %v, want gemini group score %v", got, want)
+	}
+	if got, want := usageAwareScore(auth, "claude-sonnet-4-6", now), usageWindowScore(100, "", now); got != want {
+		t.Fatalf("usageAwareScore(3p model) = %v, want 3p group score %v", got, want)
+	}
+}
+
+func TestUsageAwareScore_AntigravityUnknownModelTakesWorstGroup(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	auth := newAntigravityTwoGroupAuth(t, now, 10, 100)
+
+	// With no model there is no way to pick a group, so the previous
+	// behavior (most constrained window across all groups) still applies.
+	if got, want := usageAwareScore(auth, "", now), usageWindowScore(100, "", now); got != want {
+		t.Fatalf("usageAwareScore(no model) = %v, want worst window score %v", got, want)
+	}
+}
+
+func TestUsageAwareScore_AntigravityModelGroupMissingFallsBack(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	util := 10
+	auth := &Auth{ID: "a", Provider: "antigravity"}
+	groups := []AntigravityQuotaGroup{{GroupID: "gemini", Long: &AntigravityQuotaWindow{Utilization: &util}}}
+	if !SetAntigravityQuotaGroups(auth, groups, now) {
+		t.Fatalf("SetAntigravityQuotaGroups() = false, want true")
+	}
+	// No 3p data was probed, so a third-party model gets the neutral score
+	// instead of borrowing the gemini group's headroom.
+	if got := usageAwareScore(auth, "claude-sonnet-4-6", now); got != defaultUsageAwareScore {
+		t.Fatalf("usageAwareScore(3p model, no 3p group) = %v, want %v", got, defaultUsageAwareScore)
 	}
 }

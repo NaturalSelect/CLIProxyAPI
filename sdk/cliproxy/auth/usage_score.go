@@ -27,8 +27,9 @@ type usageWindow struct {
 // several windows (e.g. Claude's 7d and 7d_oi limits), the most constrained window
 // wins, since that is the one actually gating the credential's availability.
 // Credentials with no snapshot get a neutral defaultUsageAwareScore.
-func usageAwareScore(auth *Auth, now time.Time) float64 {
-	windows := usageWindowsForAuth(auth)
+// NOTE: model picks which Antigravity quota group is scored; other providers ignore it.
+func usageAwareScore(auth *Auth, model string, now time.Time) float64 {
+	windows := usageWindowsForAuth(auth, model)
 	if len(windows) == 0 {
 		return defaultUsageAwareScore
 	}
@@ -45,7 +46,7 @@ func usageAwareScore(auth *Auth, now time.Time) float64 {
 // usageWindowsForAuth extracts every known utilization window for auth's provider
 // from its cached RateLimits snapshot. Only Claude, Codex, and Antigravity
 // currently populate that snapshot; every other provider returns nil.
-func usageWindowsForAuth(auth *Auth) []usageWindow {
+func usageWindowsForAuth(auth *Auth, model string) []usageWindow {
 	if auth == nil || len(auth.RateLimits) == 0 {
 		return nil
 	}
@@ -55,7 +56,7 @@ func usageWindowsForAuth(auth *Auth) []usageWindow {
 	case "codex":
 		return codexUsageWindows(auth.RateLimits)
 	case "antigravity":
-		return antigravityUsageWindows(AntigravityQuotaGroups(auth))
+		return antigravityUsageWindows(AntigravityQuotaGroups(auth), model)
 	default:
 		return nil
 	}
@@ -115,9 +116,14 @@ func rateLimitInt(value any) (int, bool) {
 
 // antigravityUsageWindows flattens each quota group's long (weekly) and short (5h)
 // windows into the common usageWindow shape.
-func antigravityUsageWindows(groups []AntigravityQuotaGroup) []usageWindow {
+// NOTE: Only the group that gates model is kept, so an exhausted group for other models cannot drag the score down.
+func antigravityUsageWindows(groups []AntigravityQuotaGroup, model string) []usageWindow {
+	modelGroup := antigravityQuotaGroupForModel(model)
 	var windows []usageWindow
 	for _, group := range groups {
+		if modelGroup != "" && group.GroupID != modelGroup {
+			continue
+		}
 		windows = appendAntigravityWindow(windows, group.Long)
 		windows = appendAntigravityWindow(windows, group.Short)
 	}

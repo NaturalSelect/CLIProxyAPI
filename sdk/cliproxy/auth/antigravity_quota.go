@@ -25,6 +25,30 @@ const (
 	antigravityQuotaGroupsKey    = "antigravity_quota_groups"
 )
 
+const (
+	antigravityQuotaGroupGemini     = "gemini"
+	antigravityQuotaGroupThirdParty = "3p"
+)
+
+// antigravityQuotaGroupForModel returns the quota group that gates model, or ""
+// when model is empty and no single group can be named.
+// NOTE: Argon models (gemini-4-argon*) are built on the Gemini quota, so they score against the gemini group.
+// NOTE: Anything that is not a Gemini model (Claude, GPT) is third-party and draws on the 3p group.
+func antigravityQuotaGroupForModel(model string) string {
+	name := strings.ToLower(strings.TrimSpace(canonicalModelKey(model)))
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	switch {
+	case name == "":
+		return ""
+	case strings.HasPrefix(name, "gemini"):
+		return antigravityQuotaGroupGemini
+	default:
+		return antigravityQuotaGroupThirdParty
+	}
+}
+
 // AntigravityQuotaWindow is one usage bucket (e.g. the "weekly" or "5h" window)
 // within an AntigravityQuotaGroup, normalized from a retrieveUserQuotaSummary
 // response bucket.

@@ -86,7 +86,7 @@ func TestCodexUsageSnapshotFeedsScoring(t *testing.T) {
 	snapshot, _ := parseCodexUsageResponse([]byte(codexWhamUsageFixture))
 	auth := &Auth{ID: "a", Provider: "codex", RateLimits: snapshot}
 
-	windows := usageWindowsForAuth(auth)
+	windows := usageWindowsForAuth(auth, "")
 	if len(windows) != 2 {
 		t.Fatalf("usageWindowsForAuth() returned %d windows, want 2", len(windows))
 	}

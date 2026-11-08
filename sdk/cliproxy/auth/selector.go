@@ -587,7 +587,7 @@ func (s *UsageAwareSelector) Pick(ctx context.Context, provider, model string, o
 	scores := make([]float64, len(available))
 	topTier := 0
 	for i, candidate := range available {
-		scores[i] = usageAwareScore(candidate, now)
+		scores[i] = usageAwareScore(candidate, model, now)
 		if tier := usageScoreTier(scores[i]); tier > topTier {
 			topTier = tier
 		}
