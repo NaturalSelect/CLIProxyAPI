@@ -100,3 +100,27 @@ func TestClaudeDiagnosticsRejectsLateOlderCommit(t *testing.T) {
 		t.Fatalf("previous message = %q, want newer completed generation", previous)
 	}
 }
+
+func TestIsClaudeQuotaProbeRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "string content", body: `{"max_tokens":1,"messages":[{"role":"user","content":"quota"}]}`, want: true},
+		{name: "array content", body: `{"max_tokens":1,"messages":[{"role":"user","content":[{"type":"text","text":"<system-reminder>x</system-reminder>"},{"type":"text","text":"test"}]}]}`, want: true},
+		{name: "cached hi", body: `{"max_tokens":1,"messages":[{"role":"user","content":[{"type":"text","text":"Hi","cache_control":{"type":"ephemeral"}}]}]}`, want: true},
+		{name: "no messages", body: `{"max_tokens":1}`, want: true},
+		{name: "wrong max tokens", body: `{"max_tokens":2,"messages":[{"role":"user","content":"quota"}]}`, want: false},
+		{name: "has tools", body: `{"max_tokens":1,"tools":[{"name":"Read"}],"messages":[{"role":"user","content":"quota"}]}`, want: false},
+		{name: "real prompt", body: `{"max_tokens":1,"messages":[{"role":"user","content":"hello there"}]}`, want: false},
+		{name: "multiple messages", body: `{"max_tokens":1,"messages":[{"role":"user","content":"quota"},{"role":"assistant","content":"x"}]}`, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsClaudeQuotaProbeRequest([]byte(tt.body)); got != tt.want {
+				t.Fatalf("IsClaudeQuotaProbeRequest() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -134,4 +136,48 @@ func resetClaudeDiagnosticsForTest() {
 	claudeDiagnosticsState.lastCleanup = time.Time{}
 	claudeDiagnosticsState.nextSequence = 0
 	claudeDiagnosticsState.nextAccess = 0
+}
+
+// NOTE: IsClaudeQuotaProbeRequest reports the max_tokens=1 quota probe Claude Code sends to read account limits.
+func IsClaudeQuotaProbeRequest(body []byte) bool {
+	if gjson.GetBytes(body, "max_tokens").Int() != 1 {
+		return false
+	}
+	if tools := gjson.GetBytes(body, "tools"); tools.Exists() && len(tools.Array()) > 0 {
+		return false
+	}
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.IsArray() || len(messages.Array()) == 0 {
+		return true
+	}
+	if len(messages.Array()) != 1 {
+		return false
+	}
+	first := messages.Array()[0]
+	if first.Get("role").String() != "user" {
+		return false
+	}
+	isProbeText := func(text string) bool {
+		return text == "quota" || text == "test" || text == "." || text == "probe"
+	}
+	content := first.Get("content")
+	if content.Type == gjson.String {
+		return isProbeText(strings.TrimSpace(content.String()))
+	}
+	if !content.IsArray() {
+		return false
+	}
+	nonReminderCount := 0
+	matched := false
+	for _, part := range content.Array() {
+		text := strings.TrimSpace(part.Get("text").String())
+		if strings.Contains(text, "<system-reminder>") {
+			continue
+		}
+		nonReminderCount++
+		if isProbeText(text) || (text == "Hi" && part.Get("cache_control").Exists()) {
+			matched = true
+		}
+	}
+	return nonReminderCount == 1 && matched
 }

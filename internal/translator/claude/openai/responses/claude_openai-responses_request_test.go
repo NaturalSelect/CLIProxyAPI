@@ -1509,6 +1509,8 @@ func TestConvertOpenAIResponsesRequestToClaude_UnsupportedPrefillModelsStripTrai
 		"claude-sonnet-4-7",
 		"claude-sonnet-4-10",
 		"claude-sonnet-5",
+		"claude-haiku-5-5",
+		"claude-haiku-5.5",
 		"claude-opus-6",
 		"claude-opus-5.1",
 		"claude-sonnet-4-6-20260217",
@@ -1542,6 +1544,7 @@ func TestConvertOpenAIResponsesRequestToClaude_SupportedPrefillModelsPreserveAss
 	supportedModels := []string{
 		"claude-sonnet-4-5",
 		"claude-haiku-4-5",
+		"claude-haiku-4-5-20251001",
 		"claude-3-opus-20240229",
 		"claude-opus-20240229",
 		"claude-sonnet-4-20260217",
