@@ -4714,7 +4714,7 @@ func TestApplyCloaking_PreservesConfiguredStrictModeAndSensitiveWordsWhenModeOmi
 		t.Fatalf("strict mode should add only currentDate before user text, got %d content blocks", len(content))
 	}
 	assertClaudeCodeCurrentDateBlock(t, content[0])
-	if got := content[1].Get("text").String(); !strings.Contains(got, "\u200B") {
+	if got := content[1].Get("text").String(); !strings.Contains(got, "\u034F") {
 		t.Fatalf("expected configured sensitive word obfuscation to apply, got %q", got)
 	}
 }
