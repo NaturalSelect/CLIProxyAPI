@@ -13,7 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	sigcompat "github.com/router-for-me/CLIProxyAPI/v7/internal/signature"
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/common"
+	geminicommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/gemini/common"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -28,10 +30,19 @@ type convertGeminiResponseToOpenAIChatParams struct {
 	SawToolCall          map[int]bool
 	UpstreamFinishReason map[int]string
 	SanitizedNameMap     map[string]string
+	LastToolCallIndex    map[int]int
 }
 
 // functionCallIDCounter provides a process-wide unique counter for function call identifiers.
 var functionCallIDCounter uint64
+
+func geminiOpenAIToolThoughtSignature(raw string) string {
+	signature := strings.TrimSpace(raw)
+	if sigcompat.IsGeminiThoughtSignatureBypass(sigcompat.SignaturePayloadWithoutProviderPrefix(signature)) {
+		return ""
+	}
+	return signature
+}
 
 // ConvertGeminiResponseToOpenAI translates a single chunk of a streaming response from the
 // Gemini API format to the OpenAI Chat Completions streaming format.
@@ -56,6 +67,7 @@ func ConvertGeminiResponseToOpenAI(_ context.Context, _ string, originalRequestR
 			SawToolCall:          make(map[int]bool),
 			UpstreamFinishReason: make(map[int]string),
 			SanitizedNameMap:     util.SanitizedToolNameMap(originalRequestRawJSON),
+			LastToolCallIndex:    make(map[int]int),
 		}
 	}
 
@@ -72,6 +84,9 @@ func ConvertGeminiResponseToOpenAI(_ context.Context, _ string, originalRequestR
 	}
 	if p.SanitizedNameMap == nil {
 		p.SanitizedNameMap = util.SanitizedToolNameMap(originalRequestRawJSON)
+	}
+	if p.LastToolCallIndex == nil {
+		p.LastToolCallIndex = make(map[int]int)
 	}
 
 	if bytes.HasPrefix(rawJSON, []byte("data:")) {
@@ -158,10 +173,29 @@ func ConvertGeminiResponseToOpenAI(_ context.Context, _ string, originalRequestR
 				assistantRoleSet = true
 			}
 
+			appendToolSignature := func(signature string) {
+				index, exists := p.LastToolCallIndex[candidateIndex]
+				if signature == "" || !exists {
+					return
+				}
+				if toolCallsResult := gjson.GetBytes(template, "choices.0.delta.tool_calls"); !toolCallsResult.Exists() || !toolCallsResult.IsArray() {
+					template, _ = sjson.SetRawBytes(template, "choices.0.delta.tool_calls", []byte(`[]`))
+				}
+				signatureTemplate := []byte(`{"index":0}`)
+				signatureTemplate, _ = sjson.SetBytes(signatureTemplate, "index", index)
+				signatureTemplate, _ = sjson.SetBytes(signatureTemplate, "extra_content.google.thought_signature", signature)
+				setAssistantRole()
+				template, _ = sjson.SetRawBytes(template, "choices.0.delta.tool_calls.-1", signatureTemplate)
+			}
+
 			if partsResult.IsArray() {
 				partResults := partsResult.Array()
 				for i := 0; i < len(partResults); i++ {
 					partResult := partResults[i]
+					if geminicommon.HasUnsupportedPartPayload(partResult, "text", "functionCall", "inlineData", "inline_data", "audioTranscription") {
+						delete(p.LastToolCallIndex, candidateIndex)
+						continue
+					}
 					partTextResult := partResult.Get("text")
 					functionCallResult := partResult.Get("functionCall")
 					inlineDataResult := partResult.Get("inlineData")
@@ -174,15 +208,21 @@ func ConvertGeminiResponseToOpenAI(_ context.Context, _ string, originalRequestR
 					}
 
 					hasThoughtSignature := thoughtSignatureResult.Exists() && thoughtSignatureResult.String() != ""
-					hasContentPayload := partTextResult.Exists() || functionCallResult.Exists() || inlineDataResult.Exists()
+					hasTextPayload := partTextResult.Exists() && partTextResult.String() != ""
+					hasContentPayload := hasTextPayload || functionCallResult.Exists() || inlineDataResult.Exists()
+					thoughtSignature := geminiOpenAIToolThoughtSignature(thoughtSignatureResult.String())
 
-					// Skip pure thoughtSignature parts but keep any actual payload in the same part.
+					// A late signature belongs to the preceding tool call; keep any actual payload in the same part.
 					if hasThoughtSignature && !hasContentPayload {
+						appendToolSignature(thoughtSignature)
 						continue
 					}
 
 					if partTextResult.Exists() {
 						text := partTextResult.String()
+						if text != "" {
+							delete(p.LastToolCallIndex, candidateIndex)
+						}
 						setAssistantRole()
 						// Handle text content, distinguishing between regular content and reasoning/thoughts.
 						if partResult.Get("thought").Bool() {
@@ -213,9 +253,14 @@ func ConvertGeminiResponseToOpenAI(_ context.Context, _ string, originalRequestR
 						if fcArgsResult := functionCallResult.Get("args"); fcArgsResult.Exists() {
 							functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "function.arguments", fcArgsResult.Raw)
 						}
+						if thoughtSignature != "" {
+							functionCallTemplate, _ = sjson.SetBytes(functionCallTemplate, "extra_content.google.thought_signature", thoughtSignature)
+						}
+						p.LastToolCallIndex[candidateIndex] = functionCallIndex
 						setAssistantRole()
 						template, _ = sjson.SetRawBytes(template, "choices.0.delta.tool_calls.-1", functionCallTemplate)
 					} else if inlineDataResult.Exists() {
+						delete(p.LastToolCallIndex, candidateIndex)
 						data := inlineDataResult.Get("data").String()
 						if data == "" {
 							continue
@@ -354,6 +399,7 @@ func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, origina
 			if partsResult.IsArray() {
 				partsResults := partsResult.Array()
 				var toolCalls [][]byte
+				lastToolCall := -1
 				var images [][]byte
 				var textContent strings.Builder
 				var reasoningContent strings.Builder
@@ -362,14 +408,37 @@ func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, origina
 
 				for i := 0; i < len(partsResults); i++ {
 					partResult := partsResults[i]
+					if geminicommon.HasUnsupportedPartPayload(partResult, "text", "functionCall", "inlineData", "inline_data", "audioTranscription") {
+						lastToolCall = -1
+						continue
+					}
 					partTextResult := partResult.Get("text")
 					functionCallResult := partResult.Get("functionCall")
 					inlineDataResult := partResult.Get("inlineData")
 					if !inlineDataResult.Exists() {
 						inlineDataResult = partResult.Get("inline_data")
 					}
+					thoughtSignatureResult := partResult.Get("thoughtSignature")
+					if !thoughtSignatureResult.Exists() {
+						thoughtSignatureResult = partResult.Get("thought_signature")
+					}
+					thoughtSignature := geminiOpenAIToolThoughtSignature(thoughtSignatureResult.String())
+
+					hasTextPayload := partTextResult.Exists() && partTextResult.String() != ""
+					hasContentPayload := hasTextPayload || functionCallResult.Exists() || inlineDataResult.Exists()
+
+					// Keep a detached signature on its preceding tool, not across text or images.
+					if thoughtSignatureResult.String() != "" && !hasContentPayload {
+						if thoughtSignature != "" && lastToolCall >= 0 {
+							toolCalls[lastToolCall], _ = sjson.SetBytes(toolCalls[lastToolCall], "extra_content.google.thought_signature", thoughtSignature)
+						}
+						continue
+					}
 
 					if partTextResult.Exists() {
+						if partTextResult.String() != "" {
+							lastToolCall = -1
+						}
 						// Append text content, distinguishing between regular content and reasoning.
 						if partResult.Get("thought").Bool() {
 							hasReasoningContent = true
@@ -388,8 +457,13 @@ func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, origina
 						if fcArgsResult := functionCallResult.Get("args"); fcArgsResult.Exists() {
 							functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "function.arguments", fcArgsResult.Raw)
 						}
+						if thoughtSignature != "" {
+							functionCallItemTemplate, _ = sjson.SetBytes(functionCallItemTemplate, "extra_content.google.thought_signature", thoughtSignature)
+						}
 						toolCalls = append(toolCalls, functionCallItemTemplate)
+						lastToolCall = len(toolCalls) - 1
 					} else if inlineDataResult.Exists() {
+						lastToolCall = -1
 						data := inlineDataResult.Get("data").String()
 						if data != "" {
 							mimeType := inlineDataResult.Get("mimeType").String()
