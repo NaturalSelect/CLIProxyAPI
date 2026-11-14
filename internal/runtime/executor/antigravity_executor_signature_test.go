@@ -408,6 +408,93 @@ func TestAntigravityStreamMovesSystemInstructionToReminder(t *testing.T) {
 	}
 }
 
+func TestAntigravitySystemReminderAppliesToClaudeTarget(t *testing.T) {
+	payload := []byte(`{"model":"claude-sonnet-4-6","max_tokens":64,"system":"Answer in French.","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	sse := "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n"
+
+	type callFunc func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error
+	tests := []struct {
+		name string
+		call callFunc
+	}{
+		{"Execute", func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error {
+			_, err := e.Execute(context.Background(), auth, req, opts)
+			return err
+		}},
+		{"ExecuteStream", func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error {
+			result, err := e.ExecuteStream(context.Background(), auth, req, opts)
+			if err != nil {
+				return err
+			}
+			for chunk := range result.Chunks {
+				if chunk.Err != nil {
+					return chunk.Err
+				}
+			}
+			return nil
+		}},
+		{"CountTokens", func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error {
+			_, err := e.CountTokens(context.Background(), auth, req, opts)
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			captured := make(chan []byte, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, errRead := io.ReadAll(r.Body)
+				if errRead != nil {
+					t.Errorf("read request body: %v", errRead)
+					return
+				}
+				select {
+				case captured <- body:
+				default:
+				}
+				if r.URL.Path == antigravityCountTokensPath {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"totalTokens":42}`))
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte(sse))
+			}))
+			defer server.Close()
+
+			executor := NewAntigravityExecutor(&config.Config{
+				Antigravity:  config.AntigravityConfig{SystemReminder: true},
+				RequestRetry: 1,
+			})
+			auth := testAntigravityAuth(server.URL)
+			auth.Metadata["project_id"] = "project-1"
+			errCall := tt.call(executor, auth, cliproxyexecutor.Request{
+				Model:   "claude-sonnet-4-6",
+				Payload: payload,
+			}, cliproxyexecutor.Options{
+				SourceFormat:    sdktranslator.FormatClaude,
+				ResponseFormat:  sdktranslator.FormatClaude,
+				OriginalRequest: payload,
+				Stream:          tt.name == "ExecuteStream",
+			})
+			if errCall != nil {
+				t.Fatalf("%s error = %v", tt.name, errCall)
+			}
+
+			body := <-captured
+			if got := gjson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\nAnswer in French.\n</system-reminder>" {
+				t.Fatalf("first user part = %q; body=%s", got, body)
+			}
+			if got := gjson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
+				t.Fatalf("second user part = %q, want hello; body=%s", got, body)
+			}
+			if got := gjson.GetBytes(body, "request.systemInstruction.parts.0.text").String(); !strings.HasPrefix(got, "<identity>") || strings.Contains(got, "Answer in French.") {
+				t.Fatalf("static system text = %q; body=%s", got, body)
+			}
+		})
+	}
+}
+
 func TestAntigravityStreamPrependsLeadingUserForGemini(t *testing.T) {
 	assertLeadingFunctionHistory := func(t *testing.T, body []byte) {
 		t.Helper()
