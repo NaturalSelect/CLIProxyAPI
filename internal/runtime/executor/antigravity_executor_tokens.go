@@ -22,6 +22,9 @@ import (
 // CountTokens counts tokens for the given request using the Antigravity API.
 func (e *AntigravityExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
+	if antigravityInTOSPause(e.cfg) {
+		return cliproxyexecutor.Response{}, statusErr{code: http.StatusServiceUnavailable, msg: "antigravity pool paused after TOS_VIOLATION"}
+	}
 
 	from := opts.SourceFormat
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
@@ -168,7 +171,10 @@ func (e *AntigravityExecutor) CountTokens(ctx context.Context, auth *cliproxyaut
 			log.Debugf("antigravity executor: rate limited on base url %s, retrying with fallback base url: %s", baseURL, baseURLs[idx+1])
 			continue
 		}
-		sErr := statusErr{code: httpResp.StatusCode, msg: string(bodyBytes)}
+		if httpResp.StatusCode == http.StatusForbidden {
+			e.applyAntigravityTOSState(e.cfg, auth, bodyBytes)
+		}
+		sErr := newAntigravityStatusErr(httpResp.StatusCode, bodyBytes)
 		if httpResp.StatusCode == http.StatusTooManyRequests {
 			if retryAfter, parseErr := helps.ParseRetryDelay(bodyBytes); parseErr == nil && retryAfter != nil {
 				sErr.retryAfter = retryAfter
@@ -179,7 +185,7 @@ func (e *AntigravityExecutor) CountTokens(ctx context.Context, auth *cliproxyaut
 
 	switch {
 	case lastStatus != 0:
-		sErr := statusErr{code: lastStatus, msg: string(lastBody)}
+		sErr := newAntigravityStatusErr(lastStatus, lastBody)
 		if lastStatus == http.StatusTooManyRequests {
 			if retryAfter, parseErr := helps.ParseRetryDelay(lastBody); parseErr == nil && retryAfter != nil {
 				sErr.retryAfter = retryAfter

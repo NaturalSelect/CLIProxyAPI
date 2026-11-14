@@ -28,6 +28,9 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 		return resp, statusErr{code: http.StatusNotImplemented, msg: "/responses/compact not supported"}
 	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
+	if antigravityInTOSPause(e.cfg) {
+		return resp, statusErr{code: http.StatusServiceUnavailable, msg: "antigravity pool paused after TOS_VIOLATION"}
+	}
 	if inCooldown, remaining, errCooldown := antigravityIsInShortCooldownRequired(ctx, auth, baseModel, time.Now()); errCooldown != nil {
 		return resp, homeKVUnavailableStatusErr(errCooldown)
 	} else if inCooldown && !antigravityShouldBypassShortCooldown(ctx, e.cfg) {
@@ -236,6 +239,9 @@ attemptLoop:
 				if errClear := clearAntigravityReasoningReplayOnInvalidSignature(ctx, replayScope, httpResp.StatusCode, bodyBytes); errClear != nil {
 					// Report the upstream failure rather than the cleanup failure.
 					logAntigravityReasoningReplayDegraded(replayScope, "invalidate", errClear)
+				}
+				if httpResp.StatusCode == http.StatusForbidden {
+					e.applyAntigravityTOSState(e.cfg, auth, bodyBytes)
 				}
 				err = newAntigravityStatusErr(httpResp.StatusCode, bodyBytes)
 				return resp, err
@@ -492,6 +498,9 @@ attemptLoop:
 				if errClear := clearAntigravityReasoningReplayOnInvalidSignature(ctx, replayScope, httpResp.StatusCode, bodyBytes); errClear != nil {
 					// Report the upstream failure rather than the cleanup failure.
 					logAntigravityReasoningReplayDegraded(replayScope, "invalidate", errClear)
+				}
+				if httpResp.StatusCode == http.StatusForbidden {
+					e.applyAntigravityTOSState(e.cfg, auth, bodyBytes)
 				}
 				err = newAntigravityStatusErr(httpResp.StatusCode, bodyBytes)
 				return resp, err

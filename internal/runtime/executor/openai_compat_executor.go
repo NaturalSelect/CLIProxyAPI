@@ -1101,10 +1101,13 @@ func openAICompatStreamDataError(payload []byte, eventName string) (statusErr, b
 }
 
 type statusErr struct {
-	code       int
-	msg        string
-	retryAfter *time.Duration
-	headers    http.Header
+	code             int
+	msg              string
+	retryAfter       *time.Duration
+	headers          http.Header
+	tosViolation     bool
+	tosAppealURL     string
+	tosAppealURLText string
 }
 
 func (e statusErr) Error() string {
@@ -1121,3 +1124,21 @@ func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
 // (e.g. Claude's Anthropic-Ratelimit-Unified-*) from error responses like 429s, which
 // otherwise carry no *http.Response through the executor's error path.
 func (e statusErr) Headers() http.Header { return e.headers }
+
+// IsTerminalTOSViolation marks a 403 PERMISSION_DENIED carrying an ErrorInfo
+// reason=TOS_VIOLATION, which deactivates the credential instead of cooling it.
+func (e statusErr) IsTerminalTOSViolation() bool { return e.tosViolation }
+
+// IsCredentialScoped reports that a TOS suspension applies to the whole credential.
+func (e statusErr) IsCredentialScoped() bool { return e.tosViolation }
+
+// TOSAppealMetadata exposes the operator-facing appeal detail from the upstream error.
+func (e statusErr) TOSAppealMetadata() map[string]string {
+	if !e.tosViolation || (e.tosAppealURL == "" && e.tosAppealURLText == "") {
+		return nil
+	}
+	return map[string]string{
+		"tos_appeal_url":      e.tosAppealURL,
+		"tos_appeal_url_text": e.tosAppealURLText,
+	}
+}

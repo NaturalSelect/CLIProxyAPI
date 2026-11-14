@@ -387,6 +387,15 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 	if claims := extractCodexIDTokenClaims(auth); claims != nil {
 		entry["id_token"] = claims
 	}
+	// Surface the appeal link left by an Antigravity TOS_VIOLATION suspension for operator action.
+	if auth.Metadata != nil {
+		if appeal, ok := auth.Metadata["tos_appeal_url"].(string); ok && strings.TrimSpace(appeal) != "" {
+			entry["tos_appeal_url"] = strings.TrimSpace(appeal)
+		}
+		if appealText, ok := auth.Metadata["tos_appeal_url_text"].(string); ok && strings.TrimSpace(appealText) != "" {
+			entry["tos_appeal_url_text"] = strings.TrimSpace(appealText)
+		}
+	}
 	// Expose priority from Attributes (set by synthesizer from JSON "priority" field).
 	// Fall back to Metadata for auths registered via UploadAuthFile (no synthesizer).
 	if p := strings.TrimSpace(authAttribute(auth, "priority")); p != "" {

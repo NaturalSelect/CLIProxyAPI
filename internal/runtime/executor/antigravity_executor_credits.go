@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -342,9 +343,69 @@ func newAntigravityStatusErr(statusCode int, body []byte) statusErr {
 			retryAfter := antigravityDefaultRateLimitRetryAfter
 			err.retryAfter = &retryAfter
 		}
+	} else if statusCode == http.StatusForbidden {
+		if violation := parseAntigravityTOSViolation(body); violation != nil {
+			err.tosViolation = true
+			err.tosAppealURL = violation.AppealURL
+			err.tosAppealURLText = violation.AppealURLText
+		}
 	}
 	return err
 }
+
+// antigravityTOSViolation is a 403 PERMISSION_DENIED carrying an ErrorInfo
+// reason=TOS_VIOLATION. It is a terminal, service-scoped credential suspension.
+type antigravityTOSViolation struct {
+	AppealURL     string
+	AppealURLText string
+}
+
+// parseAntigravityTOSViolation returns nil for every error shape other than a TOS suspension.
+func parseAntigravityTOSViolation(body []byte) *antigravityTOSViolation {
+	if len(body) == 0 {
+		return nil
+	}
+	if int(gjson.GetBytes(body, "error.code").Int()) != http.StatusForbidden {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "error.status").String()), "PERMISSION_DENIED") {
+		return nil
+	}
+	details := gjson.GetBytes(body, "error.details")
+	if !details.IsArray() {
+		return nil
+	}
+	for _, detail := range details.Array() {
+		if detail.Get("@type").String() != "type.googleapis.com/google.rpc.ErrorInfo" {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(detail.Get("reason").String()), "TOS_VIOLATION") {
+			continue
+		}
+		meta := detail.Get("metadata")
+		return &antigravityTOSViolation{
+			AppealURL:     strings.TrimSpace(meta.Get("appeal_url").String()),
+			AppealURLText: strings.TrimSpace(meta.Get("appeal_url_link_text").String()),
+		}
+	}
+	return nil
+}
+
+// applyAntigravityTOSState arms the optional pool-wide pause and logs the appeal link.
+// The credential itself is deactivated by the auth manager from the returned error.
+func (e *AntigravityExecutor) applyAntigravityTOSState(cfg *config.Config, auth *cliproxyauth.Auth, body []byte) {
+	violation := parseAntigravityTOSViolation(body)
+	if violation == nil || auth == nil {
+		return
+	}
+	markAntigravityTOSPause(cfg)
+	if violation.AppealURL != "" {
+		log.Warnf("antigravity executor: credential %s suspended for TOS_VIOLATION; submit appeal: %s (%s)", auth.ID, redactTOSAppealURL(violation.AppealURL), violation.AppealURLText)
+	} else {
+		log.Warnf("antigravity executor: credential %s suspended for TOS_VIOLATION", auth.ID)
+	}
+}
+
 func (e *AntigravityExecutor) maybeRefreshAntigravityCreditsHint(ctx context.Context, auth *cliproxyauth.Auth, accessToken string) {
 	if e == nil || auth == nil || !antigravityCreditsRetryEnabled(e.cfg) {
 		return
@@ -821,4 +882,86 @@ func antigravityWait(ctx context.Context, wait time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+const antigravityTOSPauseKVKey = "cpa:antigravity:tos-pause:until"
+
+// antigravityTOSPauseUntil holds the pool-wide protective pause deadline as Unix nanoseconds.
+// The home KV store shares the same deadline across instances when the control plane is active.
+var antigravityTOSPauseUntil atomic.Int64
+
+// antigravityTOSPauseWindow resolves the configured pause window, defaulting to 6h.
+// "0", "off", "false", "none" and "disabled" turn the pause off.
+func antigravityTOSPauseWindow(cfg *config.Config) (time.Duration, bool) {
+	raw := "6h"
+	if cfg != nil {
+		if trimmed := strings.TrimSpace(cfg.Antigravity.TOSPauseWindow); trimmed != "" {
+			raw = trimmed
+		}
+	}
+	switch strings.ToLower(raw) {
+	case "0", "off", "false", "none", "disabled":
+		return 0, false
+	}
+	window, err := time.ParseDuration(raw)
+	if err != nil || window <= 0 {
+		return 6 * time.Hour, true
+	}
+	return window, true
+}
+
+// markAntigravityTOSPause arms the pool-wide pause. Only the TOS path may call it,
+// so transient 429 quota errors never start or extend the pause.
+func markAntigravityTOSPause(cfg *config.Config) {
+	window, enabled := antigravityTOSPauseWindow(cfg)
+	if !enabled {
+		return
+	}
+	until := time.Now().Add(window)
+	antigravityTOSPauseUntil.Store(until.UnixNano())
+	if client, homeMode, errClient := currentAntigravityKVClient(); homeMode {
+		if errClient != nil {
+			log.Errorf("antigravity executor: home kv tos pause write error: %v", errClient)
+		} else if _, errSet := client.KVSet(context.Background(), antigravityTOSPauseKVKey, []byte(strconv.FormatInt(until.UnixNano(), 10)), homekv.KVSetOptions{EX: window + 5*time.Second}); errSet != nil {
+			log.Errorf("antigravity executor: home kv tos pause write error: %v", errSet)
+		}
+	}
+	log.Warnf("antigravity executor: TOS_VIOLATION pause armed for %s (pool-wide until %s)", window, until.Format(time.RFC3339))
+}
+
+// antigravityInTOSPause reports whether the Antigravity pool is paused after a TOS suspension.
+func antigravityInTOSPause(cfg *config.Config) bool {
+	if _, enabled := antigravityTOSPauseWindow(cfg); !enabled {
+		return false
+	}
+	now := time.Now()
+	if time.Unix(0, antigravityTOSPauseUntil.Load()).After(now) {
+		return true
+	}
+	client, homeMode, errClient := currentAntigravityKVClient()
+	if !homeMode {
+		return false
+	}
+	if errClient != nil {
+		log.Errorf("antigravity executor: home kv tos pause read error: %v", errClient)
+		return false
+	}
+	raw, found, errGet := client.KVGet(context.Background(), antigravityTOSPauseKVKey)
+	if errGet != nil || !found {
+		return false
+	}
+	untilNano, errParse := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if errParse != nil {
+		return false
+	}
+	return time.Unix(0, untilNano).After(now)
+}
+
+// redactTOSAppealURL drops the query and fragment so a signed appeal link cannot leak into logs.
+func redactTOSAppealURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if idx := strings.IndexAny(trimmed, "?#"); idx >= 0 {
+		trimmed = trimmed[:idx]
+	}
+	return trimmed
 }

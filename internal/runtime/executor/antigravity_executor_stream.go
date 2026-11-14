@@ -25,6 +25,9 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		return nil, statusErr{code: http.StatusNotImplemented, msg: "/responses/compact not supported"}
 	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
+	if antigravityInTOSPause(e.cfg) {
+		return nil, statusErr{code: http.StatusServiceUnavailable, msg: "antigravity pool paused after TOS_VIOLATION"}
+	}
 
 	ctx = context.WithValue(ctx, "alt", "")
 	if inCooldown, remaining, errCooldown := antigravityIsInShortCooldownRequired(ctx, auth, baseModel, time.Now()); errCooldown != nil {
@@ -244,6 +247,9 @@ attemptLoop:
 				if errClear := clearAntigravityReasoningReplayOnInvalidSignature(ctx, replayScope, httpResp.StatusCode, bodyBytes); errClear != nil {
 					// Report the upstream failure rather than the cleanup failure.
 					logAntigravityReasoningReplayDegraded(replayScope, "invalidate", errClear)
+				}
+				if httpResp.StatusCode == http.StatusForbidden {
+					e.applyAntigravityTOSState(e.cfg, auth, bodyBytes)
 				}
 				err = newAntigravityStatusErr(httpResp.StatusCode, bodyBytes)
 				return nil, err

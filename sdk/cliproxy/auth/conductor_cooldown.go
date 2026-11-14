@@ -736,7 +736,11 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			auth.Failed++
 		}
 
-		if result.Success {
+		if auth.Disabled || auth.Status == StatusDisabled {
+			// NOTE: A disabled credential (operator action or terminal TOS suspension) stays
+			// disabled until explicitly re-enabled; late results must not revive it or arm a cooldown.
+			auth.UpdatedAt = now
+		} else if result.Success {
 			if auth.Quota.Reason == "credential_quota" && auth.Quota.NextRecoverAt.After(now) {
 				// Retain active credential-scoped cooldown
 			} else if modelKey != "" {
@@ -759,7 +763,9 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 				auth.UpdatedAt = now
 			}
 		} else {
-			if isCredentialScopedResultError(result.Error) {
+			if isTOSViolationResultError(result.Error) {
+				applyTOSViolationState(auth, result.Error, now)
+			} else if isCredentialScopedResultError(result.Error) {
 				disableCooling := m.cooldownDisabledForAuth(auth)
 				applyAuthFailureState(auth, result.Error, result.RetryAfter, now, disableCooling)
 			} else if modelKey != "" {
@@ -1304,12 +1310,7 @@ func cloneError(err *Error) *Error {
 	if err == nil {
 		return nil
 	}
-	return &Error{
-		Code:       err.Code,
-		Message:    err.Message,
-		Retryable:  err.Retryable,
-		HTTPStatus: err.HTTPStatus,
-	}
+	return err.Clone()
 }
 
 func errorString(err error) string {
@@ -1386,6 +1387,17 @@ func resultErrorFromError(err error) *Error {
 		// request-scoped (which would also stop credential fallback).
 		if resultErr.Code == "" || resultErr.Code == connectionLifecycleErrorCode {
 			resultErr.Code = connectionLifecycleErrorCode
+		}
+	}
+	type tosViolationProvider interface {
+		IsTerminalTOSViolation() bool
+		TOSAppealMetadata() map[string]string
+	}
+	var tosErr tosViolationProvider
+	if errors.As(err, &tosErr) && tosErr != nil && tosErr.IsTerminalTOSViolation() {
+		resultErr.Code = tosViolationErrorCode
+		if meta := tosErr.TOSAppealMetadata(); len(meta) > 0 {
+			resultErr.Metadata = meta
 		}
 	}
 	return resultErr
@@ -2168,4 +2180,37 @@ func nextQuotaCooldown(prevLevel int, disableCooling bool) (time.Duration, int) 
 		return quotaBackoffMax, prevLevel
 	}
 	return cooldown, prevLevel + 1
+}
+
+func isTOSViolationResultError(err *Error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(err.Code), tosViolationErrorCode)
+}
+
+// applyTOSViolationState deactivates the credential after a terminal TOS suspension
+// and keeps the appeal detail on the record for operator tooling.
+func applyTOSViolationState(auth *Auth, resultErr *Error, now time.Time) {
+	if auth == nil {
+		return
+	}
+	auth.Status = StatusDisabled
+	auth.Disabled = true
+	auth.Unavailable = true
+	auth.StatusMessage = tosViolationErrorCode
+	auth.NextRetryAfter = time.Time{}
+	auth.UpdatedAt = now
+	auth.LastError = cloneError(resultErr)
+	if resultErr == nil || len(resultErr.Metadata) == 0 {
+		return
+	}
+	if auth.Metadata == nil {
+		auth.Metadata = make(map[string]any)
+	}
+	for key, value := range resultErr.Metadata {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			auth.Metadata[key] = trimmed
+		}
+	}
 }
