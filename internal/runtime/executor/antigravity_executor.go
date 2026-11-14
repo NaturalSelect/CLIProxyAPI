@@ -97,6 +97,15 @@ func (e *AntigravityExecutor) obfuscateSensitiveWords(payload []byte) []byte {
 	return helps.ObfuscateSensitiveWordsInSystemInstruction(payload, matcher)
 }
 
+func (e *AntigravityExecutor) cloakSystemInstruction(payload []byte) []byte {
+	if e != nil && e.cfg != nil && e.cfg.Antigravity.SystemReminder {
+		payload = helps.MoveAntigravitySystemInstructionToReminder(payload)
+	} else {
+		payload = e.prependIdentityInstruction(payload)
+	}
+	return e.obfuscateSensitiveWords(payload)
+}
+
 // Each Antigravity credential gets its own HTTP/1.1 connection pool. Sessions routed
 // to the same auth reuse that pool, while different OAuth identities never share a
 // TCP/TLS connection, matching the native client's one-credential process model.

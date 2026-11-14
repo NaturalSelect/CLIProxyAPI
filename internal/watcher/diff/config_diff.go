@@ -120,6 +120,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldCfg.Antigravity.IdentityConfuse != newCfg.Antigravity.IdentityConfuse {
 		changes = append(changes, fmt.Sprintf("antigravity.identity-confuse: %t -> %t", oldCfg.Antigravity.IdentityConfuse, newCfg.Antigravity.IdentityConfuse))
 	}
+	if oldCfg.Antigravity.SystemReminder != newCfg.Antigravity.SystemReminder {
+		changes = append(changes, fmt.Sprintf("antigravity.system-reminder: %t -> %t", oldCfg.Antigravity.SystemReminder, newCfg.Antigravity.SystemReminder))
+	}
 
 	if oldCfg.Codex.IdentityConfuse != newCfg.Codex.IdentityConfuse {
 		changes = append(changes, fmt.Sprintf("codex.identity-confuse: %t -> %t", oldCfg.Codex.IdentityConfuse, newCfg.Codex.IdentityConfuse))

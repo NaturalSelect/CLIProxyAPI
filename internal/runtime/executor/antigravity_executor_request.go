@@ -536,7 +536,16 @@ func generateStableSessionID(payload []byte) string {
 		if content.Get("role").String() != "user" {
 			return true
 		}
-		text := content.Get("parts.0.text").String()
+		text := ""
+		content.Get("parts").ForEach(func(_, part gjson.Result) bool {
+			partText := part.Get("text").String()
+			// NOTE: Skip injected <system-reminder> parts so the ID follows the real user text.
+			if partText == "" || strings.HasPrefix(partText, "<system-reminder>") {
+				return true
+			}
+			text = partText
+			return false
+		})
 		if text == "" {
 			return true
 		}

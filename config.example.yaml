@@ -287,6 +287,9 @@ codex:
 #   sensitive-words:             # optional: words to obfuscate with zero-width characters in system instructions
 #     - "API"
 #     - "proxy"
+#   system-reminder: false         # optional: move the real system prompt into a <system-reminder> at the start of the
+#                                  # first user turn (Claude Code style); systemInstruction keeps only the Antigravity identity
+#                                  # plus a note granting that reminder system-level authority. Moved text is not obfuscated.
 #   tos-pause-window: "6h"         # optional: pool-wide pause after the first 403 TOS_VIOLATION (default "6h";
 #                                  # "0"/"off"/"false"/"none"/"disabled" turns the pause off, the credential is still deactivated)
 

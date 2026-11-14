@@ -195,6 +195,8 @@ type AntigravityConfig struct {
 	IdentityConfuse bool `yaml:"identity-confuse" json:"identity-confuse"`
 	// SensitiveWords is a list of words to obfuscate with zero-width characters in system instructions.
 	SensitiveWords []string `yaml:"sensitive-words,omitempty" json:"sensitive-words,omitempty"`
+	// NOTE: SystemReminder moves the caller system instruction into a <system-reminder> block at the start of the first user turn.
+	SystemReminder bool `yaml:"system-reminder" json:"system-reminder"`
 	// NOTE: TOSPauseWindow is a Go duration (default "6h"); "0", "off", "false", "none" or "disabled" turns the pool-wide pause off.
 	TOSPauseWindow string `yaml:"tos-pause-window,omitempty" json:"tos-pause-window,omitempty"`
 }

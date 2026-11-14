@@ -58,8 +58,7 @@ func (e *AntigravityExecutor) CountTokens(ctx context.Context, auth *cliproxyaut
 	if err != nil {
 		return cliproxyexecutor.Response{}, err
 	}
-	payload = e.prependIdentityInstruction(payload)
-	payload = e.obfuscateSensitiveWords(payload)
+	payload = e.cloakSystemInstruction(payload)
 	payload = sanitizeAntigravityGeminiRequestSignatures(baseModel, payload)
 	preparedPayload, _, errReplay := prepareAntigravityGeminiReasoningReplayPayload(ctx, baseModel, req, opts, payload)
 	if errReplay != nil {

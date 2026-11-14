@@ -311,6 +311,103 @@ func TestAntigravityStreamObfuscatesSensitiveSystemInstruction(t *testing.T) {
 	}
 }
 
+func TestAntigravitySystemReminderKeepsMovedTextUnobfuscated(t *testing.T) {
+	executor := NewAntigravityExecutor(&config.Config{
+		Antigravity: config.AntigravityConfig{SystemReminder: true, SensitiveWords: []string{"proxy"}},
+	})
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Use proxy safely"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
+
+	got := executor.cloakSystemInstruction(payload)
+
+	if reminder := gjson.GetBytes(got, "request.contents.0.parts.0.text").String(); reminder != "<system-reminder>\nUse proxy safely\n</system-reminder>" {
+		t.Fatalf("reminder = %q, want unobfuscated moved text", reminder)
+	}
+	static := gjson.GetBytes(got, "request.systemInstruction.parts.0.text").String()
+	if !strings.Contains(static, "<identity>") || !strings.Contains(static, "<system-reminder>") {
+		t.Fatalf("static system text = %q, want identity and reminder note", static)
+	}
+}
+
+func TestAntigravitySystemReminderDoesNotDuplicateIdentity(t *testing.T) {
+	executor := NewAntigravityExecutor(&config.Config{
+		Antigravity: config.AntigravityConfig{SystemReminder: true, IdentityConfuse: true},
+	})
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
+
+	got := executor.cloakSystemInstruction(payload)
+
+	if count := strings.Count(string(got), "<identity>"); count != 1 {
+		t.Fatalf("identity count = %d, want 1; body=%s", count, got)
+	}
+}
+
+func TestAntigravitySystemReminderDisabledKeepsLegacyCloaking(t *testing.T) {
+	cfg := &config.Config{Antigravity: config.AntigravityConfig{IdentityConfuse: true, SensitiveWords: []string{"proxy"}}}
+	executor := NewAntigravityExecutor(cfg)
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Use proxy safely"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
+
+	want := executor.obfuscateSensitiveWords(executor.prependIdentityInstruction(payload))
+	got := executor.cloakSystemInstruction(payload)
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf("cloakSystemInstruction() = %s, want %s", got, want)
+	}
+}
+
+func TestAntigravityStreamMovesSystemInstructionToReminder(t *testing.T) {
+	captured := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, errRead := io.ReadAll(r.Body)
+		if errRead != nil {
+			t.Errorf("read request body: %v", errRead)
+			return
+		}
+		captured <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {}\n\n"))
+	}))
+	defer server.Close()
+
+	executor := NewAntigravityExecutor(&config.Config{
+		Antigravity:  config.AntigravityConfig{SystemReminder: true},
+		RequestRetry: 1,
+	})
+	result, errExecute := executor.ExecuteStream(context.Background(), &cliproxyauth.Auth{
+		Metadata: map[string]any{
+			"access_token": "token-123",
+			"expired":      time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+			"project_id":   "project-1",
+		},
+		Attributes: map[string]string{"base_url": server.URL},
+	}, cliproxyexecutor.Request{
+		Model:   "gemini-3.6-flash-high",
+		Payload: []byte(`{"model":"gemini-3.6-flash-high","instructions":"Answer in French.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FormatOpenAIResponse,
+		ResponseFormat: sdktranslator.FormatOpenAIResponse,
+		Stream:         true,
+	})
+	if errExecute != nil {
+		t.Fatalf("ExecuteStream() error = %v", errExecute)
+	}
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("stream chunk error = %v", chunk.Err)
+		}
+	}
+
+	body := <-captured
+	if got := gjson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\nAnswer in French.\n</system-reminder>" {
+		t.Fatalf("first user part = %q; body=%s", got, body)
+	}
+	if got := gjson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
+		t.Fatalf("second user part = %q, want hello; body=%s", got, body)
+	}
+	if got := gjson.GetBytes(body, "request.systemInstruction.parts.0.text").String(); !strings.HasPrefix(got, "<identity>") || strings.Contains(got, "Answer in French.") {
+		t.Fatalf("static system text = %q; body=%s", got, body)
+	}
+}
+
 func TestAntigravityStreamPrependsLeadingUserForGemini(t *testing.T) {
 	assertLeadingFunctionHistory := func(t *testing.T, body []byte) {
 		t.Helper()

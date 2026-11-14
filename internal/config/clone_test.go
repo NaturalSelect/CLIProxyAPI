@@ -30,6 +30,18 @@ func TestParseConfigBytes_AntigravitySensitiveWords(t *testing.T) {
 	}
 }
 
+func TestParseConfigBytes_AntigravitySystemReminder(t *testing.T) {
+	cfg, errParse := ParseConfigBytes([]byte(`antigravity:
+  system-reminder: true
+`))
+	if errParse != nil {
+		t.Fatalf("ParseConfigBytes() error = %v", errParse)
+	}
+	if !cfg.Antigravity.SystemReminder {
+		t.Fatal("Antigravity.SystemReminder = false, want true")
+	}
+}
+
 func TestCloneForRuntimeDeepCopiesConfig(t *testing.T) {
 	cfg := sampleCloneRuntimeConfig()
 

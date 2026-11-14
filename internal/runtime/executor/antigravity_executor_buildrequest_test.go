@@ -204,6 +204,25 @@ func TestAntigravityBuildRequestUsesDerivedSessionIDAndPreservesExplicit(t *test
 	}
 }
 
+func TestGenerateStableSessionIDSkipsSystemReminderParts(t *testing.T) {
+	t.Parallel()
+
+	plain := generateStableSessionID([]byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`))
+	withReminder := generateStableSessionID([]byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"<system-reminder>\nRules A\n</system-reminder>"},{"text":"hello"}]}]}}`))
+	otherReminder := generateStableSessionID([]byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"<system-reminder>\nRules B\n</system-reminder>"},{"text":"hello"}]}]}}`))
+	otherUserText := generateStableSessionID([]byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"<system-reminder>\nRules A\n</system-reminder>"},{"text":"goodbye"}]}]}}`))
+
+	if withReminder != plain {
+		t.Fatalf("session ID with reminder = %q, want %q", withReminder, plain)
+	}
+	if otherReminder != plain {
+		t.Fatalf("session ID with other reminder = %q, want %q", otherReminder, plain)
+	}
+	if otherUserText == plain {
+		t.Fatalf("session ID should change with the real user text, got %q", otherUserText)
+	}
+}
+
 func TestAntigravityBuildRequest_PreservesIndependentWebSearchRequestType(t *testing.T) {
 	body := buildRequestBodyFromRawPayload(t, "gemini-3.1-flash-lite", []byte(`{
 		"requestType": "web_search",
