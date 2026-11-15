@@ -551,7 +551,7 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 		if errClear := clearAntigravityReasoningReplayOnInvalidSignature(ctx, replayScope, httpResp.StatusCode, b); errClear != nil {
 			logAntigravityReasoningReplayDegraded(replayScope, "invalidate", errClear)
 		}
-		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		err = newGeminiStatusErr(httpResp.StatusCode, httpResp.Header, b)
 		return resp, err
 	}
 	data, errRead := io.ReadAll(httpResp.Body)
@@ -734,7 +734,7 @@ func (e *GeminiVertexExecutor) executeWithAPIKey(ctx context.Context, auth *clip
 		if errClear := clearAntigravityReasoningReplayOnInvalidSignature(ctx, replayScope, httpResp.StatusCode, b); errClear != nil {
 			logAntigravityReasoningReplayDegraded(replayScope, "invalidate", errClear)
 		}
-		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		err = newGeminiStatusErr(httpResp.StatusCode, httpResp.Header, b)
 		return resp, err
 	}
 	data, errRead := io.ReadAll(httpResp.Body)
@@ -900,7 +900,7 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 		if errClear := clearAntigravityReasoningReplayOnInvalidSignature(ctx, replayScope, httpResp.StatusCode, b); errClear != nil {
 			logAntigravityReasoningReplayDegraded(replayScope, "invalidate", errClear)
 		}
-		return nil, statusErr{code: httpResp.StatusCode, msg: string(b)}
+		return nil, newGeminiStatusErr(httpResp.StatusCode, httpResp.Header, b)
 	}
 
 	replayAccumulator := newAntigravityReasoningReplayAccumulator(replayScope, replayRequestPayload)
@@ -1263,7 +1263,7 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 		if errClear := clearAntigravityReasoningReplayOnInvalidSignature(ctx, replayScope, httpResp.StatusCode, b); errClear != nil {
 			logAntigravityReasoningReplayDegraded(replayScope, "invalidate", errClear)
 		}
-		return nil, statusErr{code: httpResp.StatusCode, msg: string(b)}
+		return nil, newGeminiStatusErr(httpResp.StatusCode, httpResp.Header, b)
 	}
 
 	replayAccumulator := newAntigravityReasoningReplayAccumulator(replayScope, replayRequestPayload)
@@ -1610,7 +1610,7 @@ func (e *GeminiVertexExecutor) countTokensWithServiceAccount(ctx context.Context
 			helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 		}
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-		return cliproxyexecutor.Response{}, statusErr{code: httpResp.StatusCode, msg: string(b)}
+		return cliproxyexecutor.Response{}, newGeminiStatusErr(httpResp.StatusCode, httpResp.Header, b)
 	}
 	data, errRead := io.ReadAll(httpResp.Body)
 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
@@ -1719,7 +1719,7 @@ func (e *GeminiVertexExecutor) countTokensWithAPIKey(ctx context.Context, auth *
 			helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 		}
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-		return cliproxyexecutor.Response{}, statusErr{code: httpResp.StatusCode, msg: string(b)}
+		return cliproxyexecutor.Response{}, newGeminiStatusErr(httpResp.StatusCode, httpResp.Header, b)
 	}
 	data, errRead := io.ReadAll(httpResp.Body)
 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
@@ -2028,7 +2028,7 @@ func (e *GeminiVertexExecutor) executeInteractions(ctx context.Context, auth *cl
 	}
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), data))
-		err = statusErr{code: httpResp.StatusCode, msg: string(data)}
+		err = newGeminiStatusErr(httpResp.StatusCode, httpResp.Header, data)
 		return resp, err
 	}
 	reporter.ObserveResponseModel(data)
@@ -2154,7 +2154,9 @@ func (e *GeminiVertexExecutor) executeInteractionsStream(ctx context.Context, au
 		if errRead != nil {
 			helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 		}
-		return nil, statusErr{code: httpResp.StatusCode, msg: string(data)}
+		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), data))
+		err = newGeminiStatusErr(httpResp.StatusCode, httpResp.Header, data)
+		return nil, err
 	}
 
 	out := make(chan cliproxyexecutor.StreamChunk)
