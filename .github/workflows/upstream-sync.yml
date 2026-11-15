@@ -50,11 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           bash .github/scripts/refresh-model-catalogs.sh
-          unformatted_files="$(gofmt -l .)"
-          if [[ -n "${unformatted_files}" ]]; then
-            printf 'The following Go files require gofmt:\n%s\n' "${unformatted_files}"
-            exit 1
-          fi
+          bash .github/scripts/check-fork-gofmt.sh
           go build -o test-output ./cmd/server
           rm -f test-output
           go test ./...
