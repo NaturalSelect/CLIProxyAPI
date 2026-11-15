@@ -1025,7 +1025,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				}
 			}
 			st.StreamPartIndex = currentPartIndex
-			if geminicommon.HasUnsupportedPartPayload(part, "text", "functionCall") {
+			if geminicommon.HasUnsupportedPartPayload(part, "text", "functionCall", "inlineData", "inline_data") {
 				// NOTE: Signatures must not bind across a part this converter cannot represent.
 				if st.PendingReasoningSignature != "" {
 					emitTrailingDetachedReasoning(st.PendingReasoningSignature)
@@ -1036,7 +1036,8 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				return true
 			}
 			if st.UnsupportedBoundary {
-				if !functionCall.Exists() && (!text.Exists() || text.String() == "") {
+				hasInlineData := part.Get("inlineData").Exists() || part.Get("inline_data").Exists()
+				if !functionCall.Exists() && !hasInlineData && (!text.Exists() || text.String() == "") {
 					return true
 				}
 				st.UnsupportedBoundary = false
@@ -2184,7 +2185,7 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 	if parts := root.Get("candidates.0.content.parts"); parts.Exists() && parts.IsArray() {
 		unsupportedBoundary := false
 		parts.ForEach(func(key, p ojson.Result) bool {
-			if geminicommon.HasUnsupportedPartPayload(p, "text", "functionCall") {
+			if geminicommon.HasUnsupportedPartPayload(p, "text", "functionCall", "inlineData", "inline_data") {
 				// NOTE: Signatures must not bind across a part this converter cannot represent.
 				flushReasoningOutput()
 				flushMessageOutput()
@@ -2192,7 +2193,8 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 				return true
 			}
 			if unsupportedBoundary {
-				if text := p.Get("text"); !p.Get("functionCall").Exists() && (!text.Exists() || text.String() == "") {
+				hasInlineData := p.Get("inlineData").Exists() || p.Get("inline_data").Exists()
+				if text := p.Get("text"); !p.Get("functionCall").Exists() && !hasInlineData && (!text.Exists() || text.String() == "") {
 					return true
 				}
 				unsupportedBoundary = false

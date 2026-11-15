@@ -88,7 +88,6 @@ func TestGeminiResponsesUnsupportedPayloadDoesNotRetargetSignature(t *testing.T)
 	function := `{"functionCall":{"name":"lookup","args":{}}}`
 	text := `{"text":"answer"}`
 	file := `{"fileData":{"mimeType":"image/png","fileUri":"gs://bucket/image"}}`
-	image := `{"inlineData":{"mimeType":"image/png","data":"eA=="}}`
 	code := `{"executableCode":{"language":"PYTHON","code":"1"}}`
 	codeResult := `{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":"1"}}`
 	emptyThought := `{"text":"","thought":true}`
@@ -107,7 +106,7 @@ func TestGeminiResponsesUnsupportedPayloadDoesNotRetargetSignature(t *testing.T)
 		{"function then tail", []string{function, tail(sig)}, []string{"function_call"}, []string{sig}},
 		{"text then tail", []string{text, tail(sig)}, []string{"message"}, []string{sig}},
 		{"function, file, tail", []string{function, file, tail(sig)}, []string{"function_call"}, nil},
-		{"function, image, detached", []string{function, image, detached(sig)}, []string{"function_call"}, nil},
+		{"function, code result, detached", []string{function, codeResult, detached(sig)}, []string{"function_call"}, nil},
 		{"function, code, tail", []string{function, code, tail(sig)}, []string{"function_call"}, nil},
 		{"text, file, tail", []string{text, file, tail(sig)}, []string{"message"}, nil},
 		{"text, code result, detached", []string{text, codeResult, detached(sig)}, []string{"message"}, nil},
