@@ -9,7 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 type enrichingAuthStore struct{ err error }
@@ -47,7 +47,7 @@ func TestManagerSavedFieldsPublished(t *testing.T) {
 }
 
 func testManagerSavedFieldsPublished(t *testing.T, saveErr error) {
-	for _, operation := range []string{"Register", "Update"} {
+	for _, operation := range []string{"Register", "Update", "Prepare", "Refresh"} {
 		t.Run(operation, func(t *testing.T) {
 			ctx := context.Background()
 			hook := &savedFieldsHook{}
@@ -69,6 +69,10 @@ func testManagerSavedFieldsPublished(t *testing.T, saveErr error) {
 				switch operation {
 				case "Update":
 					returned, err = manager.Update(ctx, input)
+				case "Prepare":
+					returned, err = manager.UpdatePreparedAuth(ctx, base, input)
+				case "Refresh":
+					returned, err = manager.UpdateRefreshedAuth(ctx, base, input)
 				}
 			}
 			if err != nil {
@@ -231,6 +235,9 @@ func testManagerSavedFieldsConcurrentLifecycle(t *testing.T, saveErr error) {
 						if published.RegistrationEpoch <= input.RegistrationEpoch {
 							t.Fatal("re-registration did not advance epoch")
 						}
+						if _, errUpdate := manager.UpdateRefreshedAuth(ctx, input, input.Clone()); errUpdate == nil {
+							t.Fatal("accepted stale registration after re-register")
+						}
 					}
 				})
 			})
@@ -359,14 +366,14 @@ func TestManagerSavePreservesConcurrentRefreshState(t *testing.T) {
 					}
 				}()
 				<-store.entered
-				pendingAt := time.Now()
-				if !manager.markRefreshPending(base.ID, pendingAt) {
+				job := manager.markRefreshPending(nil, base.ID, base.RegistrationEpoch, time.Now())
+				if job == nil {
 					t.Fatal("failed to schedule concurrent refresh")
 				}
 				close(store.release)
 				<-done
 				got, _ := manager.GetByID(base.ID)
-				if !got.NextRefreshAfter.Equal(pendingAt.Add(refreshPendingBackoff)) {
+				if !got.NextRefreshAfter.Equal(job.pendingUntil) {
 					t.Fatal("save lost concurrent refresh scheduling")
 				}
 				if got.Attributes[AttributePath] == "" {
@@ -455,4 +462,60 @@ func TestMergeAuthSaveDeltaMapChanges(t *testing.T) {
 			t.Fatalf("incorrect merge: %+v", target)
 		}
 	})
+}
+
+func TestManagerSavedFieldsMetaMintPublication(t *testing.T) {
+	for _, operation := range []string{"Prepare", "Refresh"} {
+		for _, fail := range []bool{false, true} {
+			name := operation + "/success"
+			if fail {
+				name = operation + "/failure"
+			}
+			t.Run(name, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					ctx := context.Background()
+					store := &blockingEnrichingAuthStore{entered: make(chan struct{}), release: make(chan struct{})}
+					if fail {
+						store.err = errors.New("mint save failed")
+					}
+					hook := &savedFieldsHook{}
+					manager := NewManager(store, nil, hook)
+					base, err := manager.Register(WithSkipPersist(ctx), &Auth{ID: "meta-mint", Provider: "meta", Status: StatusActive, Metadata: map[string]any{"access_token": "old"}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					updated := base.Clone()
+					updated.Metadata["access_token"] = "minted"
+					done := make(chan struct{})
+					var returned *Auth
+					var errUpdate error
+					go func() {
+						defer close(done)
+						if operation == "Prepare" {
+							returned, errUpdate = manager.UpdatePreparedAuth(ctx, base, updated)
+						} else {
+							returned, errUpdate = manager.UpdateRefreshedAuth(ctx, base, updated)
+						}
+					}()
+					<-store.entered
+					pending, _ := manager.GetByID(base.ID)
+					if !reflect.DeepEqual(base, pending) {
+						t.Fatal("mint published before persistence completed")
+					}
+					close(store.release)
+					<-done
+					got, _ := manager.GetByID(base.ID)
+					if fail {
+						if errUpdate == nil || returned != nil || !reflect.DeepEqual(base, got) || !reflect.DeepEqual(base, hook.auth) {
+							t.Fatal("failed Meta mint changed published state")
+						}
+					} else {
+						if errUpdate != nil || got.Metadata["access_token"] != "minted" || got.FileName == "" || !reflect.DeepEqual(got, returned) || !reflect.DeepEqual(got, hook.auth) {
+							t.Fatalf("successful mint snapshots differ: %v", errUpdate)
+						}
+					}
+				})
+			})
+		}
+	}
 }

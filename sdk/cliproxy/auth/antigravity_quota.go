@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	log "github.com/sirupsen/logrus"
-	"github.com/tidwall/gjson"
 )
 
 // antigravityQuotaBaseURLDaily and antigravityQuotaBaseURLProd mirror the
@@ -137,19 +137,19 @@ func antigravityQuotaBaseURLCandidates(a *Auth) []string {
 // window recognized are dropped. It reports ok=false when no group yielded a
 // usable window.
 func parseAntigravityQuotaSummary(body []byte) ([]AntigravityQuotaGroup, bool) {
-	groupsResult := gjson.GetBytes(body, "groups")
+	groupsResult := ojson.GetBytes(body, "groups")
 	if !groupsResult.IsArray() {
 		return nil, false
 	}
 
 	result := make([]AntigravityQuotaGroup, 0)
-	groupsResult.ForEach(func(_ /* key */, group gjson.Result) bool {
+	groupsResult.ForEach(func(_ /* key */, group ojson.Result) bool {
 		buckets := group.Get("buckets")
 		if !buckets.IsArray() {
 			return true
 		}
 		g := AntigravityQuotaGroup{DisplayName: strings.TrimSpace(group.Get("displayName").String())}
-		buckets.ForEach(func(_ /* key */, bucket gjson.Result) bool {
+		buckets.ForEach(func(_ /* key */, bucket ojson.Result) bool {
 			window := antigravityQuotaWindowFromBucket(bucket)
 			bucketID := strings.TrimSpace(bucket.Get("bucketId").String())
 			switch {
@@ -191,7 +191,7 @@ func parseAntigravityQuotaSummary(body []byte) ([]AntigravityQuotaGroup, bool) {
 // antigravityQuotaWindowFromBucket normalizes one retrieveUserQuotaSummary
 // bucket. It returns nil when the bucket has neither a usable
 // remainingFraction nor a resetTime, i.e. nothing worth keeping.
-func antigravityQuotaWindowFromBucket(bucket gjson.Result) *AntigravityQuotaWindow {
+func antigravityQuotaWindowFromBucket(bucket ojson.Result) *AntigravityQuotaWindow {
 	window := &AntigravityQuotaWindow{}
 	// remainingFraction: 0 is a legitimate, meaningful value (quota fully
 	// used), so presence must be checked with Exists() rather than treating a

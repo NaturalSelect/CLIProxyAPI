@@ -1,0 +1,103 @@
+name: upstream-sync
+
+on:
+  schedule:
+    - cron: "0 19 * * *" # 03:00 UTC+8
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+env:
+  UPSTREAM_URL: https://github.com/router-for-me/CLIProxyAPI.git
+  UPSTREAM_BRANCH: main
+  SYNC_BRANCH: upstream-sync/pending
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # NOTE: GITHUB_TOKEN cannot push workflow-file changes or trigger downstream workflows such as docker-image.
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Cherry-pick upstream commits
+        id: sync
+        run: bash .github/scripts/sync-upstream.sh
+      - name: Verify synced tree
+        id: verify
+        if: steps.sync.outputs.advanced == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/refresh-model-catalogs.sh
+          unformatted_files="$(gofmt -l .)"
+          if [[ -n "${unformatted_files}" ]]; then
+            printf 'The following Go files require gofmt:\n%s\n' "${unformatted_files}"
+            exit 1
+          fi
+          go build -o test-output ./cmd/server
+          rm -f test-output
+          go test ./...
+          git checkout -- internal/registry/models
+      - name: Publish to main
+        if: steps.verify.outcome == 'success'
+        run: git push origin HEAD:main
+      - name: Open pull request for failing sync
+        if: steps.verify.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -- . || true
+          git push --force origin "HEAD:refs/heads/${SYNC_BRANCH}"
+          {
+            cat sync-report.md
+            printf '\nThe synced tree failed formatting, build, or tests. See the workflow run: %s/%s/actions/runs/%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > pr-body.md
+          existing="$(gh pr list --head "$SYNC_BRANCH" --base main --state open --json number -q '.[0].number')"
+          if [[ -n "$existing" ]]; then
+            gh pr edit "$existing" --body-file pr-body.md
+          else
+            gh pr create --head "$SYNC_BRANCH" --base main \
+              --title "Sync upstream changes (needs fixes)" --body-file pr-body.md
+          fi
+      - name: Report blocking conflict
+        if: steps.sync.outputs.status == 'blocked'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="Upstream sync blocked by a conflict"
+          existing="$(gh issue list --state open --search "in:title \"$title\"" --json number -q '.[0].number')"
+          if [[ -n "$existing" ]]; then
+            gh issue comment "$existing" --body-file sync-report.md
+          else
+            gh issue create --title "$title" --body-file sync-report.md
+          fi
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f sync-report.md ]; then cat sync-report.md >> "$GITHUB_STEP_SUMMARY"; fi

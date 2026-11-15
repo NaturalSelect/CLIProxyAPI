@@ -6,27 +6,29 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cache"
+	homekv "github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 )
 
 const testResponsesSecondGeminiThoughtSignature = "EjQKMgEMOdbHO0Gd+c9Mxk4ELwPGbpCEcp2mFfYYLix2UVtBH3fL8GECc4+JITVnHF4qZDsE"
 
-func geminiResponsesOutputItems(t *testing.T, parts []string, stream bool) []gjson.Result {
+func geminiResponsesOutputItems(t *testing.T, parts []string, stream bool) []ojson.Result {
 	t.Helper()
 	body := `{"candidates":[{"content":{"parts":[` + strings.Join(parts, ",") + `]},"finishReason":"STOP"}],"responseId":"probe"}`
 	if !stream {
 		out := ConvertGeminiResponseToOpenAIResponsesNonStream(context.Background(), "gemini-3.6-flash-high", nil, nil, []byte(body), nil)
-		return gjson.GetBytes(out, "output").Array()
+		return ojson.GetBytes(out, "output").Array()
 	}
 	var param any
-	var items []gjson.Result
+	var items []ojson.Result
 	for _, line := range []string{body, "[DONE]"} {
 		for _, chunk := range ConvertGeminiResponseToOpenAIResponses(context.Background(), "gemini-3.6-flash-high", nil, nil, []byte(line), &param) {
 			for _, raw := range strings.Split(string(chunk), "\n") {
 				if !strings.HasPrefix(raw, "data: ") {
 					continue
 				}
-				event := gjson.Parse(strings.TrimPrefix(raw, "data: "))
+				event := ojson.Parse(strings.TrimPrefix(raw, "data: "))
 				if event.Get("type").String() == "response.completed" {
 					items = event.Get("response.output").Array()
 				}
@@ -36,10 +38,20 @@ func geminiResponsesOutputItems(t *testing.T, parts []string, stream bool) []gjs
 	return items
 }
 
-func geminiResponsesCarrierSignatures(t *testing.T, items []gjson.Result) []string {
+// geminiResponsesCarrierSignatures returns every signature the converter kept,
+// either as a visible reasoning carrier or, for signatures that trail visible
+// text, in the replay cache that backs the message ID.
+func geminiResponsesCarrierSignatures(t *testing.T, items []ojson.Result) []string {
 	t.Helper()
 	var signatures []string
 	for _, item := range items {
+		if item.Get("type").String() == "message" {
+			cached, _ := cache.GetAntigravityReasoningReplayItems("gemini-3.6-flash-high", "gemini-responses-text:"+item.Get("id").String())
+			for _, raw := range cached {
+				signatures = append(signatures, ojson.GetBytes(raw, "thoughtSignature").String())
+			}
+			continue
+		}
 		if item.Get("type").String() != "reasoning" {
 			continue
 		}
@@ -52,7 +64,7 @@ func geminiResponsesCarrierSignatures(t *testing.T, items []gjson.Result) []stri
 	return signatures
 }
 
-func geminiResponsesVisibleTypes(items []gjson.Result) []string {
+func geminiResponsesVisibleTypes(items []ojson.Result) []string {
 	var types []string
 	for _, item := range items {
 		if item.Get("type").String() != "reasoning" {
@@ -63,6 +75,14 @@ func geminiResponsesVisibleTypes(items []gjson.Result) []string {
 }
 
 func TestGeminiResponsesUnsupportedPayloadDoesNotRetargetSignature(t *testing.T) {
+	// The replay cache must be local to this test so cached text signatures from
+	// one case cannot leak into the next one that reuses the same message ID.
+	previousHome := homekv.Current()
+	homekv.SetCurrent(nil)
+	t.Cleanup(func() {
+		homekv.SetCurrent(previousHome)
+		cache.ClearAntigravityReasoningReplayCache()
+	})
 	sig := testResponsesGeminiThoughtSignature
 	second := testResponsesSecondGeminiThoughtSignature
 	function := `{"functionCall":{"name":"lookup","args":{}}}`
@@ -103,6 +123,7 @@ func TestGeminiResponsesUnsupportedPayloadDoesNotRetargetSignature(t *testing.T)
 				name = tt.name + "/stream"
 			}
 			t.Run(name, func(t *testing.T) {
+				cache.ClearAntigravityReasoningReplayCache()
 				items := geminiResponsesOutputItems(t, tt.parts, stream)
 				if got := geminiResponsesVisibleTypes(items); !reflect.DeepEqual(got, tt.wantVisible) {
 					t.Fatalf("visible items = %v, want %v; output=%v", got, tt.wantVisible, items)

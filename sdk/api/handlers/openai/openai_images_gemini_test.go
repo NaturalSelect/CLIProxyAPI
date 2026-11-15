@@ -10,12 +10,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	apihandlers "github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	apihandlers "github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
 const geminiTestImageModel = "gemini-2.5-flash-image"
@@ -120,23 +120,23 @@ func TestBuildGeminiImagesChatRequest(t *testing.T) {
 		N:           3,
 	})
 
-	if got := gjson.GetBytes(req, "model").String(); got != "foo/gemini-2.5-flash-image" {
+	if got := ojson.GetBytes(req, "model").String(); got != "foo/gemini-2.5-flash-image" {
 		t.Fatalf("model = %q", got)
 	}
-	if got := gjson.GetBytes(req, "modalities").Raw; got != `["image","text"]` {
+	if got := ojson.GetBytes(req, "modalities").Raw; got != `["image","text"]` {
 		t.Fatalf("modalities = %s", got)
 	}
-	if got := gjson.GetBytes(req, "image_config.aspect_ratio").String(); got != "16:9" {
+	if got := ojson.GetBytes(req, "image_config.aspect_ratio").String(); got != "16:9" {
 		t.Fatalf("aspect_ratio = %q, want 16:9", got)
 	}
-	if got := gjson.GetBytes(req, "image_config.image_size").String(); got != "2K" {
+	if got := ojson.GetBytes(req, "image_config.image_size").String(); got != "2K" {
 		t.Fatalf("image_size = %q, want 2K", got)
 	}
-	if gjson.GetBytes(req, "n").Exists() || gjson.GetBytes(req, "stream").Exists() {
+	if ojson.GetBytes(req, "n").Exists() || ojson.GetBytes(req, "stream").Exists() {
 		t.Fatalf("n and stream must not be sent upstream: %s", req)
 	}
 
-	parts := gjson.GetBytes(req, "messages.0.content").Array()
+	parts := ojson.GetBytes(req, "messages.0.content").Array()
 	wantTypes := []string{"text", "image_url", "image_url", "text", "image_url"}
 	if len(parts) != len(wantTypes) {
 		t.Fatalf("content parts = %d, want %d: %s", len(parts), len(wantTypes), req)
@@ -160,10 +160,10 @@ func TestBuildGeminiImagesChatRequest(t *testing.T) {
 func TestBuildGeminiImagesChatRequestOmitsEmptyImageConfig(t *testing.T) {
 	req := buildGeminiImagesChatRequest(geminiImagesRequest{Model: geminiTestImageModel, Prompt: "hi", N: 1})
 
-	if gjson.GetBytes(req, "image_config").Exists() {
+	if ojson.GetBytes(req, "image_config").Exists() {
 		t.Fatalf("image_config should be omitted: %s", req)
 	}
-	if got := len(gjson.GetBytes(req, "messages.0.content").Array()); got != 1 {
+	if got := len(ojson.GetBytes(req, "messages.0.content").Array()); got != 1 {
 		t.Fatalf("content parts = %d, want 1", got)
 	}
 }
@@ -228,14 +228,14 @@ func TestExtractGeminiChatImagesTextOnly(t *testing.T) {
 func TestBuildGeminiImagesPayloadFeedsURLResponseFormat(t *testing.T) {
 	payload := buildGeminiImagesPayload([]xaiImageResult{{B64JSON: "QUJD", MimeType: "image/png"}}, 4, 6)
 
-	if got := gjson.GetBytes(payload, "usage.total_tokens").Int(); got != 10 {
+	if got := ojson.GetBytes(payload, "usage.total_tokens").Int(); got != 10 {
 		t.Fatalf("total_tokens = %d, want 10", got)
 	}
 	out, err := buildImagesAPIResponseFromXAI(payload, "url")
 	if err != nil {
 		t.Fatalf("buildImagesAPIResponseFromXAI error: %v", err)
 	}
-	if got := gjson.GetBytes(out, "data.0.url").String(); got != "data:image/png;base64,QUJD" {
+	if got := ojson.GetBytes(out, "data.0.url").String(); got != "data:image/png;base64,QUJD" {
 		t.Fatalf("url = %q", got)
 	}
 }
@@ -251,16 +251,16 @@ func TestGeminiImagesGenerationsMultipleImages(t *testing.T) {
 		t.Fatalf("status = %d: %s", resp.Code, resp.Body.String())
 	}
 	body := resp.Body.Bytes()
-	if got := len(gjson.GetBytes(body, "data").Array()); got != 2 {
+	if got := len(ojson.GetBytes(body, "data").Array()); got != 2 {
 		t.Fatalf("data items = %d, want 2: %s", got, body)
 	}
-	if got := gjson.GetBytes(body, "data.0.b64_json").String(); got != "QUJD" {
+	if got := ojson.GetBytes(body, "data.0.b64_json").String(); got != "QUJD" {
 		t.Fatalf("b64_json = %q", got)
 	}
-	if got := gjson.GetBytes(body, "usage.input_tokens").Int(); got != 14 {
+	if got := ojson.GetBytes(body, "usage.input_tokens").Int(); got != 14 {
 		t.Fatalf("input_tokens = %d, want 14", got)
 	}
-	if got := gjson.GetBytes(body, "usage.total_tokens").Int(); got != 36 {
+	if got := ojson.GetBytes(body, "usage.total_tokens").Int(); got != 36 {
 		t.Fatalf("total_tokens = %d, want 36", got)
 	}
 
@@ -268,13 +268,13 @@ func TestGeminiImagesGenerationsMultipleImages(t *testing.T) {
 	if len(payloads) != 2 {
 		t.Fatalf("executor calls = %d, want 2", len(payloads))
 	}
-	if got := gjson.GetBytes(payloads[0], "modalities").Raw; got != `["image","text"]` {
+	if got := ojson.GetBytes(payloads[0], "modalities").Raw; got != `["image","text"]` {
 		t.Fatalf("modalities = %s", got)
 	}
-	if gjson.GetBytes(payloads[0], "n").Exists() {
+	if ojson.GetBytes(payloads[0], "n").Exists() {
 		t.Fatalf("n must not be sent upstream: %s", payloads[0])
 	}
-	if got := gjson.GetBytes(payloads[0], "image_config.aspect_ratio").String(); got != "1:1" {
+	if got := ojson.GetBytes(payloads[0], "image_config.aspect_ratio").String(); got != "1:1" {
 		t.Fatalf("aspect_ratio = %q, want 1:1", got)
 	}
 }
@@ -289,7 +289,7 @@ func TestGeminiImagesGenerationsURLResponseFormat(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", resp.Code, resp.Body.String())
 	}
-	if got := gjson.GetBytes(resp.Body.Bytes(), "data.0.url").String(); !strings.HasPrefix(got, "data:image/png;base64,") {
+	if got := ojson.GetBytes(resp.Body.Bytes(), "data.0.url").String(); !strings.HasPrefix(got, "data:image/png;base64,") {
 		t.Fatalf("url = %q", got)
 	}
 }
@@ -339,7 +339,7 @@ func TestGeminiImagesEditsMultipartWithMask(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", resp.Code, resp.Body.String())
 	}
-	if got := gjson.GetBytes(resp.Body.Bytes(), "data.0.b64_json").String(); got != "QUJD" {
+	if got := ojson.GetBytes(resp.Body.Bytes(), "data.0.b64_json").String(); got != "QUJD" {
 		t.Fatalf("b64_json = %q", got)
 	}
 
@@ -347,7 +347,7 @@ func TestGeminiImagesEditsMultipartWithMask(t *testing.T) {
 	if len(payloads) != 1 {
 		t.Fatalf("executor calls = %d, want 1", len(payloads))
 	}
-	parts := gjson.GetBytes(payloads[0], "messages.0.content").Array()
+	parts := ojson.GetBytes(payloads[0], "messages.0.content").Array()
 	wantTypes := []string{"text", "image_url", "text", "image_url"}
 	if len(parts) != len(wantTypes) {
 		t.Fatalf("content parts = %d, want %d: %s", len(parts), len(wantTypes), payloads[0])
@@ -372,7 +372,7 @@ func TestGeminiImagesEditsJSONRejectsRemoteImageURL(t *testing.T) {
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", resp.Code, resp.Body.String())
 	}
-	if got := gjson.GetBytes(resp.Body.Bytes(), "error.type").String(); got != "invalid_request_error" {
+	if got := ojson.GetBytes(resp.Body.Bytes(), "error.type").String(); got != "invalid_request_error" {
 		t.Fatalf("error type = %q", got)
 	}
 	if got := len(executor.Payloads()); got != 0 {
@@ -394,7 +394,7 @@ func TestGeminiImagesEditsJSONAcceptsDataURLWithMask(t *testing.T) {
 	if len(payloads) != 1 {
 		t.Fatalf("executor calls = %d, want 1", len(payloads))
 	}
-	if got := len(gjson.GetBytes(payloads[0], "messages.0.content").Array()); got != 4 {
+	if got := len(ojson.GetBytes(payloads[0], "messages.0.content").Array()); got != 4 {
 		t.Fatalf("content parts = %d, want 4: %s", got, payloads[0])
 	}
 }

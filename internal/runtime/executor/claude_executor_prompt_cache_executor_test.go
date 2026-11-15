@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
 func TestApplyClaudeHeadersWithSessionOverridesConflictingClientHeader(t *testing.T) {
@@ -210,23 +210,25 @@ func TestClaudeExecutorAdaptiveStripsAndReplansUserCacheControl(t *testing.T) {
 	if !plan.Summary.AutomaticHistory {
 		t.Fatal("official Anthropic adaptive plan must keep automatic history")
 	}
-	if !gjson.GetBytes(plannedBody, "cache_control").Exists() {
+	if !ojson.GetBytes(plannedBody, "cache_control").Exists() {
 		t.Fatal("official Anthropic adaptive plan must set top-level cache_control")
 	}
-	if !gjson.GetBytes(plannedBody, "tools.0.cache_control").Exists() {
+	if !ojson.GetBytes(plannedBody, "tools.0.cache_control").Exists() {
 		t.Fatal("adaptive plan missing tools-tail breakpoint")
 	}
-	if !gjson.GetBytes(plannedBody, "system.0.cache_control").Exists() {
+	if !ojson.GetBytes(plannedBody, "system.0.cache_control").Exists() {
 		t.Fatal("adaptive plan missing system-tail breakpoint")
 	}
-	if !gjson.GetBytes(plannedBody, "messages.0.content.0.cache_control").Exists() {
+	if !ojson.GetBytes(plannedBody, "messages.0.content.0.cache_control").Exists() {
 		t.Fatal("adaptive plan missing second-to-last user breakpoint")
 	}
-	if gjson.GetBytes(plannedBody, "messages.2.content.0.cache_control").Exists() {
+	if ojson.GetBytes(plannedBody, "messages.2.content.0.cache_control").Exists() {
 		t.Fatal("adaptive plan must not leave cache_control on the latest user turn")
 	}
-	if got := countCacheControls(plannedBody); got != 3 {
-		t.Fatalf("in-body cache_control count = %d, want 3", got)
+	// countCacheControls also counts the top-level automatic-history marker:
+	// three in-body breakpoints plus one top-level marker stay within the cap of 4.
+	if got := countCacheControls(plannedBody); got != 4 {
+		t.Fatalf("cache_control count = %d, want 4 (3 in-body + 1 top-level)", got)
 	}
 }
 
@@ -266,7 +268,7 @@ func TestClaudeExecutorAdaptiveHonorsDownstreamOneHourTTL(t *testing.T) {
 		"system.0.cache_control.ttl",
 		"messages.0.content.0.cache_control.ttl",
 	} {
-		if got := gjson.GetBytes(plannedBody, path).String(); got != "1h" {
+		if got := ojson.GetBytes(plannedBody, path).String(); got != "1h" {
 			t.Fatalf("%s = %q, want 1h: %s", path, got, plannedBody)
 		}
 	}
@@ -295,10 +297,10 @@ func TestClaudeExecutorAdaptiveKeepsDefaultTTLForFiveMinuteClient(t *testing.T) 
 		false,
 	)
 
-	if gjson.GetBytes(plannedBody, "system.0.cache_control.ttl").Exists() {
+	if ojson.GetBytes(plannedBody, "system.0.cache_control.ttl").Exists() {
 		t.Fatalf("explicit 5m client must not be upgraded to 1h: %s", plannedBody)
 	}
-	if gjson.GetBytes(plannedBody, "cache_control.ttl").Exists() {
+	if ojson.GetBytes(plannedBody, "cache_control.ttl").Exists() {
 		t.Fatalf("top-level cache_control must stay on the default TTL: %s", plannedBody)
 	}
 }
@@ -359,7 +361,7 @@ func TestClaudeExecutorAdaptiveKeepsOneHourTTLThroughCloaking(t *testing.T) {
 			}
 
 			breakpoints := 0
-			check := func(path string, block gjson.Result) {
+			check := func(path string, block ojson.Result) {
 				cacheControl := block.Get("cache_control")
 				if !cacheControl.Exists() {
 					return
@@ -369,16 +371,16 @@ func TestClaudeExecutorAdaptiveKeepsOneHourTTLThroughCloaking(t *testing.T) {
 					t.Errorf("%s ttl = %q, want %q: %s", path, got, test.wantTTL, seenBody)
 				}
 			}
-			gjson.GetBytes(seenBody, "tools").ForEach(func(index, block gjson.Result) bool {
+			ojson.GetBytes(seenBody, "tools").ForEach(func(index, block ojson.Result) bool {
 				check("tools."+index.String(), block)
 				return true
 			})
-			gjson.GetBytes(seenBody, "system").ForEach(func(index, block gjson.Result) bool {
+			ojson.GetBytes(seenBody, "system").ForEach(func(index, block ojson.Result) bool {
 				check("system."+index.String(), block)
 				return true
 			})
-			gjson.GetBytes(seenBody, "messages").ForEach(func(messageIndex, message gjson.Result) bool {
-				message.Get("content").ForEach(func(contentIndex, block gjson.Result) bool {
+			ojson.GetBytes(seenBody, "messages").ForEach(func(messageIndex, message ojson.Result) bool {
+				message.Get("content").ForEach(func(contentIndex, block ojson.Result) bool {
 					check("messages."+messageIndex.String()+".content."+contentIndex.String(), block)
 					return true
 				})
@@ -423,13 +425,15 @@ func TestClaudeExecutorAdaptiveReplansOverLimitUserCacheControl(t *testing.T) {
 	if plan == nil {
 		t.Fatal("adaptive planner must produce a plan after stripping over-limit client cache_control")
 	}
-	if got := countCacheControls(plannedBody); got != 3 {
-		t.Fatalf("in-body cache_control count = %d, want 3 after replan", got)
+	// countCacheControls also counts the top-level automatic-history marker:
+	// three in-body breakpoints plus one top-level marker stay within the cap of 4.
+	if got := countCacheControls(plannedBody); got != 4 {
+		t.Fatalf("cache_control count = %d, want 4 (3 in-body + 1 top-level) after replan", got)
 	}
-	if !gjson.GetBytes(plannedBody, "cache_control").Exists() {
+	if !ojson.GetBytes(plannedBody, "cache_control").Exists() {
 		t.Fatal("official Anthropic adaptive plan must set top-level cache_control")
 	}
-	if gjson.GetBytes(plannedBody, "messages.1.content.0.cache_control").Exists() {
+	if ojson.GetBytes(plannedBody, "messages.1.content.0.cache_control").Exists() {
 		t.Fatal("adaptive replan must not keep cache_control on assistant content")
 	}
 }
@@ -479,11 +483,11 @@ func TestClaudeExecutor_PreservesResolvedSessionThroughCloakAndHeaders(t *testin
 		t.Fatalf("Execute() error = %v", errExecute)
 	}
 
-	upstreamUserID := gjson.GetBytes(upstreamBody, "metadata.user_id").String()
+	upstreamUserID := ojson.GetBytes(upstreamBody, "metadata.user_id").String()
 	if !helps.IsValidUserID(upstreamUserID) {
 		t.Fatalf("upstream metadata.user_id = %q, want valid Claude Code JSON identity", upstreamUserID)
 	}
-	upstreamMetadataSessionID := gjson.Get(upstreamUserID, "session_id").String()
+	upstreamMetadataSessionID := ojson.Get(upstreamUserID, "session_id").String()
 	if upstreamMetadataSessionID != resolvedIdentity.SessionID {
 		t.Fatalf("upstream metadata session_id = %q, want %q", upstreamMetadataSessionID, resolvedIdentity.SessionID)
 	}
@@ -573,10 +577,10 @@ func TestClaudeExecutorCountTokensPassthroughEnforcesCacheControlLimit(t *testin
 	if got := countCacheControls(seenBody); got != 4 {
 		t.Fatalf("cache_control count = %d, want 4", got)
 	}
-	if !gjson.GetBytes(seenBody, "messages.0.content.0.cache_control").Exists() {
+	if !ojson.GetBytes(seenBody, "messages.0.content.0.cache_control").Exists() {
 		t.Fatalf("history cache_control was removed by the four-breakpoint limit: %s", seenBody)
 	}
-	if gjson.GetBytes(seenBody, "messages.0.content.0.cache_control.ttl").Exists() {
+	if ojson.GetBytes(seenBody, "messages.0.content.0.cache_control.ttl").Exists() {
 		t.Fatalf("history 1h TTL was not normalized after earlier default-TTL breakpoints: %s", seenBody)
 	}
 }
@@ -703,8 +707,8 @@ func TestClaudeCacheDiagnosticsChainsSuccessfulResponses(t *testing.T) {
 	if firstState == nil || !firstState.proxyAdded {
 		t.Fatal("first diagnostics state is not proxy-owned")
 	}
-	previousMessageID := gjson.GetBytes(firstBody, "diagnostics.previous_message_id")
-	if !previousMessageID.Exists() || previousMessageID.Type != gjson.Null {
+	previousMessageID := ojson.GetBytes(firstBody, "diagnostics.previous_message_id")
+	if !previousMessageID.Exists() || previousMessageID.Type != ojson.Null {
 		t.Fatalf("first previous_message_id = %s, want null", previousMessageID.Raw)
 	}
 	if len(firstBetas) != 1 || firstBetas[0] != claudeCacheDiagnosticsBeta {
@@ -723,7 +727,7 @@ func TestClaudeCacheDiagnosticsChainsSuccessfulResponses(t *testing.T) {
 	if secondState == nil || !secondState.proxyAdded {
 		t.Fatal("second diagnostics state is not proxy-owned")
 	}
-	if got := gjson.GetBytes(secondBody, "diagnostics.previous_message_id").String(); got != "msg_first" {
+	if got := ojson.GetBytes(secondBody, "diagnostics.previous_message_id").String(); got != "msg_first" {
 		t.Fatalf("second previous_message_id = %q, want msg_first", got)
 	}
 	if len(secondBetas) != 1 || secondBetas[0] != claudeCacheDiagnosticsBeta {
@@ -752,7 +756,7 @@ func TestClaudeCacheDiagnosticsPreservesClientOwnedObject(t *testing.T) {
 	if state == nil || state.proxyAdded {
 		t.Fatal("client-owned diagnostics were marked as proxy-owned")
 	}
-	if got := gjson.GetBytes(updatedBody, "diagnostics.previous_message_id").String(); got != "msg_client" {
+	if got := ojson.GetBytes(updatedBody, "diagnostics.previous_message_id").String(); got != "msg_client" {
 		t.Fatalf("client previous_message_id = %q, want msg_client", got)
 	}
 	if len(betas) != 1 || betas[0] != claudeCacheDiagnosticsBeta {
@@ -780,7 +784,7 @@ func TestClaudeCacheDiagnosticsFallbackPersistsRuntimeDecision(t *testing.T) {
 		body,
 		nil,
 	)
-	if firstState == nil || !gjson.GetBytes(firstBody, "diagnostics").Exists() {
+	if firstState == nil || !ojson.GetBytes(firstBody, "diagnostics").Exists() {
 		t.Fatal("first request did not receive proxy diagnostics")
 	}
 	executor.recordClaudeDiagnosticsFallback(
@@ -795,7 +799,7 @@ func TestClaudeCacheDiagnosticsFallbackPersistsRuntimeDecision(t *testing.T) {
 		body,
 		nil,
 	)
-	if secondState != nil || gjson.GetBytes(secondBody, "diagnostics").Exists() {
+	if secondState != nil || ojson.GetBytes(secondBody, "diagnostics").Exists() {
 		t.Fatal("unsupported diagnostics were re-injected on the next request")
 	}
 	if len(secondBetas) != 0 {
@@ -832,7 +836,7 @@ func TestClaudeCacheDiagnosticsFallbackClearsOnlyStalePreviousMessageID(t *testi
 		body,
 		nil,
 	)
-	if got := gjson.GetBytes(secondBody, "diagnostics.previous_message_id").String(); got != "msg_stale" {
+	if got := ojson.GetBytes(secondBody, "diagnostics.previous_message_id").String(); got != "msg_stale" {
 		t.Fatalf("second previous_message_id = %q, want msg_stale", got)
 	}
 	executor.recordClaudeDiagnosticsFallback(
@@ -850,8 +854,8 @@ func TestClaudeCacheDiagnosticsFallbackClearsOnlyStalePreviousMessageID(t *testi
 	if thirdState == nil || !thirdState.proxyAdded {
 		t.Fatal("stale chain fallback incorrectly disabled diagnostics")
 	}
-	previousMessageID := gjson.GetBytes(thirdBody, "diagnostics.previous_message_id")
-	if !previousMessageID.Exists() || previousMessageID.Type != gjson.Null {
+	previousMessageID := ojson.GetBytes(thirdBody, "diagnostics.previous_message_id")
+	if !previousMessageID.Exists() || previousMessageID.Type != ojson.Null {
 		t.Fatalf("third previous_message_id = %s, want null", previousMessageID.Raw)
 	}
 	if len(thirdBetas) != 1 || thirdBetas[0] != claudeCacheDiagnosticsBeta {

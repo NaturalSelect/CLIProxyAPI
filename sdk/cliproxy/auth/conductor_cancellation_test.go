@@ -101,7 +101,7 @@ func TestManagerCanceledLoadUnblocksUnrelatedMutation(t *testing.T) {
 }
 
 func TestManagerCanceledMutationWait(t *testing.T) {
-	for _, operation := range []string{"Register", "Update"} {
+	for _, operation := range []string{"Register", "Update", "Prepare", "Refresh"} {
 		for _, waitOn := range []string{"barrier", "gate"} {
 			t.Run(operation+"/"+waitOn, func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
@@ -131,6 +131,10 @@ func TestManagerCanceledMutationWait(t *testing.T) {
 							_, errMutation = manager.Register(ctx, base.Clone())
 						case "Update":
 							_, errMutation = manager.Update(ctx, base.Clone())
+						case "Prepare":
+							_, errMutation = manager.UpdatePreparedAuth(ctx, base, base.Clone())
+						case "Refresh":
+							_, errMutation = manager.UpdateRefreshedAuth(ctx, base, base.Clone())
 						}
 						done <- errMutation
 					}()

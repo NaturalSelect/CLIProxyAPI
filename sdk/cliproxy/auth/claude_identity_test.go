@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 func TestResolveClaudeRequestIdentityPreservesValidIdentity(t *testing.T) {
@@ -21,7 +21,7 @@ func TestResolveClaudeRequestIdentityPreservesValidIdentity(t *testing.T) {
 	if identity.UserID != existingUserID {
 		t.Fatalf("identity.UserID = %q, want %q", identity.UserID, existingUserID)
 	}
-	if gjson.GetBytes(normalizedPayload, "metadata.trace").String() != "keep" {
+	if ojson.GetBytes(normalizedPayload, "metadata.trace").String() != "keep" {
 		t.Fatalf("unrelated metadata was not preserved: %s", normalizedPayload)
 	}
 	if string(normalizedPayload) != string(payload) {
@@ -49,7 +49,7 @@ func TestResolveClaudeRequestIdentityDerivesStableIdentityFromFirstUserMessage(t
 		if !IsValidClaudeUserID(identity.UserID) {
 			t.Fatalf("identity #%d is invalid: %q", index, identity.UserID)
 		}
-		if gjson.GetBytes(normalizedPayload, "metadata.user_id").String() != identity.UserID {
+		if ojson.GetBytes(normalizedPayload, "metadata.user_id").String() != identity.UserID {
 			t.Fatalf("payload #%d user_id does not match identity", index)
 		}
 		if index == 0 {

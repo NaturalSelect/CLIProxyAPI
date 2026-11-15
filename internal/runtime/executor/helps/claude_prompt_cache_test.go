@@ -8,8 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 func TestPlanClaudePromptCacheUsesAutomaticHistoryForOfficialAnthropic(t *testing.T) {
@@ -28,10 +27,10 @@ func TestPlanClaudePromptCacheUsesAutomaticHistoryForOfficialAnthropic(t *testin
 	if !plan.Summary.AutomaticHistory {
 		t.Fatal("plan.Summary.AutomaticHistory = false, want true")
 	}
-	if !isValidClaudeCacheControl(gjson.GetBytes(plannedPayload, "cache_control")) {
-		t.Fatalf("top-level cache_control = %s, want valid automatic control", gjson.GetBytes(plannedPayload, "cache_control").Raw)
+	if !isValidClaudeCacheControl(ojson.GetBytes(plannedPayload, "cache_control")) {
+		t.Fatalf("top-level cache_control = %s, want valid automatic control", ojson.GetBytes(plannedPayload, "cache_control").Raw)
 	}
-	if !gjson.GetBytes(plannedPayload, "messages.0.content.0.cache_control").Exists() {
+	if !ojson.GetBytes(plannedPayload, "messages.0.content.0.cache_control").Exists() {
 		t.Fatal("official Anthropic plan missing second-to-last user breakpoint")
 	}
 	locations, invalidPaths := collectClaudeCacheBreakpoints(plannedPayload)
@@ -68,12 +67,12 @@ func TestRebuildClaudePromptCachePlanUsesFinalWirePayload(t *testing.T) {
 		t.Fatal("PlanClaudePromptCache() plan = nil")
 	}
 
-	originalSystem := gjson.GetBytes(plannedPayload, "system").Raw
+	originalSystem := ojson.GetBytes(plannedPayload, "system").Raw
 	finalSystem := append(
 		[]byte(`[{"type":"text","text":"x-anthropic-billing-header: cch=abcde; signed wire body"},`),
 		[]byte(originalSystem[1:])...,
 	)
-	finalPayload, errSet := sjson.SetRawBytes(plannedPayload, "system", finalSystem)
+	finalPayload, errSet := ojson.SetRawBytes(plannedPayload, "system", finalSystem)
 	if errSet != nil {
 		t.Fatalf("set final system body: %v", errSet)
 	}
@@ -186,10 +185,10 @@ func TestPlanClaudePromptCacheUsesExplicitHistoryForCompatibleProvider(t *testin
 	if plan == nil {
 		t.Fatal("PlanClaudePromptCache() plan = nil")
 	}
-	if gjson.GetBytes(plannedPayload, "cache_control").Exists() {
-		t.Fatalf("top-level cache_control = %s, want removed", gjson.GetBytes(plannedPayload, "cache_control").Raw)
+	if ojson.GetBytes(plannedPayload, "cache_control").Exists() {
+		t.Fatalf("top-level cache_control = %s, want removed", ojson.GetBytes(plannedPayload, "cache_control").Raw)
 	}
-	if !gjson.GetBytes(plannedPayload, "messages.0.content.0.cache_control").Exists() {
+	if !ojson.GetBytes(plannedPayload, "messages.0.content.0.cache_control").Exists() {
 		t.Fatal("compatible-provider history breakpoint is missing")
 	}
 	locations, invalidPaths := collectClaudeCacheBreakpoints(plannedPayload)
@@ -245,13 +244,13 @@ func TestPlanClaudePromptCacheDeterministicallyLimitsExplicitBreakpoints(t *test
 	if firstPlan.Summary.RemovedBreakpoints != 3 {
 		t.Fatalf("removed breakpoints = %d, want 3", firstPlan.Summary.RemovedBreakpoints)
 	}
-	if gjson.GetBytes(firstPayload, "system.0.cache_control").Exists() {
+	if ojson.GetBytes(firstPayload, "system.0.cache_control").Exists() {
 		t.Fatal("invalid system cache_control was not removed")
 	}
 	// In-body breakpoints plus the top-level automatic marker must never
 	// exceed Anthropic's four-block cap.
 	total := len(locations)
-	if isValidClaudeCacheControl(gjson.GetBytes(firstPayload, "cache_control")) {
+	if isValidClaudeCacheControl(ojson.GetBytes(firstPayload, "cache_control")) {
 		total++
 	}
 	if total > ClaudePromptCacheMaxBreakpoints {
@@ -273,13 +272,13 @@ func TestPlanClaudePromptCacheNormalizesTTLAfterAddingEarlierBreakpoint(t *testi
 		payload,
 		ClaudePromptCacheCapabilities{AutomaticHistory: true},
 	)
-	if !gjson.GetBytes(plannedPayload, "tools.0.cache_control").Exists() {
+	if !ojson.GetBytes(plannedPayload, "tools.0.cache_control").Exists() {
 		t.Fatal("planner did not add the earlier tool breakpoint")
 	}
-	if gjson.GetBytes(plannedPayload, "system.0.cache_control.ttl").Exists() {
+	if ojson.GetBytes(plannedPayload, "system.0.cache_control.ttl").Exists() {
 		t.Fatalf("later one-hour TTL was not normalized: %s", plannedPayload)
 	}
-	if gjson.GetBytes(plannedPayload, "cache_control.ttl").Exists() {
+	if ojson.GetBytes(plannedPayload, "cache_control.ttl").Exists() {
 		t.Fatalf("top-level automatic one-hour TTL was not normalized: %s", plannedPayload)
 	}
 }
@@ -316,7 +315,7 @@ func TestPlanClaudePromptCacheReservesSlotForAutomaticHistory(t *testing.T) {
 		t.Fatalf("invalid cache-control paths = %v, want none", invalidPaths)
 	}
 	total := len(locations)
-	if isValidClaudeCacheControl(gjson.GetBytes(plannedPayload, "cache_control")) {
+	if isValidClaudeCacheControl(ojson.GetBytes(plannedPayload, "cache_control")) {
 		total++
 	}
 	if total > ClaudePromptCacheMaxBreakpoints {
@@ -666,7 +665,7 @@ func TestStripAllClaudeCacheControlsRemovesTopLevelAndInBody(t *testing.T) {
 	}`)
 
 	stripped := StripAllClaudeCacheControls(payload)
-	if gjson.GetBytes(stripped, "cache_control").Exists() {
+	if ojson.GetBytes(stripped, "cache_control").Exists() {
 		t.Fatal("top-level cache_control was not stripped")
 	}
 	locations, invalidPaths := collectClaudeCacheBreakpoints(stripped)
@@ -697,7 +696,7 @@ func TestPlanClaudePromptCacheWritesOneHourTTLWhenExtendedTTLRequested(t *testin
 		"system.0.cache_control.ttl",
 		"messages.0.content.0.cache_control.ttl",
 	} {
-		if got := gjson.GetBytes(plannedPayload, path).String(); got != "1h" {
+		if got := ojson.GetBytes(plannedPayload, path).String(); got != "1h" {
 			t.Fatalf("%s = %q, want 1h: %s", path, got, plannedPayload)
 		}
 	}
@@ -724,7 +723,7 @@ func TestPlanClaudePromptCacheKeepsDefaultTTLWithoutExtendedTTL(t *testing.T) {
 		"system.0.cache_control.ttl",
 		"messages.0.content.0.cache_control.ttl",
 	} {
-		if gjson.GetBytes(plannedPayload, path).Exists() {
+		if ojson.GetBytes(plannedPayload, path).Exists() {
 			t.Fatalf("%s must stay unset without extended TTL: %s", path, plannedPayload)
 		}
 	}

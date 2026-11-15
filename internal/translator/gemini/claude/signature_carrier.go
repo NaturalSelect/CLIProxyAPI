@@ -1,16 +1,16 @@
 package claude
 
 import (
-	sigcompat "github.com/router-for-me/CLIProxyAPI/v7/internal/signature"
-	translatorcommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/common"
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
+	sigcompat "github.com/router-for-me/CLIProxyAPI/v8/internal/signature"
+	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
 )
 
 const geminiClaudeUnsupportedSignatureTarget = "unsupported"
 
 // geminiClaudeCarrierSignatures binds assistant signature carriers to native
 // parts without allowing a signature to cross another semantic block or message.
-func geminiClaudeCarrierSignatures(blocks []gjson.Result) map[int]string {
+func geminiClaudeCarrierSignatures(blocks []ojson.Result) map[int]string {
 	kinds := make([]string, len(blocks))
 	transparent := make([]bool, len(blocks))
 	previous := make([]int, len(blocks))

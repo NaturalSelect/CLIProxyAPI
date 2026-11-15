@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 const (
@@ -29,15 +29,15 @@ func codexUsageAccountID(a *Auth) string {
 // management API read one shape regardless of where the snapshot came from.
 func parseCodexUsageResponse(body []byte) (map[string]any, bool) {
 	snapshot := make(map[string]any)
-	setCodexUsageWindow(snapshot, "primary", gjson.GetBytes(body, "rate_limit.primary_window"))
-	setCodexUsageWindow(snapshot, "secondary", gjson.GetBytes(body, "rate_limit.secondary_window"))
+	setCodexUsageWindow(snapshot, "primary", ojson.GetBytes(body, "rate_limit.primary_window"))
+	setCodexUsageWindow(snapshot, "secondary", ojson.GetBytes(body, "rate_limit.secondary_window"))
 	if len(snapshot) == 0 {
 		return nil, false
 	}
 	return snapshot, true
 }
 
-func setCodexUsageWindow(snapshot map[string]any, prefix string, window gjson.Result) {
+func setCodexUsageWindow(snapshot map[string]any, prefix string, window ojson.Result) {
 	if !window.IsObject() {
 		return
 	}

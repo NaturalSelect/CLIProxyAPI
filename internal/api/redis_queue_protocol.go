@@ -9,8 +9,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/redisqueue"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -45,6 +46,7 @@ func (s *Server) handleRedisConnection(conn net.Conn, reader *bufio.Reader) {
 	if reader == nil {
 		reader = bufio.NewReader(conn)
 	}
+	_ = conn.SetReadDeadline(time.Now().Add(muxSniffDeadline))
 
 	clientIP, localClient := resolveRemoteIP(conn.RemoteAddr())
 	authed := false
@@ -66,7 +68,7 @@ func (s *Server) handleRedisConnection(conn net.Conn, reader *bufio.Reader) {
 		return true
 	}
 
-	if s.cfg != nil && s.cfg.Home.Enabled {
+	if cfg := s.getConfig(); cfg != nil && cfg.Home.Enabled {
 		_ = writeRedisError(writer, "ERR redis usage output disabled in home mode")
 		_ = writer.Flush()
 		return
@@ -148,6 +150,7 @@ func (s *Server) handleRedisConnection(conn net.Conn, reader *bufio.Reader) {
 				continue
 			}
 			authed = true
+			_ = conn.SetReadDeadline(time.Time{})
 			_ = writeRedisSimpleString(writer, "OK")
 			if !flush() {
 				return

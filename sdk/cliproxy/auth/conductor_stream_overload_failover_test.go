@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 // registerOverloadAuths registers n active codex credentials with descending priority so the
@@ -45,6 +45,13 @@ func overloadStatusError() customStatusError {
 	return customStatusError{
 		code: http.StatusServiceUnavailable,
 		msg:  `{"error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null}}`,
+	}
+}
+
+func capacityStatusError() customStatusError {
+	return customStatusError{
+		code: http.StatusTooManyRequests,
+		msg:  `{"error":{"message":"Selected model is at capacity. Please try a different model."}}`,
 	}
 }
 
@@ -118,6 +125,61 @@ func TestExecuteStream_BootstrapOverload_SkipsConsecutiveOverloadedCredentials(t
 	}
 }
 
+func TestExecuteStream_BootstrapCapacity_SkipsConsecutiveOverloadedCredentials(t *testing.T) {
+	previous := quotaCooldownDisabled.Load()
+	quotaCooldownDisabled.Store(false)
+	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
+
+	m := NewManager(nil, nil, nil)
+	m.SetRetryConfig(5, 0, 6)
+	ids := registerOverloadAuths(t, m, 6)
+
+	var mu sync.Mutex
+	var order []string
+	atCapacity := map[string]bool{ids[0]: true, ids[1]: true, ids[2]: true}
+
+	m.RegisterExecutor(&customStreamMockExecutor{
+		identifier: "codex",
+		streamFn: func(_ context.Context, auth *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+			mu.Lock()
+			order = append(order, auth.ID)
+			mu.Unlock()
+			if atCapacity[auth.ID] {
+				return nil, capacityStatusError()
+			}
+			return successStreamResult(), nil
+		},
+	})
+
+	result, err := m.ExecuteStream(context.Background(), []string{"codex"},
+		cliproxyexecutor.Request{Model: "gpt-5.6-terra"}, cliproxyexecutor.Options{})
+	if err != nil {
+		t.Fatalf("expected the request to survive three at-capacity credentials: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected a stream result from the fourth credential")
+	}
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("unexpected chunk error: %v", chunk.Err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 4 {
+		t.Fatalf("attempted %d credentials (%v), want exactly 4", len(order), order)
+	}
+	for i := 0; i < 3; i++ {
+		if atCapacity[order[i]] != true {
+			t.Fatalf("attempt %d used %s, expected one of the at-capacity credentials", i+1, order[i])
+		}
+	}
+	if atCapacity[order[3]] {
+		t.Fatalf("final attempt used at-capacity credential %s", order[3])
+	}
+}
+
 // The credential budget must be honoured: when every credential is overloaded the request fails
 // after max-retry-credentials attempts rather than looping forever.
 func TestExecuteStream_BootstrapOverload_StopsAtCredentialBudget(t *testing.T) {
@@ -126,7 +188,7 @@ func TestExecuteStream_BootstrapOverload_StopsAtCredentialBudget(t *testing.T) {
 	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
 
 	m := NewManager(nil, nil, nil)
-	// Six credentials exist but only four may be attempted.
+	// Six credentials exist and only four may be attempted in one round.
 	m.SetRetryConfig(5, 0, 4)
 	registerOverloadAuths(t, m, 6)
 
@@ -159,10 +221,10 @@ func TestExecuteStream_BootstrapOverload_StopsAtCredentialBudget(t *testing.T) {
 	if attempts == 0 {
 		t.Fatal("expected at least one attempt")
 	}
-	// The outer request-retry loop may restart the credential sweep, so assert the per-sweep
-	// budget is respected rather than a single exact total.
-	if attempts%4 != 0 {
-		t.Fatalf("attempts = %d, expected a multiple of the 4-credential budget", attempts)
+	// A no-wait retry round may consume the remaining two credentials after the
+	// first four-credential sweep, but it must not exceed the available set.
+	if attempts < 4 || attempts > 6 {
+		t.Fatalf("attempts = %d, want between 4 and 6", attempts)
 	}
 	t.Logf("total upstream attempts across retry sweeps: %d", attempts)
 }

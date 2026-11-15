@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/synctest"
 
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 // reloadAuthStore snapshots records independently of blocked storage I/O.
@@ -73,7 +73,7 @@ func assertUnrelatedAuthReadable(t *testing.T, manager *Manager) {
 }
 
 func TestManagerBlockedSaveSerializesLoad(t *testing.T) {
-	for _, operation := range []string{"Register", "ReRegister", "Update", "MarkResult"} {
+	for _, operation := range []string{"Register", "ReRegister", "Update", "Prepare", "Refresh", "MarkResult"} {
 		t.Run(operation, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx := context.Background()
@@ -103,6 +103,10 @@ func TestManagerBlockedSaveSerializesLoad(t *testing.T) {
 						_, errSave = manager.Register(ctx, updated)
 					case "Update":
 						_, errSave = manager.Update(ctx, updated)
+					case "Prepare":
+						_, errSave = manager.UpdatePreparedAuth(ctx, base, updated)
+					case "Refresh":
+						_, errSave = manager.UpdateRefreshedAuth(ctx, base, updated)
 					case "MarkResult":
 						manager.MarkResult(ctx, Result{AuthID: base.ID, Provider: base.Provider, Success: true})
 					}

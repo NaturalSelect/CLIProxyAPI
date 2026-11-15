@@ -1,10 +1,10 @@
 package common
 
 import (
-	"encoding/base64"
 	"strings"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/signature"
+	"github.com/MoeForge/moego/base64"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/signature"
 )
 
 // Gemini Claude carriers encode direction and semantic target on the client-facing wire.

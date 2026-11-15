@@ -1,43 +1,6 @@
 package auth
 
-import (
-	"context"
-	"sync"
-	"testing"
-)
-
-type memoryAuthTestStore struct {
-	mu    sync.Mutex
-	auths map[string]*Auth
-}
-
-func newMemoryAuthTestStore() *memoryAuthTestStore {
-	return &memoryAuthTestStore{auths: make(map[string]*Auth)}
-}
-
-func (s *memoryAuthTestStore) List(context.Context) ([]*Auth, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	res := make([]*Auth, 0, len(s.auths))
-	for _, a := range s.auths {
-		res = append(res, a.Clone())
-	}
-	return res, nil
-}
-
-func (s *memoryAuthTestStore) Save(_ context.Context, auth *Auth) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.auths[auth.ID] = auth.Clone()
-	return auth.ID, nil
-}
-
-func (s *memoryAuthTestStore) Delete(_ context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.auths, id)
-	return nil
-}
+import "testing"
 
 func TestAuthChangeWatchCoversNativeMutationsAndReload(t *testing.T) {
 	store := newMemoryAuthTestStore()
@@ -64,13 +27,22 @@ func TestAuthChangeWatchCoversNativeMutationsAndReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertChanged()
-	next := auth.Clone()
-	next.Metadata["access_token"] = "replace"
-	auth, err = manager.Update(t.Context(), next)
-	if err != nil {
-		t.Fatal(err)
+	for _, mode := range []string{"refresh", "prepare", "replace"} {
+		next := auth.Clone()
+		next.Metadata["access_token"] = mode
+		switch mode {
+		case "refresh":
+			auth, err = manager.UpdateRefreshedAuth(t.Context(), auth, next)
+		case "prepare":
+			auth, err = manager.UpdatePreparedAuth(t.Context(), auth, next)
+		default:
+			auth, err = manager.Update(t.Context(), next)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertChanged()
 	}
-	assertChanged()
 	// Slow subscribers never block manager mutations and receive a coalesced hint.
 	for range 100 {
 		auth, err = manager.Update(t.Context(), auth)

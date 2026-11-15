@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
 func TestAntigravityAccountChangesCancelConnectedProbe(t *testing.T) {
-	for _, change := range []string{"disabled", "route", "token", "config-proxy", "native-update", "native-remove"} {
+	for _, change := range []string{"disabled", "route", "token", "config-proxy", "native-refresh", "native-prepare", "native-update", "native-remove"} {
 		t.Run(change, func(t *testing.T) {
 			resetAntigravityCapabilityCache()
 			t.Cleanup(resetAntigravityCapabilityCache)
@@ -37,7 +37,7 @@ func TestAntigravityAccountChangesCancelConnectedProbe(t *testing.T) {
 				updated.Disabled = true
 			case "route":
 				updated.Attributes["base_url"] = "https://new-route.invalid"
-			case "token", "native-update":
+			case "token", "native-refresh", "native-prepare", "native-update":
 				updated.Metadata["access_token"] = "new-token"
 			}
 			if change == "config-proxy" {
@@ -46,6 +46,10 @@ func TestAntigravityAccountChangesCancelConnectedProbe(t *testing.T) {
 				svc.commitConfigUpdate(next)
 			} else {
 				switch change {
+				case "native-refresh":
+					_, _ = svc.coreManager.UpdateRefreshedAuth(ctx, auth, updated)
+				case "native-prepare":
+					_, _ = svc.coreManager.UpdatePreparedAuth(ctx, auth, updated)
 				case "native-update":
 					_, _ = svc.coreManager.Update(ctx, updated)
 				case "native-remove":

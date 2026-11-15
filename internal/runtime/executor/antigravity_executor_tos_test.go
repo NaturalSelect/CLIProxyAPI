@@ -8,12 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
+// antigravityTOSBody reproduces the verbatim 403 PERMISSION_DENIED signature from
+// issue #7296/#7515: a service-scoped Terms-of-Service suspension carrying an
+// ErrorInfo reason=TOS_VIOLATION plus appeal metadata.
 const antigravityTOSBody = `{
 	"error": {
 		"code": 403,
@@ -34,41 +37,35 @@ const antigravityTOSBody = `{
 	}
 }`
 
-func resetAntigravityTOSPause(t *testing.T) {
-	t.Helper()
-	antigravityTOSPauseUntil.Store(0)
-	t.Cleanup(func() { antigravityTOSPauseUntil.Store(0) })
-}
-
 func TestAntigravityTOSViolationParsing(t *testing.T) {
-	t.Run("matches tos signature and extracts appeal url", func(t *testing.T) {
+	t.Run("matches verbatim tos signature and extracts appeal url", func(t *testing.T) {
 		violation := parseAntigravityTOSViolation([]byte(antigravityTOSBody))
 		if violation == nil {
 			t.Fatal("parseAntigravityTOSViolation() = nil, want TOS violation match")
 		}
 		if violation.AppealURL != "https://forms.gle/hGzM9MEUv2azZsrb9" {
-			t.Fatalf("AppealURL = %q", violation.AppealURL)
+			t.Fatalf("AppealURL = %q, want %q", violation.AppealURL, "https://forms.gle/hGzM9MEUv2azZsrb9")
 		}
 		if violation.AppealURLText != "Submit Appeal" {
-			t.Fatalf("AppealURLText = %q", violation.AppealURLText)
+			t.Fatalf("AppealURLText = %q, want %q", violation.AppealURLText, "Submit Appeal")
 		}
 	})
 
-	t.Run("ignores 403 permission denied with another reason", func(t *testing.T) {
+	t.Run("does not match plain 403 permission denied without tos reason", func(t *testing.T) {
 		body := `{"error":{"code":403,"status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SOME_OTHER_REASON"}]}}`
 		if violation := parseAntigravityTOSViolation([]byte(body)); violation != nil {
-			t.Fatalf("parseAntigravityTOSViolation() = %+v, want nil", violation)
+			t.Fatalf("parseAntigravityTOSViolation() = %+v, want nil for non-TOS 403", violation)
 		}
 	})
 
-	t.Run("ignores 429 resource exhausted", func(t *testing.T) {
-		body := `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"TOS_VIOLATION"}]}}`
+	t.Run("does not match 429 resource exhausted", func(t *testing.T) {
+		body := `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"}]}}`
 		if violation := parseAntigravityTOSViolation([]byte(body)); violation != nil {
 			t.Fatalf("parseAntigravityTOSViolation() = %+v, want nil for 429", violation)
 		}
 	})
 
-	t.Run("ignores empty and invalid bodies", func(t *testing.T) {
+	t.Run("does not match empty or invalid body", func(t *testing.T) {
 		if violation := parseAntigravityTOSViolation(nil); violation != nil {
 			t.Fatalf("parseAntigravityTOSViolation(nil) = %+v, want nil", violation)
 		}
@@ -78,86 +75,205 @@ func TestAntigravityTOSViolationParsing(t *testing.T) {
 	})
 }
 
-func TestAntigravityTOSStatusErrIsTerminalAndCredentialScoped(t *testing.T) {
-	err := newAntigravityStatusErr(http.StatusForbidden, []byte(antigravityTOSBody))
-	if !err.IsTerminalTOSViolation() {
-		t.Fatal("IsTerminalTOSViolation() = false, want true")
-	}
-	if !err.IsCredentialScoped() {
-		t.Fatal("IsCredentialScoped() = false, want true")
-	}
-	meta := err.TOSAppealMetadata()
-	if meta["tos_appeal_url"] != "https://forms.gle/hGzM9MEUv2azZsrb9" || meta["tos_appeal_url_text"] != "Submit Appeal" {
-		t.Fatalf("TOSAppealMetadata() = %v, want appeal url and text", meta)
-	}
-
-	plain := newAntigravityStatusErr(http.StatusForbidden, []byte(`{"error":{"code":403,"status":"PERMISSION_DENIED"}}`))
-	if plain.IsTerminalTOSViolation() || plain.IsCredentialScoped() || plain.TOSAppealMetadata() != nil {
-		t.Fatal("plain 403 must not be marked as a TOS violation")
+func TestAntigravityTOSStatusErrTerminal(t *testing.T) {
+	err := newAntigravityStatusErr(403, []byte(antigravityTOSBody))
+	if !err.credentialScoped {
+		t.Fatal("newAntigravityStatusErr(TOS).credentialScoped = false, want true (terminal credential state)")
 	}
 }
 
 func TestAntigravityTOSPoolPause(t *testing.T) {
-	resetAntigravityTOSPause(t)
+	resetAntigravityCreditsRetryState()
+	t.Cleanup(resetAntigravityCreditsRetryState)
 
+	auth := &cliproxyauth.Auth{ID: "tos-auth", Provider: "antigravity"}
+	other := &cliproxyauth.Auth{ID: "sibling-auth", Provider: "antigravity"}
+
+	// By default (empty TOSPauseWindow or nil config), TOS_VIOLATION must not pause the pool.
+	defaultCfg := &config.Config{}
+	markAntigravityTOSPause(defaultCfg, auth)
+	if antigravityInTOSPause(defaultCfg, auth) || antigravityInTOSPause(defaultCfg, other) {
+		t.Fatal("antigravityInTOSPause() = true by default, want no pool-wide pause unless explicitly configured")
+	}
+	markAntigravityTOSPause(nil, auth)
+	if antigravityInTOSPause(nil, auth) || antigravityInTOSPause(nil, other) {
+		t.Fatal("antigravityInTOSPause(nil) = true, want no pool-wide pause")
+	}
+
+	// When explicitly configured, TOS_VIOLATION pauses the entire pool.
 	cfg := &config.Config{}
-	if antigravityInTOSPause(cfg) {
+	cfg.Antigravity.TOSPauseWindow = "6h"
+	if antigravityInTOSPause(cfg, auth) {
 		t.Fatal("antigravityInTOSPause() = true before any TOS violation")
 	}
-	markAntigravityTOSPause(cfg)
-	if !antigravityInTOSPause(cfg) {
+	markAntigravityTOSPause(cfg, auth)
+	if !antigravityInTOSPause(cfg, auth) {
 		t.Fatal("antigravityInTOSPause() = false after TOS violation, want pool-wide pause")
+	}
+	// A different auth in the same pool must also be paused.
+	if !antigravityInTOSPause(cfg, other) {
+		t.Fatal("antigravityInTOSPause() = false for sibling credential, want pool-wide pause")
+	}
+
+	// A 429 quota result must never create or extend the pause.
+	antigravityTOSPauseUntil.Clear()
+	decision := decideAntigravity429([]byte(`{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"0.5s"}]}}`))
+	if decision.kind == antigravity429DecisionFullQuotaExhausted {
+		t.Fatalf("decideAntigravity429() = %q, want transient rate-limit decision", decision.kind)
+	}
+	if antigravityInTOSPause(cfg, auth) {
+		t.Fatal("antigravityInTOSPause() = true after 429-only handling, want no pause")
 	}
 }
 
 func TestAntigravityTOSPauseWindowConfigurable(t *testing.T) {
-	resetAntigravityTOSPause(t)
+	resetAntigravityCreditsRetryState()
+	t.Cleanup(resetAntigravityCreditsRetryState)
 
-	disabledCfg := &config.Config{}
-	disabledCfg.Antigravity.TOSPauseWindow = "off"
-	markAntigravityTOSPause(disabledCfg)
-	if antigravityInTOSPause(disabledCfg) {
-		t.Fatal("antigravityInTOSPause() = true with the pause disabled")
+	auth := &cliproxyauth.Auth{ID: "tos-auth", Provider: "antigravity"}
+
+	// Unset, disabled, zero, negative, and invalid windows must not pause the pool.
+	for _, raw := range []string{"", "0", "off", "false", "none", "disabled", "0s", "-1m", "invalid"} {
+		resetAntigravityCreditsRetryState()
+		cfg := &config.Config{}
+		cfg.Antigravity.TOSPauseWindow = raw
+		markAntigravityTOSPause(cfg, auth)
+		if antigravityInTOSPause(cfg, auth) {
+			t.Fatalf("antigravityInTOSPause() = true for TOSPauseWindow=%q, want no pause", raw)
+		}
 	}
 
-	window, enabled := antigravityTOSPauseWindow(&config.Config{})
-	if !enabled || window != 6*time.Hour {
-		t.Fatalf("default window = %s enabled=%v, want 6h enabled", window, enabled)
-	}
-	customCfg := &config.Config{}
-	customCfg.Antigravity.TOSPauseWindow = "2h"
-	if window, enabled = antigravityTOSPauseWindow(customCfg); !enabled || window != 2*time.Hour {
-		t.Fatalf("custom window = %s enabled=%v, want 2h enabled", window, enabled)
-	}
-	invalidCfg := &config.Config{}
-	invalidCfg.Antigravity.TOSPauseWindow = "soon"
-	if window, enabled = antigravityTOSPauseWindow(invalidCfg); !enabled || window != 6*time.Hour {
-		t.Fatalf("invalid window = %s enabled=%v, want fallback to 6h", window, enabled)
+	// A custom positive window must be honored.
+	custom := &config.Config{}
+	custom.Antigravity.TOSPauseWindow = "2h"
+	markAntigravityTOSPause(custom, auth)
+	if !antigravityInTOSPause(custom, auth) {
+		t.Fatal("antigravityInTOSPause() = false with custom 2h window, want pause")
 	}
 }
 
-func TestAntigravityTOSPauseExpires(t *testing.T) {
-	resetAntigravityTOSPause(t)
+func TestAntigravityTOSErrorCarriesTerminalMarker(t *testing.T) {
+	err := newAntigravityStatusErr(403, []byte(antigravityTOSBody))
+	if !err.IsTerminalTOSViolation() {
+		t.Fatal("newAntigravityStatusErr(TOS).IsTerminalTOSViolation() = false, want true")
+	}
+	// Non-TOS 403 must not be marked terminal.
+	plain := newAntigravityStatusErr(403, []byte(`{"error":{"code":403,"status":"PERMISSION_DENIED"}}`))
+	if plain.IsTerminalTOSViolation() {
+		t.Fatal("newAntigravityStatusErr(plain 403).IsTerminalTOSViolation() = true, want false")
+	}
+}
 
-	antigravityTOSPauseUntil.Store(time.Now().Add(-time.Minute).UnixNano())
-	if antigravityInTOSPause(&config.Config{}) {
-		t.Fatal("antigravityInTOSPause() = true for an expired deadline")
+// TestAntigravityClaudeNonStream_SSEErrorFrameIsTerminal verifies that a TOS
+// error frame arriving inside an HTTP 200 SSE stream is surfaced as the
+// terminal tos_violation error (so the credential is deactivated), not
+// swallowed by the aggregation loop into a generic empty-output failure.
+func TestAntigravityClaudeNonStream_SSEErrorFrameIsTerminal(t *testing.T) {
+	resetAntigravityCreditsRetryState()
+	t.Cleanup(resetAntigravityCreditsRetryState)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		// One normal data frame followed by the TOS error frame.
+		_, _ = w.Write([]byte("data: " + `{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}]}}` + "\n\n"))
+		tosLine := strings.Join(strings.Fields(antigravityTOSBody), " ")
+		_, _ = w.Write([]byte("data: " + tosLine + "\n\n"))
+	}))
+	defer server.Close()
+
+	exec := NewAntigravityExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "tos-sse",
+		Attributes: map[string]string{"base_url": server.URL},
+		Metadata: map[string]any{
+			"access_token": "token",
+			"project_id":   "project-1",
+			"expired":      time.Now().Add(time.Hour).Format(time.RFC3339),
+		},
+	}
+
+	_, err := exec.executeClaudeNonStream(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "claude-sonnet-4-6",
+		Payload: []byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}}`),
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatAntigravity})
+	if err == nil {
+		t.Fatal("executeClaudeNonStream() = nil, want terminal TOS error")
+	}
+	sErr, ok := err.(statusErr)
+	if !ok {
+		t.Fatalf("error type = %T, want statusErr", err)
+	}
+	if !sErr.IsTerminalTOSViolation() {
+		t.Fatalf("IsTerminalTOSViolation() = false; error was swallowed by aggregation: %v", err)
+	}
+	if sErr.ErrorCode() != "tos_violation" {
+		t.Fatalf("ErrorCode() = %q, want tos_violation", sErr.ErrorCode())
+	}
+}
+
+// TestAntigravityClaudeNonStream_MultiLineSSEErrorIsTerminal verifies that a
+// TOS error event split across multiple SSE data: lines is reassembled and
+// surfaced as a terminal error rather than being dropped by line-by-line
+// classification.
+func TestAntigravityClaudeNonStream_MultiLineSSEErrorIsTerminal(t *testing.T) {
+	resetAntigravityCreditsRetryState()
+	t.Cleanup(resetAntigravityCreditsRetryState)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: " + `{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}]}}` + "\n\n"))
+		// Split the TOS error object across two data: lines at a field boundary
+		// (real SSE framers break between JSON tokens, not inside a string).
+		tosLine := strings.Join(strings.Fields(antigravityTOSBody), " ")
+		mid := strings.Index(tosLine, `"details"`) - 1
+		_, _ = w.Write([]byte("data: " + tosLine[:mid] + "\n"))
+		_, _ = w.Write([]byte("data: " + tosLine[mid:] + "\n\n"))
+	}))
+	defer server.Close()
+
+	exec := NewAntigravityExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "tos-sse-multiline",
+		Attributes: map[string]string{"base_url": server.URL},
+		Metadata: map[string]any{
+			"access_token": "token",
+			"project_id":   "project-1",
+			"expired":      time.Now().Add(time.Hour).Format(time.RFC3339),
+		},
+	}
+	_, err := exec.executeClaudeNonStream(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "claude-sonnet-4-6",
+		Payload: []byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}}`),
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatAntigravity})
+	if err == nil {
+		t.Fatal("executeClaudeNonStream() = nil, want terminal TOS error for multi-line event")
+	}
+	sErr, ok := err.(statusErr)
+	if !ok || !sErr.IsTerminalTOSViolation() {
+		t.Fatalf("err = %v (%T), want terminal tos_violation statusErr", err, err)
 	}
 }
 
 func TestAntigravityRateLimitNeverArmsTOSPause(t *testing.T) {
-	resetAntigravityTOSPause(t)
+	resetAntigravityCreditsRetryState()
+	t.Cleanup(resetAntigravityCreditsRetryState)
 
+	cfg := &config.Config{}
+	cfg.Antigravity.TOSPauseWindow = "6h"
+	auth := &cliproxyauth.Auth{ID: "rate-limited", Provider: "antigravity"}
 	body := []byte(`{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"}]}}`)
-	exec := NewAntigravityExecutor(&config.Config{})
-	exec.applyAntigravityTOSState(exec.cfg, &cliproxyauth.Auth{ID: "rate-limited"}, body)
-	if antigravityInTOSPause(exec.cfg) {
+	exec := NewAntigravityExecutor(cfg)
+	exec.applyAntigravityTOSState(cfg, auth, body)
+	if antigravityInTOSPause(cfg, auth) {
 		t.Fatal("a 429 body armed the TOS pause, want no pause")
 	}
 }
 
 func TestAntigravityExecuteTOSResponseDeactivatesViaErrorAndPausesPool(t *testing.T) {
-	resetAntigravityTOSPause(t)
+	resetAntigravityCreditsRetryState()
+	t.Cleanup(resetAntigravityCreditsRetryState)
 
 	hits := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +284,9 @@ func TestAntigravityExecuteTOSResponseDeactivatesViaErrorAndPausesPool(t *testin
 	}))
 	defer server.Close()
 
-	exec := NewAntigravityExecutor(&config.Config{})
+	cfg := &config.Config{}
+	cfg.Antigravity.TOSPauseWindow = "6h"
+	exec := NewAntigravityExecutor(cfg)
 	auth := &cliproxyauth.Auth{
 		ID:         "tos-exec",
 		Attributes: map[string]string{"base_url": server.URL},
@@ -189,7 +307,7 @@ func TestAntigravityExecuteTOSResponseDeactivatesViaErrorAndPausesPool(t *testin
 	if !ok || !sErr.IsTerminalTOSViolation() {
 		t.Fatalf("Execute() error = %v (%T), want terminal TOS statusErr", err, err)
 	}
-	if !antigravityInTOSPause(exec.cfg) {
+	if !antigravityInTOSPause(cfg, auth) {
 		t.Fatal("pool pause not armed after a TOS response")
 	}
 

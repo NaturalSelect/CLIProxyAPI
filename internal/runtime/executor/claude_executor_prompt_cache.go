@@ -12,13 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	log "github.com/sirupsen/logrus"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 type claudePromptCacheProgressReadCloser struct {
@@ -64,6 +63,9 @@ func NewClaudeExecutorWithPromptCacheRuntime(
 	return &ClaudeExecutor{
 		cfg:                cfg,
 		promptCacheRuntime: promptCacheRuntime,
+		// Per-request ForAPIKey copies share these stores, so allocate them once here.
+		oauthToolAliases: &claudeOAuthToolAliasStore{},
+		threadBetas:      &helps.ClaudeThreadBetaStore{},
 	}
 }
 
@@ -209,7 +211,7 @@ func (e *ClaudeExecutor) applyClaudeCacheDiagnostics(
 	diagnosticKey := hex.EncodeToString(diagnosticHash[:])
 	state := &claudeCacheDiagnosticsState{key: diagnosticKey, scopeKey: scopeKey}
 
-	if gjson.GetBytes(body, "diagnostics").Exists() {
+	if ojson.GetBytes(body, "diagnostics").Exists() {
 		extraBetas = appendUniqueClaudeBeta(extraBetas, claudeCacheDiagnosticsBeta)
 		return body, extraBetas, state
 	}
@@ -222,9 +224,9 @@ func (e *ClaudeExecutor) applyClaudeCacheDiagnostics(
 	state.generation = generation
 	state.previousMessageID = previousMessageID
 	if previousMessageID != "" {
-		diagnosticsObject, _ = sjson.SetBytes(diagnosticsObject, "previous_message_id", previousMessageID)
+		diagnosticsObject, _ = ojson.SetBytes(diagnosticsObject, "previous_message_id", previousMessageID)
 	}
-	updatedBody, errSet := sjson.SetRawBytes(body, "diagnostics", diagnosticsObject)
+	updatedBody, errSet := ojson.SetRawBytes(body, "diagnostics", diagnosticsObject)
 	if errSet != nil {
 		return body, extraBetas, nil
 	}
@@ -276,9 +278,9 @@ func (e *ClaudeExecutor) recordClaudeDiagnosticsFallback(
 	if e == nil || e.promptCacheRuntime == nil || state == nil || !state.proxyAdded {
 		return
 	}
-	errorMessage := strings.ToLower(strings.TrimSpace(gjson.GetBytes(errorBody, "error.message").String()))
+	errorMessage := strings.ToLower(strings.TrimSpace(ojson.GetBytes(errorBody, "error.message").String()))
 	if errorMessage == "" {
-		errorMessage = strings.ToLower(strings.TrimSpace(gjson.GetBytes(errorBody, "message").String()))
+		errorMessage = strings.ToLower(strings.TrimSpace(ojson.GetBytes(errorBody, "message").String()))
 	}
 	if strings.Contains(errorMessage, "previous_message_id") {
 		unsupportedField := containsAnyClaudeDiagnosticsRejectionMarker(
@@ -320,7 +322,7 @@ func applyResolvedClaudeRequestIdentity(body []byte, opts cliproxyexecutor.Optio
 }
 
 func claudeSessionIDFromPayload(body []byte) string {
-	userID := gjson.GetBytes(body, "metadata.user_id").String()
+	userID := ojson.GetBytes(body, "metadata.user_id").String()
 	identity, valid := cliproxyauth.ParseClaudeUserID(userID)
 	if !valid {
 		return ""
@@ -403,7 +405,7 @@ func (e *ClaudeExecutor) executeClaudeMessagesHTTPRequest(
 			diagnosticsState,
 		) {
 			e.recordClaudeDiagnosticsFallback(diagnosticsState, errorBody)
-			requestBody, _ = sjson.DeleteBytes(requestBody, "diagnostics")
+			requestBody, _ = ojson.DeleteBytes(requestBody, "diagnostics")
 			requestBetas = removeClaudeBeta(requestBetas, claudeCacheDiagnosticsBeta)
 			if resignCCH {
 				var errSign error
@@ -503,9 +505,9 @@ func shouldRetryClaudeRequestWithoutDiagnostics(
 	if statusCode != http.StatusBadRequest || state == nil || !state.proxyAdded {
 		return false
 	}
-	errorMessage := gjson.GetBytes(errorBody, "error.message").String()
+	errorMessage := ojson.GetBytes(errorBody, "error.message").String()
 	if strings.TrimSpace(errorMessage) == "" {
-		errorMessage = gjson.GetBytes(errorBody, "message").String()
+		errorMessage = ojson.GetBytes(errorBody, "message").String()
 	}
 	lowerErrorMessage := strings.ToLower(strings.TrimSpace(errorMessage))
 	if lowerErrorMessage == "" {

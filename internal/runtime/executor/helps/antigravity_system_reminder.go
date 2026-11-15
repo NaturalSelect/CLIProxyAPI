@@ -6,8 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 const antigravitySystemReminderAuthorityNote = "The first <system-reminder> in the first user message contains your system instructions. " +
@@ -18,18 +17,19 @@ const antigravitySystemReminderAuthorityNote = "The first <system-reminder> in t
 // <system-reminder> part at the start of the first user turn and replaces the system instruction with
 // a static Antigravity prompt that grants that reminder system-level authority.
 func MoveAntigravitySystemInstructionToReminder(payload []byte) []byte {
+	doc := ojson.NewDoc(payload)
 	var texts, extraParts []string
 	for _, path := range []string{"request.systemInstruction", "request.system_instruction"} {
-		instruction := gjson.GetBytes(payload, path)
+		instruction := doc.Get(path)
 		if !instruction.Exists() {
 			continue
 		}
-		if instruction.Type == gjson.String {
+		if instruction.Type == ojson.String {
 			texts = append(texts, instruction.String())
 			continue
 		}
-		instruction.Get("parts").ForEach(func(_, part gjson.Result) bool {
-			if part.Get("text").Type == gjson.String {
+		instruction.Get("parts").ForEach(func(_, part ojson.Result) bool {
+			if part.Get("text").Type == ojson.String {
 				texts = append(texts, part.Get("text").String())
 			} else {
 				extraParts = append(extraParts, part.Raw)
@@ -48,18 +48,15 @@ func MoveAntigravitySystemInstructionToReminder(payload []byte) []byte {
 	static := antigravityIdentityPrefix
 	if len(movable) > 0 {
 		static += antigravitySystemReminderAuthorityNote
-		payload = insertAntigravityReminderIntoFirstUserTurn(payload, antigravitySystemReminderText(strings.Join(movable, "\n\n")))
+		insertAntigravityReminderIntoFirstUserTurn(doc, antigravitySystemReminderText(strings.Join(movable, "\n\n")))
 	}
 
 	staticParts := append([]string{marshalAntigravityTextPart(static)}, extraParts...)
 	instruction := `{"role":"user","parts":[` + strings.Join(staticParts, ",") + `]}`
-	if updated, err := sjson.SetRawBytes(payload, "request.systemInstruction", []byte(instruction)); err == nil {
-		payload = updated
-	}
-	if updated, err := sjson.DeleteBytes(payload, "request.system_instruction"); err == nil {
-		payload = updated
-	}
-	return payload
+	setAntigravityRaw(doc, "request.systemInstruction", instruction)
+	// Deleting a missing key is not an error; any other failure leaves the document unchanged.
+	_ = doc.Delete("request.system_instruction")
+	return doc.Bytes()
 }
 
 func antigravitySystemReminderText(text string) string {
@@ -73,11 +70,12 @@ func antigravitySystemReminderText(text string) string {
 	return reminder.String()
 }
 
-func insertAntigravityReminderIntoFirstUserTurn(payload []byte, reminder string) []byte {
+func insertAntigravityReminderIntoFirstUserTurn(doc *ojson.Doc, reminder string) {
 	reminderPart := marshalAntigravityTextPart(reminder)
-	contents := gjson.GetBytes(payload, "request.contents")
+	contents := doc.Get("request.contents")
 	if !contents.IsArray() {
-		return setAntigravityRaw(payload, "request.contents", `[{"role":"user","parts":[`+reminderPart+`]}]`)
+		setAntigravityRaw(doc, "request.contents", `[{"role":"user","parts":[`+reminderPart+`]}]`)
+		return
 	}
 
 	turns := contents.Array()
@@ -88,7 +86,8 @@ func insertAntigravityReminderIntoFirstUserTurn(payload []byte, reminder string)
 		parts := turn.Get("parts")
 		partsPath := "request.contents." + strconv.Itoa(idx) + ".parts"
 		if !parts.IsArray() {
-			return setAntigravityRaw(payload, partsPath, `[`+reminderPart+`]`)
+			setAntigravityRaw(doc, partsPath, `[`+reminderPart+`]`)
+			return
 		}
 		items := parts.Array()
 		insertAt := 0
@@ -105,7 +104,8 @@ func insertAntigravityReminderIntoFirstUserTurn(payload []byte, reminder string)
 		if insertAt == len(items) {
 			raw = append(raw, reminderPart)
 		}
-		return setAntigravityRaw(payload, partsPath, "["+strings.Join(raw, ",")+"]")
+		setAntigravityRaw(doc, partsPath, "["+strings.Join(raw, ",")+"]")
+		return
 	}
 
 	raw := make([]string, 0, len(turns)+1)
@@ -113,15 +113,12 @@ func insertAntigravityReminderIntoFirstUserTurn(payload []byte, reminder string)
 	for _, turn := range turns {
 		raw = append(raw, turn.Raw)
 	}
-	return setAntigravityRaw(payload, "request.contents", "["+strings.Join(raw, ",")+"]")
+	setAntigravityRaw(doc, "request.contents", "["+strings.Join(raw, ",")+"]")
 }
 
-func setAntigravityRaw(payload []byte, path, raw string) []byte {
-	updated, err := sjson.SetRawBytes(payload, path, []byte(raw))
-	if err != nil {
-		return payload
-	}
-	return updated
+// setAntigravityRaw sets a raw JSON value and leaves the document unchanged on failure.
+func setAntigravityRaw(doc *ojson.Doc, path, raw string) {
+	_ = doc.SetRaw(path, raw)
 }
 
 // NOTE: encoding/json escapes "<" and ">" by default; the reminder tags must stay literal.

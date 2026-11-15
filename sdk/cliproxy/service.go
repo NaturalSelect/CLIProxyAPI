@@ -6,21 +6,23 @@ package cliproxy
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/homeplugins"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/wsrelay"
-	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
-	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executionregistry"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
-	sdkpluginstore "github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginstore"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/homeplugins"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/wsrelay"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executionregistry"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
+	sdkpluginstore "github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginstore"
 )
 
 // Service wraps the proxy server lifecycle so external programs can embed the CLI proxy.
@@ -39,8 +41,16 @@ type Service struct {
 	// configRuntimeMu orders side-effecting runtime application after config commits.
 	configRuntimeMu        sync.Mutex
 	executorRegistrationMu sync.Mutex
+	authUpdateMu           sync.Mutex
+	authRevisions          map[string]uint64
+	authRegWaitMu          sync.Mutex
+	authRegWaiters         map[string]chan struct{}
 	configSequence         uint64
 	appliedRoutingState    *routingRuntimeState
+
+	// proxyPoolPublisher scopes connection-pool fencing to this service, so a reload
+	// here never retires config snapshots served by another service.
+	proxyPoolPublisher uint64
 
 	// configPath is the path to the configuration file.
 	configPath string
@@ -65,6 +75,12 @@ type Service struct {
 
 	// pprofServer manages the optional pprof HTTP debug server.
 	pprofServer *pprofServer
+
+	// discoveryManager manages local network mDNS / DNS-SD service advertising.
+	discoveryManager *discoveryAdvertiserManager
+
+	// kvStoreManaged tracks whether this service instance owns local KVStore lifecycle.
+	kvStoreManaged atomic.Bool
 
 	// serverErr channel for server startup/shutdown errors.
 	serverErr chan error
@@ -94,10 +110,14 @@ type Service struct {
 	cooldownStateStore coreauth.CooldownStateStore
 
 	// claudePromptCacheRuntime preserves bounded cache knowledge across executor reloads.
-	claudePromptCacheRuntime *executor.ClaudePromptCacheRuntime
+	claudePromptCacheRuntime *helps.ClaudePromptCacheRuntime
 
 	// pluginHost owns dynamic plugin lifecycle and runtime capability adapters.
 	pluginHost *pluginhost.Host
+
+	// pluginInterceptorHost optionally overrides the PluginInterceptorHost
+	// installed on request handlers. Nil means the internal pluginHost is used.
+	pluginInterceptorHost handlers.PluginInterceptorHost
 
 	// shutdownOnce ensures shutdown is called only once.
 	shutdownOnce sync.Once
@@ -140,4 +160,20 @@ type Service struct {
 	antigravityRefreshPending map[string]*antigravityModelRefreshRequest
 	antigravityPersistPending map[string]*antigravityHintPersistRequest
 	antigravityPersistActive  map[string]*antigravityHintPersistRequest
+}
+
+// SetResultPolicy sets an execution result policy on the underlying core auth manager.
+func (s *Service) SetResultPolicy(policy coreauth.ResultPolicy) {
+	if s == nil || s.coreManager == nil {
+		return
+	}
+	s.coreManager.SetResultPolicy(policy)
+}
+
+// ResultPolicy returns the execution result policy configured on the core auth manager.
+func (s *Service) ResultPolicy() coreauth.ResultPolicy {
+	if s == nil || s.coreManager == nil {
+		return nil
+	}
+	return s.coreManager.ResultPolicy()
 }

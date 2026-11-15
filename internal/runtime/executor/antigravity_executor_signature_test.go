@@ -3,8 +3,9 @@ package executor
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
+	"errors"
 	"fmt"
+	"github.com/MoeForge/moego/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,18 +13,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	internalsignature "github.com/router-for-me/CLIProxyAPI/v7/internal/signature"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cache"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	internalsignature "github.com/router-for-me/CLIProxyAPI/v8/internal/signature"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	log "github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/test"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
@@ -58,7 +58,7 @@ func issue4959ResponsesModelFirstPayload() []byte {
 		`]}`)
 }
 
-func contentHasNamedPart(content gjson.Result, partKind, name string) bool {
+func contentHasNamedPart(content ojson.Result, partKind, name string) bool {
 	for _, part := range content.Get("parts").Array() {
 		if part.Get(partKind+".name").String() == name {
 			return true
@@ -67,7 +67,7 @@ func contentHasNamedPart(content gjson.Result, partKind, name string) bool {
 	return false
 }
 
-func assertIssue4959LeadingUserContents(t *testing.T, contents []gjson.Result) {
+func assertIssue4959LeadingUserContents(t *testing.T, contents []ojson.Result) {
 	t.Helper()
 	if len(contents) < 3 {
 		t.Fatalf("contents too short: %d", len(contents))
@@ -168,22 +168,23 @@ func TestSanitizeAntigravityGeminiRequestSignaturesFinalizesParallelCalls(t *tes
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			payload := []byte(`{"request":{"contents":[{"role":"model","parts":[{"functionCall":{"name":"first","args":{}}},{"functionCall":{"name":"second","args":{}}}]},{"role":"user","parts":[{"functionResponse":{"name":"first","response":{"result":"ok"}}},{"functionResponse":{"name":"second","response":{"result":"ok"}}}]}]}}`)
+			payloadDoc := ojson.NewDoc([]byte(`{"request":{"contents":[{"role":"model","parts":[{"functionCall":{"name":"first","args":{}}},{"functionCall":{"name":"second","args":{}}}]},{"role":"user","parts":[{"functionResponse":{"name":"first","response":{"result":"ok"}}},{"functionResponse":{"name":"second","response":{"result":"ok"}}}]}]}}`))
 			if tt.firstSignature != "" {
-				payload, _ = sjson.SetBytes(payload, "request.contents.0.parts.0.thoughtSignature", tt.firstSignature)
+				_ = payloadDoc.Set("request.contents.0.parts.0.thoughtSignature", tt.firstSignature)
 			}
 			if tt.secondSignature != "" {
-				payload, _ = sjson.SetBytes(payload, "request.contents.0.parts.1.thoughtSignature", tt.secondSignature)
+				_ = payloadDoc.Set("request.contents.0.parts.1.thoughtSignature", tt.secondSignature)
 			}
+			payload := payloadDoc.Bytes()
 
 			output := sanitizeAntigravityGeminiRequestSignatures("gemini-3.5-flash", payload)
-			if got := gjson.GetBytes(output, "request.contents.0.parts.0.thoughtSignature").String(); got != tt.wantFirstSignature {
+			if got := ojson.GetBytes(output, "request.contents.0.parts.0.thoughtSignature").String(); got != tt.wantFirstSignature {
 				t.Fatalf("first signature = %q, want %q; output=%s", got, tt.wantFirstSignature, output)
 			}
-			if signature := gjson.GetBytes(output, "request.contents.0.parts.1.thoughtSignature"); signature.Exists() {
+			if signature := ojson.GetBytes(output, "request.contents.0.parts.1.thoughtSignature"); signature.Exists() {
 				t.Fatalf("second parallel call should remain unsigned; output=%s", output)
 			}
-			if got := gjson.GetBytes(output, "request.contents.1.role").String(); got != "model" {
+			if got := ojson.GetBytes(output, "request.contents.1.role").String(); got != "model" {
 				t.Fatalf("functionResponse role = %q, want native Antigravity model role; output=%s", got, output)
 			}
 		})
@@ -196,16 +197,20 @@ func TestAntigravityGeminiSignatureNormalizationDoesNotRepeatLogs(t *testing.T) 
 		`{"functionCall":{"name":"first","args":{}},"thoughtSignature":"` + issue4959GeminiThoughtSignature() + `"},` +
 		`{"functionCall":{"name":"second","args":{}},"thoughtSignature":"skip_thought_signature_validator"},` +
 		`{"functionCall":{"name":"third","args":{}},"thoughtSignature":"google#skip_thought_signature_validator"}]}]}`)
-	original, working := helps.TranslateRequestPairWithCodexMultiAgentV2(t.Context(), nil, &config.Config{},
-		sdktranslator.FormatGemini, sdktranslator.FormatAntigravity, "gemini-3.8-flash-high", payload, payload, true)
-	working = sanitizeAntigravityGeminiRequestSignatures("gemini-3.8-flash-high", working)
+	translationReq := sdktranslator.RequestEnvelope{Model: "gemini-3.8-flash-high", Stream: true}
+	original, working, errTranslate := helps.TranslateRequestEnvelopePairWithCodexMultiAgentV2(t.Context(), nil, &config.Config{},
+		sdktranslator.FormatGemini, sdktranslator.FormatAntigravity, translationReq, payload, payload)
+	if errTranslate != nil {
+		t.Fatalf("translate request pair: %v", errTranslate)
+	}
+	working = sanitizeAntigravityGeminiRequestSignatures(translationReq.Model, working)
 
-	if got := gjson.GetBytes(working, "request.contents.0.parts.0.thoughtSignature").String(); got != issue4959GeminiThoughtSignature() {
+	if got := ojson.GetBytes(working, "request.contents.0.parts.0.thoughtSignature").String(); got != issue4959GeminiThoughtSignature() {
 		t.Fatalf("native signature changed: %s", working)
 	}
 	for _, body := range [][]byte{original, working} {
 		for _, index := range []int{1, 2} {
-			if gjson.GetBytes(body, fmt.Sprintf("request.contents.0.parts.%d.thoughtSignature", index)).Exists() {
+			if ojson.GetBytes(body, fmt.Sprintf("request.contents.0.parts.%d.thoughtSignature", index)).Exists() {
 				t.Fatalf("sibling bypass was not removed: %s", body)
 			}
 		}
@@ -224,28 +229,6 @@ func TestAntigravityGeminiSignatureNormalizationDoesNotRepeatLogs(t *testing.T) 
 	}
 }
 
-func TestAntigravityDefaultFingerprintsObfuscatesSystemInstructionOnly(t *testing.T) {
-	executor := NewAntigravityExecutor(&config.Config{})
-	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"You are a Claude agent, built on Anthropic's Claude Agent SDK.\n<system-conventions>\nRFC 2119: MUST, REQUIRED, SHOULD, RECOMMENDED, MAY, OPTIONAL.\n</system-conventions>"}]},"contents":[{"role":"user","parts":[{"text":"Claude Agent SDK and RFC 2119 remain unchanged in user content"}]}]}}`)
-
-	got := executor.obfuscateSensitiveWords(payload)
-	systemText := gjson.GetBytes(got, "request.systemInstruction.parts.0.text").String()
-	if strings.Contains(systemText, "Claude Agent SDK") {
-		t.Fatalf("system instruction retained raw 'Claude Agent SDK': %q", systemText)
-	}
-	if strings.Contains(systemText, "<system-conventions>") {
-		t.Fatalf("system instruction retained raw '<system-conventions>': %q", systemText)
-	}
-	if strings.Contains(systemText, "RFC 2119") {
-		t.Fatalf("system instruction retained raw 'RFC 2119': %q", systemText)
-	}
-
-	wantContent := "Claude Agent SDK and RFC 2119 remain unchanged in user content"
-	if contentText := gjson.GetBytes(got, "request.contents.0.parts.0.text").String(); contentText != wantContent {
-		t.Fatalf("content text = %q, want unchanged %q", contentText, wantContent)
-	}
-}
-
 func TestAntigravitySensitiveWordsObfuscatesSystemInstructionOnly(t *testing.T) {
 	executor := NewAntigravityExecutor(&config.Config{
 		Antigravity: config.AntigravityConfig{SensitiveWords: []string{"proxy"}},
@@ -253,10 +236,10 @@ func TestAntigravitySensitiveWordsObfuscatesSystemInstructionOnly(t *testing.T) 
 	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Use proxy safely"}]},"contents":[{"role":"user","parts":[{"text":"proxy remains unchanged"}]}]}}`)
 
 	got := executor.obfuscateSensitiveWords(payload)
-	if systemText := gjson.GetBytes(got, "request.systemInstruction.parts.0.text").String(); systemText != "Use p\u034Froxy safely" {
-		t.Fatalf("system instruction = %q, want cloak-joiner obfuscation", systemText)
+	if systemText := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String(); systemText != "Use p\u034Froxy safely" {
+		t.Fatalf("system instruction = %q, want CGJ obfuscation", systemText)
 	}
-	if contentText := gjson.GetBytes(got, "request.contents.0.parts.0.text").String(); contentText != "proxy remains unchanged" {
+	if contentText := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); contentText != "proxy remains unchanged" {
 		t.Fatalf("content text = %q, want unchanged", contentText)
 	}
 }
@@ -304,58 +287,15 @@ func TestAntigravityStreamObfuscatesSensitiveSystemInstruction(t *testing.T) {
 	}
 
 	body := <-captured
-	got := gjson.GetBytes(body, "request.systemInstruction.parts.0.text").String()
-	want := "You are H\u034Fermes Agent, an intelligent AI assistant created by N\u034Fous Research."
+	got := ojson.GetBytes(body, "request.systemInstruction.parts.0.text").String()
+	want := "You are H\u034Fermes Agent, an intelligent AI assistant created by N\u034Fous R\u034Fesearch."
 	if got != want {
 		t.Fatalf("system instruction = %q, want %q; body=%s", got, want, body)
 	}
 }
 
-func TestAntigravitySystemReminderKeepsMovedTextUnobfuscated(t *testing.T) {
-	executor := NewAntigravityExecutor(&config.Config{
-		Antigravity: config.AntigravityConfig{SystemReminder: true, SensitiveWords: []string{"proxy"}},
-	})
-	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Use proxy safely"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
-
-	got := executor.cloakSystemInstruction(payload)
-
-	if reminder := gjson.GetBytes(got, "request.contents.0.parts.0.text").String(); reminder != "<system-reminder>\nUse proxy safely\n</system-reminder>" {
-		t.Fatalf("reminder = %q, want unobfuscated moved text", reminder)
-	}
-	static := gjson.GetBytes(got, "request.systemInstruction.parts.0.text").String()
-	if !strings.Contains(static, "<identity>") || !strings.Contains(static, "<system-reminder>") {
-		t.Fatalf("static system text = %q, want identity and reminder note", static)
-	}
-}
-
-func TestAntigravitySystemReminderDoesNotDuplicateIdentity(t *testing.T) {
-	executor := NewAntigravityExecutor(&config.Config{
-		Antigravity: config.AntigravityConfig{SystemReminder: true, IdentityConfuse: true},
-	})
-	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
-
-	got := executor.cloakSystemInstruction(payload)
-
-	if count := strings.Count(string(got), "<identity>"); count != 1 {
-		t.Fatalf("identity count = %d, want 1; body=%s", count, got)
-	}
-}
-
-func TestAntigravitySystemReminderDisabledKeepsLegacyCloaking(t *testing.T) {
-	cfg := &config.Config{Antigravity: config.AntigravityConfig{IdentityConfuse: true, SensitiveWords: []string{"proxy"}}}
-	executor := NewAntigravityExecutor(cfg)
-	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Use proxy safely"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
-
-	want := executor.obfuscateSensitiveWords(executor.prependIdentityInstruction(payload))
-	got := executor.cloakSystemInstruction(payload)
-
-	if !bytes.Equal(got, want) {
-		t.Fatalf("cloakSystemInstruction() = %s, want %s", got, want)
-	}
-}
-
-func TestAntigravityStreamMovesSystemInstructionToReminder(t *testing.T) {
-	captured := make(chan []byte, 1)
+func TestAntigravityExecuteObfuscatesCodexIdentityWithCGJ(t *testing.T) {
+	captured := make(chan []byte, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, errRead := io.ReadAll(r.Body)
 		if errRead != nil {
@@ -363,13 +303,218 @@ func TestAntigravityStreamMovesSystemInstructionToReminder(t *testing.T) {
 			return
 		}
 		captured <- body
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {}\n\n"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"OK"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":1,"totalTokenCount":11}}}`))
 	}))
 	defer server.Close()
 
 	executor := NewAntigravityExecutor(&config.Config{
-		Antigravity:  config.AntigravityConfig{SystemReminder: true},
+		Antigravity:  config.AntigravityConfig{SensitiveWords: []string{"codex", "GPT-5"}},
+		RequestRetry: 1,
+	})
+	auth := &cliproxyauth.Auth{
+		Metadata: map[string]any{
+			"access_token": "token-123",
+			"expired":      time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+			"project_id":   "project-1",
+		},
+		Attributes: map[string]string{"base_url": server.URL},
+	}
+	opts := cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FormatOpenAIResponse,
+		ResponseFormat: sdktranslator.FormatOpenAIResponse,
+		Stream:         false,
+	}
+
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "instructions_field",
+			payload: `{"model":"gemini-4-carbon-high","instructions":"You are Codex, an agent based on GPT-5.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Reply only OK."}]}],"max_output_tokens":128,"stream":false}`,
+		},
+		{
+			name:    "initial_developer_message",
+			payload: `{"model":"gemini-4-carbon-high","input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"You are Codex, an agent based on GPT-5."}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"Reply only OK."}]}],"max_output_tokens":128,"stream":false}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, errExec := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+				Model:   "gemini-4-carbon-high",
+				Payload: []byte(tc.payload),
+			}, opts)
+			if errExec != nil {
+				t.Fatalf("Execute() error = %v", errExec)
+			}
+			body := <-captured
+			got := ojson.GetBytes(body, "request.systemInstruction.parts.0.text").String()
+			want := "You are C\u034Fodex, an agent based on G\u034FPT-5."
+			if got != want {
+				t.Fatalf("systemInstruction = %q, want %q", got, want)
+			}
+			if strings.Contains(got, "\u200B") {
+				t.Fatalf("systemInstruction = %q, must not use U+200B", got)
+			}
+		})
+	}
+}
+
+func TestAntigravitySensitiveWordsReplaceFromYAML(t *testing.T) {
+	cfg, errParse := config.ParseConfigBytes([]byte(`antigravity:
+  sensitive-words:
+    - "Codex"
+    - "GPT-5"
+  sensitive-words-replace:
+    "You are Codex, an agent based on GPT-5.": "You are a helpful coding assistant."
+`))
+	if errParse != nil {
+		t.Fatalf("ParseConfigBytes() error = %v", errParse)
+	}
+	executor := NewAntigravityExecutor(cfg)
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"You are Codex, an agent based on GPT-5. Avoid mentioning Codex."}]},"contents":[{"role":"user","parts":[{"text":"You are Codex, an agent based on GPT-5."}]}]}}`)
+
+	got := executor.obfuscateSensitiveWords(payload)
+	systemText := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String()
+	wantSystem := "You are a helpful coding assistant. Avoid mentioning C\u034Fodex."
+	if systemText != wantSystem {
+		t.Fatalf("systemInstruction = %q, want %q", systemText, wantSystem)
+	}
+	contentText := ojson.GetBytes(got, "request.contents.0.parts.0.text").String()
+	if contentText != "You are Codex, an agent based on GPT-5." {
+		t.Fatalf("contents = %q, want unchanged", contentText)
+	}
+}
+
+func TestAntigravitySensitivePatternsReplaceFromYAML(t *testing.T) {
+	cfg, errParse := config.ParseConfigBytes([]byte(`antigravity:
+  sensitive-words:
+    - "omp"
+    - "RFC 2119"
+  sensitive-patterns-replace:
+    - pattern: '(?m)^RFC 2119[^\n]*\n?'
+      replacement: ""
+    - pattern: '(?s)<system[-_](conventions|directive)>.*?</system[-_](conventions|directive)>\n?'
+      replacement: ""
+    - pattern: '(?m)^You are omp[^\n]*\n?'
+      replacement: ""
+`))
+	if errParse != nil {
+		t.Fatalf("ParseConfigBytes() error = %v", errParse)
+	}
+	executor := NewAntigravityExecutor(cfg)
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"You are omp's trusted coding assistant.\nRFC 2119 keywords: MUST, REQUIRED.\n<system-conventions>\nRFC 2119 applies.\n</system-conventions>\nKeep this instruction for omp."}]},"contents":[{"role":"user","parts":[{"text":"You are omp's trusted coding assistant."}]}]}}`)
+
+	got := executor.obfuscateSensitiveWords(payload)
+	systemText := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String()
+	wantSystem := "Keep this instruction for o\u034Fmp."
+	if systemText != wantSystem {
+		t.Fatalf("systemInstruction = %q, want %q", systemText, wantSystem)
+	}
+	contentText := ojson.GetBytes(got, "request.contents.0.parts.0.text").String()
+	if contentText != "You are omp's trusted coding assistant." {
+		t.Fatalf("contents = %q, want unchanged", contentText)
+	}
+}
+
+func TestAntigravitySensitiveWordsReplaceOnlyPreservesToolsAndCountTokens(t *testing.T) {
+	captured := make(chan []byte, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, errRead := io.ReadAll(r.Body)
+		if errRead != nil {
+			t.Errorf("read request body: %v", errRead)
+			return
+		}
+		captured <- body
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "countTokens") {
+			_, _ = w.Write([]byte(`{"totalTokens":42}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"OK"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":1,"totalTokenCount":11}}}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Antigravity: config.AntigravityConfig{
+			SensitiveWordsReplace: map[string]string{
+				"You are Codex, an agent based on GPT-5.": "You are a helpful coding assistant.",
+			},
+		},
+		RequestRetry: 1,
+	}
+	executor := NewAntigravityExecutor(cfg)
+	m1 := executor.getSensitiveWordMatcher()
+	m2 := executor.getSensitiveWordMatcher()
+	if m1 == nil || m1 != m2 {
+		t.Fatal("expected cached matcher reuse when replacements are unchanged")
+	}
+
+	auth := &cliproxyauth.Auth{
+		Metadata: map[string]any{
+			"access_token": "token-123",
+			"expired":      time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+			"project_id":   "project-1",
+		},
+		Attributes: map[string]string{"base_url": server.URL},
+	}
+	req := cliproxyexecutor.Request{
+		Model:   "gemini-4-carbon-high",
+		Payload: []byte(`{"model":"gemini-4-carbon-high","instructions":"You are Codex, an agent based on GPT-5. Keep extra instructions intact.","tools":[{"type":"function","name":"run_codex_check","description":"Codex diagnostic tool","parameters":{"type":"object","properties":{"q":{"type":"string"}}}}],"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"You are Codex, an agent based on GPT-5."}]}],"max_output_tokens":128,"stream":false}`),
+	}
+	opts := cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FormatOpenAIResponse,
+		ResponseFormat: sdktranslator.FormatOpenAIResponse,
+	}
+
+	if _, errExec := executor.Execute(context.Background(), auth, req, opts); errExec != nil {
+		t.Fatalf("Execute() error = %v", errExec)
+	}
+	execBody := <-captured
+	wantInstruction := "You are a helpful coding assistant. Keep extra instructions intact."
+	if got := ojson.GetBytes(execBody, "request.systemInstruction.parts.0.text").String(); got != wantInstruction {
+		t.Fatalf("Execute systemInstruction = %q, want %q", got, wantInstruction)
+	}
+	if gotToolDesc := ojson.GetBytes(execBody, "request.tools.0.functionDeclarations.0.description").String(); gotToolDesc != "Codex diagnostic tool" {
+		t.Fatalf("tool description = %q, want unchanged", gotToolDesc)
+	}
+	if gotUser := ojson.GetBytes(execBody, "request.contents.0.parts.0.text").String(); gotUser != "You are Codex, an agent based on GPT-5." {
+		t.Fatalf("user content = %q, want unchanged", gotUser)
+	}
+
+	if _, errCount := executor.CountTokens(context.Background(), auth, req, opts); errCount != nil {
+		t.Fatalf("CountTokens() error = %v", errCount)
+	}
+	countBody := <-captured
+	if got := ojson.GetBytes(countBody, "request.systemInstruction.parts.0.text").String(); got != wantInstruction {
+		t.Fatalf("CountTokens systemInstruction = %q, want %q", got, wantInstruction)
+	}
+}
+
+func TestAntigravityStreamDoesNotEmitSyntheticTerminalOnReadError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
+		_, _ = io.WriteString(w, `data: {"response":{"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}}`+"\n")
+		flusher.Flush()
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			return
+		}
+		conn, _, errHijack := hijacker.Hijack()
+		if errHijack == nil {
+			_ = conn.Close()
+		}
+	}))
+	defer server.Close()
+
+	executor := NewAntigravityExecutor(&config.Config{
+		Antigravity:  config.AntigravityConfig{},
 		RequestRetry: 1,
 	})
 	result, errExecute := executor.ExecuteStream(context.Background(), &cliproxyauth.Auth{
@@ -380,125 +525,36 @@ func TestAntigravityStreamMovesSystemInstructionToReminder(t *testing.T) {
 		},
 		Attributes: map[string]string{"base_url": server.URL},
 	}, cliproxyexecutor.Request{
-		Model:   "gemini-3.6-flash-high",
-		Payload: []byte(`{"model":"gemini-3.6-flash-high","instructions":"Answer in French.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}`),
+		Model:   "gemini-3.7-flash",
+		Payload: []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`),
 	}, cliproxyexecutor.Options{
-		SourceFormat:   sdktranslator.FormatOpenAIResponse,
-		ResponseFormat: sdktranslator.FormatOpenAIResponse,
+		SourceFormat:   sdktranslator.FormatGemini,
+		ResponseFormat: sdktranslator.FormatGemini,
 		Stream:         true,
 	})
 	if errExecute != nil {
 		t.Fatalf("ExecuteStream() error = %v", errExecute)
 	}
+
+	var streamErr error
 	for chunk := range result.Chunks {
 		if chunk.Err != nil {
-			t.Fatalf("stream chunk error = %v", chunk.Err)
+			streamErr = chunk.Err
+			continue
+		}
+		if finishReason := ojson.GetBytes(chunk.Payload, "candidates.0.finishReason").String(); finishReason == "STOP" {
+			t.Fatalf("read error must not emit synthetic STOP: %s", chunk.Payload)
 		}
 	}
-
-	body := <-captured
-	if got := gjson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\nAnswer in French.\n</system-reminder>" {
-		t.Fatalf("first user part = %q; body=%s", got, body)
-	}
-	if got := gjson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
-		t.Fatalf("second user part = %q, want hello; body=%s", got, body)
-	}
-	if got := gjson.GetBytes(body, "request.systemInstruction.parts.0.text").String(); !strings.HasPrefix(got, "<identity>") || strings.Contains(got, "Answer in French.") {
-		t.Fatalf("static system text = %q; body=%s", got, body)
-	}
-}
-
-func TestAntigravitySystemReminderAppliesToClaudeTarget(t *testing.T) {
-	payload := []byte(`{"model":"claude-sonnet-4-6","max_tokens":64,"system":"Answer in French.","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
-	sse := "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n"
-
-	type callFunc func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error
-	tests := []struct {
-		name string
-		call callFunc
-	}{
-		{"Execute", func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error {
-			_, err := e.Execute(context.Background(), auth, req, opts)
-			return err
-		}},
-		{"ExecuteStream", func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error {
-			result, err := e.ExecuteStream(context.Background(), auth, req, opts)
-			if err != nil {
-				return err
-			}
-			for chunk := range result.Chunks {
-				if chunk.Err != nil {
-					return chunk.Err
-				}
-			}
-			return nil
-		}},
-		{"CountTokens", func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error {
-			_, err := e.CountTokens(context.Background(), auth, req, opts)
-			return err
-		}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			captured := make(chan []byte, 1)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body, errRead := io.ReadAll(r.Body)
-				if errRead != nil {
-					t.Errorf("read request body: %v", errRead)
-					return
-				}
-				select {
-				case captured <- body:
-				default:
-				}
-				if r.URL.Path == antigravityCountTokensPath {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(`{"totalTokens":42}`))
-					return
-				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte(sse))
-			}))
-			defer server.Close()
-
-			executor := NewAntigravityExecutor(&config.Config{
-				Antigravity:  config.AntigravityConfig{SystemReminder: true},
-				RequestRetry: 1,
-			})
-			auth := testAntigravityAuth(server.URL)
-			auth.Metadata["project_id"] = "project-1"
-			errCall := tt.call(executor, auth, cliproxyexecutor.Request{
-				Model:   "claude-sonnet-4-6",
-				Payload: payload,
-			}, cliproxyexecutor.Options{
-				SourceFormat:    sdktranslator.FormatClaude,
-				ResponseFormat:  sdktranslator.FormatClaude,
-				OriginalRequest: payload,
-				Stream:          tt.name == "ExecuteStream",
-			})
-			if errCall != nil {
-				t.Fatalf("%s error = %v", tt.name, errCall)
-			}
-
-			body := <-captured
-			if got := gjson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\nAnswer in French.\n</system-reminder>" {
-				t.Fatalf("first user part = %q; body=%s", got, body)
-			}
-			if got := gjson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
-				t.Fatalf("second user part = %q, want hello; body=%s", got, body)
-			}
-			if got := gjson.GetBytes(body, "request.systemInstruction.parts.0.text").String(); !strings.HasPrefix(got, "<identity>") || strings.Contains(got, "Answer in French.") {
-				t.Fatalf("static system text = %q; body=%s", got, body)
-			}
-		})
+	if streamErr == nil {
+		t.Fatal("expected stream read error")
 	}
 }
 
 func TestAntigravityStreamPrependsLeadingUserForGemini(t *testing.T) {
 	assertLeadingFunctionHistory := func(t *testing.T, body []byte) {
 		t.Helper()
-		contents := gjson.GetBytes(body, "request.contents").Array()
+		contents := ojson.GetBytes(body, "request.contents").Array()
 		if len(contents) != 3 || contents[0].Get("role").String() != "user" {
 			t.Fatalf("upstream roles malformed: %s", body)
 		}
@@ -627,7 +683,149 @@ func TestAntigravityStreamPrependsLeadingUserForIssue4959ResponsesHistory(t *tes
 			t.Fatalf("stream chunk error = %v", chunk.Err)
 		}
 	}
-	assertIssue4959LeadingUserContents(t, gjson.GetBytes(<-captured, "request.contents").Array())
+	assertIssue4959LeadingUserContents(t, ojson.GetBytes(<-captured, "request.contents").Array())
+}
+
+func issue5358ResponsesTrailingReasoningPayload() []byte {
+	carrier := "cpa-gemini-responses-carrier-v1:previous:text:" + base64.RawStdEncoding.EncodeToString([]byte(issue4959GeminiThoughtSignature()))
+	return []byte(`{"model":"gemini-3.7-flash-high","input":[` +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]},` +
+		`{"type":"reasoning","id":"rs_resp_test_detached_after_1","summary":[],"encrypted_content":"` + carrier + `","internal_chat_message_metadata_passthrough":{"turn_id":"uuid-1"}}` +
+		`]}`)
+}
+
+func TestAntigravityStreamAppendsTrailingUserForGeminiTrailingModelTurn(t *testing.T) {
+	captured := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, errRead := io.ReadAll(r.Body)
+		if errRead != nil {
+			t.Errorf("read request body: %v", errRead)
+			return
+		}
+		captured <- body
+
+		contents := ojson.GetBytes(body, "request.contents").Array()
+		if len(contents) > 0 {
+			lastRole := contents[len(contents)-1].Get("role").String()
+			if lastRole == "model" || lastRole == "assistant" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":{"code":400,"message":"Requests ending with a model turn are not supported."}}`))
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n"))
+	}))
+	defer server.Close()
+
+	executor := NewAntigravityExecutor(&config.Config{RequestRetry: 1})
+	auth := testAntigravityAuth(server.URL)
+	auth.Metadata["project_id"] = "project-1"
+	result, errExecute := executor.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gemini-3.7-flash-high",
+		Payload: issue5358ResponsesTrailingReasoningPayload(),
+	}, cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FormatOpenAIResponse,
+		ResponseFormat: sdktranslator.FormatOpenAIResponse,
+		Stream:         true,
+	})
+	if errExecute != nil {
+		t.Fatalf("ExecuteStream() error = %v", errExecute)
+	}
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("stream chunk error = %v", chunk.Err)
+		}
+	}
+	body := <-captured
+	contents := ojson.GetBytes(body, "request.contents").Array()
+	if len(contents) == 0 {
+		t.Fatalf("request.contents empty; body=%s", body)
+	}
+	lastContent := contents[len(contents)-1]
+	if got := lastContent.Get("role").String(); got != "user" {
+		t.Fatalf("trailing turn role = %q, want user; body=%s", got, body)
+	}
+	if got := lastContent.Get("parts.0.text").String(); got != "" {
+		t.Fatalf("trailing turn text = %q, want empty string; body=%s", got, body)
+	}
+}
+
+func issue6524ResponsesTrailingToolOutputPayload(output string) []byte {
+	return []byte(`{"model":"gemini-3-flash","input":[` +
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"look at a.png"}]},` +
+		`{"type":"function_call","call_id":"call_1","name":"view_image","arguments":"{\"path\":\"a.png\"}"},` +
+		`{"type":"function_call_output","call_id":"call_1","output":` + output + `}` +
+		`],"tools":[{"type":"function","name":"view_image","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}]}`)
+}
+
+func issue6524CaptureStreamContents(t *testing.T, payload []byte) []ojson.Result {
+	t.Helper()
+	captured := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, errRead := io.ReadAll(r.Body)
+		if errRead != nil {
+			t.Errorf("read request body: %v", errRead)
+			return
+		}
+		captured <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n"))
+	}))
+	defer server.Close()
+
+	executor := NewAntigravityExecutor(&config.Config{RequestRetry: 1})
+	auth := testAntigravityAuth(server.URL)
+	auth.Metadata["project_id"] = "project-1"
+	result, errExecute := executor.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gemini-3-flash",
+		Payload: payload,
+	}, cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FormatOpenAIResponse,
+		ResponseFormat: sdktranslator.FormatOpenAIResponse,
+		Stream:         true,
+	})
+	if errExecute != nil {
+		t.Fatalf("ExecuteStream() error = %v", errExecute)
+	}
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatalf("stream chunk error = %v", chunk.Err)
+		}
+	}
+	body := <-captured
+	contents := ojson.GetBytes(body, "request.contents").Array()
+	if len(contents) < 2 {
+		t.Fatalf("request.contents too short; body=%s", body)
+	}
+	return contents
+}
+
+func TestAntigravityStreamAppendsTrailingUserAfterImageOnlyFunctionResponse(t *testing.T) {
+	contents := issue6524CaptureStreamContents(t, issue6524ResponsesTrailingToolOutputPayload(
+		`[{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="}]`,
+	))
+	lastContent := contents[len(contents)-1]
+	if got := lastContent.Get("role").String(); got != "user" {
+		t.Fatalf("trailing turn role = %q, want user; contents=%v", got, contents)
+	}
+	if lastContent.Get("parts.0.functionResponse").Exists() {
+		t.Fatalf("trailing turn should not be the function response turn; contents=%v", contents)
+	}
+	responseContent := contents[len(contents)-2]
+	if !responseContent.Get("parts.0.functionResponse.parts.0.inlineData").Exists() {
+		t.Fatalf("expected function response with inline image before trailing user turn; contents=%v", contents)
+	}
+}
+
+func TestAntigravityStreamKeepsTrailingTextFunctionResponse(t *testing.T) {
+	contents := issue6524CaptureStreamContents(t, issue6524ResponsesTrailingToolOutputPayload(`"ok"`))
+	lastContent := contents[len(contents)-1]
+	if !lastContent.Get("parts.0.functionResponse").Exists() {
+		t.Fatalf("trailing text function response turn should stay last; contents=%v", contents)
+	}
 }
 
 func TestAntigravityStreamPrependsLeadingUserAfterReplayInsertsFunctionCall(t *testing.T) {
@@ -679,7 +877,7 @@ func TestAntigravityStreamPrependsLeadingUserAfterReplayInsertsFunctionCall(t *t
 	}
 
 	body := <-captured
-	contents := gjson.GetBytes(body, "request.contents").Array()
+	contents := ojson.GetBytes(body, "request.contents").Array()
 	if len(contents) != 3 {
 		t.Fatalf("contents len = %d, want 3; body=%s", len(contents), body)
 	}
@@ -755,7 +953,7 @@ func TestAntigravityStreamDoesNotPrependLeadingUserForClaudeTarget(t *testing.T)
 			}
 
 			body := <-captured
-			contents := gjson.GetBytes(body, "request.contents").Array()
+			contents := ojson.GetBytes(body, "request.contents").Array()
 			if len(contents) != 2 || contents[0].Get("role").String() != "model" || contents[1].Get("role").String() != "user" {
 				t.Fatalf("Claude target history changed: %s", body)
 			}
@@ -763,6 +961,99 @@ func TestAntigravityStreamDoesNotPrependLeadingUserForClaudeTarget(t *testing.T)
 				t.Fatalf("first Claude model turn = %q, want prior answer; body=%s", got, body)
 			}
 		})
+	}
+}
+
+func TestAntigravityRequestPathsDoNotFallbackEndpoints(t *testing.T) {
+	type upstreamCall struct {
+		host string
+		path string
+	}
+	routes := []struct {
+		name     string
+		kind     string
+		model    string
+		wantPath string
+	}{
+		{name: "generate non-stream", kind: "execute", model: "gemini-3.6-flash-high", wantPath: antigravityGeneratePath},
+		{name: "Claude non-stream", kind: "execute", model: "claude-sonnet-4-6", wantPath: antigravityStreamPath},
+		{name: "generate stream", kind: "stream", model: "gemini-3.6-flash-high", wantPath: antigravityStreamPath},
+		{name: "count tokens", kind: "count", model: "gemini-3.6-flash-high", wantPath: antigravityCountTokensPath},
+	}
+	failures := []struct {
+		name      string
+		transport bool
+	}{
+		{name: "HTTP 429"},
+		{name: "transport error", transport: true},
+	}
+
+	for _, route := range routes {
+		for _, failure := range failures {
+			t.Run(route.name+"/"+failure.name, func(t *testing.T) {
+				calls := make([]upstreamCall, 0, 1)
+				transportErr := errors.New("daily endpoint unavailable")
+				ctx := context.WithValue(context.Background(), "cliproxy.roundtripper", roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+					calls = append(calls, upstreamCall{host: req.URL.Host, path: req.URL.Path})
+					if failure.transport {
+						return nil, transportErr
+					}
+					return &http.Response{
+						StatusCode: http.StatusTooManyRequests,
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+						Body:       io.NopCloser(strings.NewReader(`{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}`)),
+					}, nil
+				}))
+				auth := &cliproxyauth.Auth{Metadata: map[string]any{
+					"access_token": "token",
+					"expired":      time.Now().Add(2 * time.Hour).Format(time.RFC3339),
+					"project_id":   "project-1",
+				}}
+				req := cliproxyexecutor.Request{
+					Model:   route.model,
+					Payload: []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`),
+				}
+				opts := cliproxyexecutor.Options{
+					SourceFormat:   sdktranslator.FormatGemini,
+					ResponseFormat: sdktranslator.FormatGemini,
+				}
+				executor := NewAntigravityExecutor(&config.Config{})
+
+				var errRequest error
+				switch route.kind {
+				case "execute":
+					_, errRequest = executor.Execute(ctx, auth, req, opts)
+				case "stream":
+					_, errRequest = executor.ExecuteStream(ctx, auth, req, opts)
+				case "count":
+					_, errRequest = executor.CountTokens(ctx, auth, req, opts)
+				default:
+					t.Fatalf("unknown route kind %q", route.kind)
+				}
+				if errRequest == nil {
+					t.Fatal("request error = nil, want original upstream error")
+				}
+				if failure.transport {
+					if !errors.Is(errRequest, transportErr) {
+						t.Fatalf("request error = %v, want transport error", errRequest)
+					}
+				} else {
+					status, ok := errRequest.(interface{ StatusCode() int })
+					if !ok || status.StatusCode() != http.StatusTooManyRequests {
+						t.Fatalf("request error = %v, want status 429", errRequest)
+					}
+				}
+				if len(calls) != 1 {
+					t.Fatalf("upstream calls = %v, want exactly one daily endpoint request", calls)
+				}
+				if got, want := calls[0].host, resolveHost(antigravityBaseURLDaily); got != want {
+					t.Fatalf("upstream host = %q, want %q", got, want)
+				}
+				if got := calls[0].path; got != route.wantPath {
+					t.Fatalf("upstream path = %q, want %q", got, route.wantPath)
+				}
+			})
+		}
 	}
 }
 
@@ -809,7 +1100,7 @@ func TestAntigravityCountTokensMatchesTargetLeadingUserPolicy(t *testing.T) {
 				t.Fatalf("CountTokens() error = %v", errCount)
 			}
 
-			contents := gjson.GetBytes(upstreamBody, "request.contents").Array()
+			contents := ojson.GetBytes(upstreamBody, "request.contents").Array()
 			roles := make([]string, 0, len(contents))
 			for _, content := range contents {
 				roles = append(roles, content.Get("role").String())
@@ -865,16 +1156,16 @@ func TestAntigravityExecutorCountTokensSanitizesGeminiToolHistory(t *testing.T) 
 	if len(upstreamBody) == 0 {
 		t.Fatal("countTokens upstream body was not captured")
 	}
-	if got := gjson.GetBytes(upstreamBody, "request.contents.1.parts.0.thoughtSignature").String(); got != nativeSignature {
+	if got := ojson.GetBytes(upstreamBody, "request.contents.1.parts.0.thoughtSignature").String(); got != nativeSignature {
 		t.Fatalf("first call signature = %q, want native signature; body=%s", got, upstreamBody)
 	}
-	if signature := gjson.GetBytes(upstreamBody, "request.contents.1.parts.1.thoughtSignature"); signature.Exists() {
+	if signature := ojson.GetBytes(upstreamBody, "request.contents.1.parts.1.thoughtSignature"); signature.Exists() {
 		t.Fatalf("second sibling bypass was not removed: %s", upstreamBody)
 	}
-	if got := gjson.GetBytes(upstreamBody, "request.contents.2.role").String(); got != "model" {
+	if got := ojson.GetBytes(upstreamBody, "request.contents.2.role").String(); got != "model" {
 		t.Fatalf("functionResponse role = %q, want model; body=%s", got, upstreamBody)
 	}
-	if got := gjson.GetBytes(upstreamBody, "request.contents.2.parts.0.functionResponse.id").String(); got != "call-1" {
+	if got := ojson.GetBytes(upstreamBody, "request.contents.2.parts.0.functionResponse.id").String(); got != "call-1" {
 		t.Fatalf("first functionResponse.id = %q, want call-1; body=%s", got, upstreamBody)
 	}
 	if errPairing := internalsignature.ValidateGeminiFunctionCallPairing(upstreamBody); errPairing != nil {
@@ -927,15 +1218,15 @@ func TestAntigravityExecutorCountTokensReconstructsCompactedClaudeToolCall(t *te
 	if len(upstreamBody) == 0 {
 		t.Fatal("countTokens upstream body was not captured")
 	}
-	leadingText := gjson.GetBytes(upstreamBody, "request.contents.0.parts.0.text")
-	if gjson.GetBytes(upstreamBody, "request.contents.0.role").String() != "user" || !leadingText.Exists() || leadingText.String() != "" {
+	leadingText := ojson.GetBytes(upstreamBody, "request.contents.0.parts.0.text")
+	if ojson.GetBytes(upstreamBody, "request.contents.0.role").String() != "user" || !leadingText.Exists() || leadingText.String() != "" {
 		t.Fatalf("synthetic leading user missing after replay insert: %s", upstreamBody)
 	}
-	call := gjson.GetBytes(upstreamBody, "request.contents.1.parts.0")
+	call := ojson.GetBytes(upstreamBody, "request.contents.1.parts.0")
 	if call.Get("functionCall.id").String() != nativeID || call.Get("functionCall.name").String() != "Bash" || call.Get("thoughtSignature").String() != nativeSignature {
 		t.Fatalf("native function call provenance was not reconstructed: %s", upstreamBody)
 	}
-	response := gjson.GetBytes(upstreamBody, "request.contents.2.parts.0.functionResponse")
+	response := ojson.GetBytes(upstreamBody, "request.contents.2.parts.0.functionResponse")
 	if response.Get("id").String() != nativeID || response.Get("name").String() != "Bash" {
 		t.Fatalf("native function response provenance was not reconstructed: %s", upstreamBody)
 	}
@@ -953,10 +1244,10 @@ func TestNormalizeAntigravityGeminiFunctionResponseRolesOrdersMixedParallelRespo
 		t.Fatal("permuted input unexpectedly passed function call pairing validation")
 	}
 	output := normalizeAntigravityGeminiFunctionResponseRoles(payload)
-	if got := gjson.GetBytes(output, "request.contents.1.role").String(); got != "user" {
+	if got := ojson.GetBytes(output, "request.contents.1.role").String(); got != "user" {
 		t.Fatalf("mixed functionResponse/user content role = %q, want user; output=%s", got, output)
 	}
-	parts := gjson.GetBytes(output, "request.contents.1.parts").Array()
+	parts := ojson.GetBytes(output, "request.contents.1.parts").Array()
 	if len(parts) != 4 {
 		t.Fatalf("mixed response parts = %d, want 4; output=%s", len(parts), output)
 	}
@@ -980,13 +1271,13 @@ func TestNormalizeAntigravityGeminiFunctionResponseRolesOrdersMixedParallelRespo
 func TestNormalizeAntigravityGeminiFunctionResponseRolesOrdersParallelResponses(t *testing.T) {
 	payload := []byte(`{"request":{"contents":[{"role":"model","parts":[{"functionCall":{"id":"call-1","name":"read","args":{"file":"one"}}},{"functionCall":{"id":"call-2","name":"read","args":{"file":"two"}}}]},{"role":" Model ","parts":[{"functionResponse":{"id":"call-2","name":"read","response":{"result":"two"}}},{"functionResponse":{"id":"call-1","name":"read","response":{"result":"one"}}}]}]}}`)
 	output := normalizeAntigravityGeminiFunctionResponseRoles(payload)
-	if got := gjson.GetBytes(output, "request.contents.1.role").String(); got != "model" {
+	if got := ojson.GetBytes(output, "request.contents.1.role").String(); got != "model" {
 		t.Fatalf("functionResponse role = %q, want model; output=%s", got, output)
 	}
-	if got := gjson.GetBytes(output, "request.contents.1.parts.0.functionResponse.id").String(); got != "call-1" {
+	if got := ojson.GetBytes(output, "request.contents.1.parts.0.functionResponse.id").String(); got != "call-1" {
 		t.Fatalf("first functionResponse.id = %q, want call-1; output=%s", got, output)
 	}
-	if got := gjson.GetBytes(output, "request.contents.1.parts.1.functionResponse.id").String(); got != "call-2" {
+	if got := ojson.GetBytes(output, "request.contents.1.parts.1.functionResponse.id").String(); got != "call-2" {
 		t.Fatalf("second functionResponse.id = %q, want call-2; output=%s", got, output)
 	}
 	if errValidate := internalsignature.ValidateGeminiFunctionCallPairing(output); errValidate != nil {
@@ -1002,10 +1293,10 @@ func TestNormalizeAntigravityGeminiFunctionResponseRolesDoesNotCrossEmptyContent
 	} {
 		payload := []byte(`{"request":{"contents":[{"role":"model","parts":[{"functionCall":{"id":"call-1","name":"read","args":{}}},{"functionCall":{"id":"call-2","name":"read","args":{}}}]},` + boundary + `,{"role":"user","parts":[{"functionResponse":{"id":"call-2","name":"read","response":{"result":"two"}}},{"functionResponse":{"id":"call-1","name":"read","response":{"result":"one"}}}]}]}}`)
 		output := normalizeAntigravityGeminiFunctionResponseRoles(payload)
-		if got := gjson.GetBytes(output, "request.contents.2.role").String(); got != "model" {
+		if got := ojson.GetBytes(output, "request.contents.2.role").String(); got != "model" {
 			t.Fatalf("pure functionResponse role = %q, want model; output=%s", got, output)
 		}
-		if got := gjson.GetBytes(output, "request.contents.2.parts.0.functionResponse.id").String(); got != "call-2" {
+		if got := ojson.GetBytes(output, "request.contents.2.parts.0.functionResponse.id").String(); got != "call-2" {
 			t.Fatalf("response crossed content boundary %s and was reordered: first id=%q; output=%s", boundary, got, output)
 		}
 		if errValidate := internalsignature.ValidateGeminiFunctionCallPairing(output); errValidate == nil {
@@ -1026,7 +1317,7 @@ func TestAntigravityExecutor_GeminiTargetPreservesGeminiThinkingCarrier(t *testi
 	if err != nil {
 		t.Fatalf("validateAntigravityRequestSignatures() error = %v", err)
 	}
-	content := gjson.GetBytes(output, "messages.0.content").Array()
+	content := ojson.GetBytes(output, "messages.0.content").Array()
 	if len(content) != 2 {
 		t.Fatalf("content length = %d, want text plus valid Gemini carrier: %s", len(content), output)
 	}
@@ -1052,7 +1343,7 @@ func TestAntigravityExecutor_StrictBypassStripsInvalidSignature(t *testing.T) {
 	if err != nil {
 		t.Fatalf("strict bypass should strip invalid signatures instead of rejecting request: %v", err)
 	}
-	parts := gjson.GetBytes(output, "messages.0.content").Array()
+	parts := ojson.GetBytes(output, "messages.0.content").Array()
 	if len(parts) != 1 {
 		t.Fatalf("content length = %d, want 1 after invalid thinking strip: %s", len(parts), output)
 	}
@@ -1131,7 +1422,7 @@ func TestClaudeExecutor_LogsSanitizedClaudeUpstreamSignatures(t *testing.T) {
 	}`)
 
 	output := sanitizeClaudeMessagesForClaudeUpstreamWithDebug(context.Background(), body, "claude-sonnet-4-5")
-	parts := gjson.GetBytes(output, "messages.0.content").Array()
+	parts := ojson.GetBytes(output, "messages.0.content").Array()
 	if len(parts) != 2 {
 		t.Fatalf("content length = %d, want 2 after invalid thinking strip: %s", len(parts), output)
 	}
@@ -1229,13 +1520,221 @@ func TestAntigravityExecutorCountTokensStripsStatefulFields(t *testing.T) {
 	if len(upstreamBody) == 0 {
 		t.Fatal("countTokens upstream body was not captured")
 	}
-	if gjson.GetBytes(upstreamBody, "request.toolConfig").Exists() {
+	if ojson.GetBytes(upstreamBody, "request.toolConfig").Exists() {
 		t.Fatalf("upstream countTokens body retained request.toolConfig: %s", upstreamBody)
 	}
-	if gjson.GetBytes(upstreamBody, "request.labels").Exists() {
+	if ojson.GetBytes(upstreamBody, "request.labels").Exists() {
 		t.Fatalf("upstream countTokens body retained request.labels: %s", upstreamBody)
 	}
-	if gjson.GetBytes(upstreamBody, "request.sessionId").Exists() {
+	if ojson.GetBytes(upstreamBody, "request.sessionId").Exists() {
 		t.Fatalf("upstream countTokens body retained request.sessionId: %s", upstreamBody)
+	}
+}
+
+func TestAntigravityDefaultFingerprintsObfuscatesSystemInstructionOnly(t *testing.T) {
+	executor := NewAntigravityExecutor(&config.Config{})
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"You are a Claude agent, built on Anthropic's Claude Agent SDK.\n<system-conventions>\nRFC 2119: MUST, REQUIRED, SHOULD, RECOMMENDED, MAY, OPTIONAL.\n</system-conventions>"}]},"contents":[{"role":"user","parts":[{"text":"Claude Agent SDK and RFC 2119 remain unchanged in user content"}]}]}}`)
+
+	got := executor.obfuscateSensitiveWords(payload)
+	systemText := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String()
+	if strings.Contains(systemText, "Claude Agent SDK") {
+		t.Fatalf("system instruction retained raw 'Claude Agent SDK': %q", systemText)
+	}
+	if strings.Contains(systemText, "<system-conventions>") {
+		t.Fatalf("system instruction retained raw '<system-conventions>': %q", systemText)
+	}
+	if strings.Contains(systemText, "RFC 2119") {
+		t.Fatalf("system instruction retained raw 'RFC 2119': %q", systemText)
+	}
+
+	wantContent := "Claude Agent SDK and RFC 2119 remain unchanged in user content"
+	if contentText := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); contentText != wantContent {
+		t.Fatalf("content text = %q, want unchanged %q", contentText, wantContent)
+	}
+}
+
+func TestAntigravitySystemReminderKeepsMovedTextUnobfuscated(t *testing.T) {
+	executor := NewAntigravityExecutor(&config.Config{
+		Antigravity: config.AntigravityConfig{SystemReminder: true, SensitiveWords: []string{"proxy"}},
+	})
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Use proxy safely"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
+
+	got := executor.cloakSystemInstruction(payload)
+
+	if reminder := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); reminder != "<system-reminder>\nUse proxy safely\n</system-reminder>" {
+		t.Fatalf("reminder = %q, want unobfuscated moved text", reminder)
+	}
+	static := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String()
+	if !strings.Contains(static, "<identity>") || !strings.Contains(static, "<system-reminder>") {
+		t.Fatalf("static system text = %q, want identity and reminder note", static)
+	}
+}
+
+func TestAntigravitySystemReminderDoesNotDuplicateIdentity(t *testing.T) {
+	executor := NewAntigravityExecutor(&config.Config{
+		Antigravity: config.AntigravityConfig{SystemReminder: true, IdentityConfuse: true},
+	})
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
+
+	got := executor.cloakSystemInstruction(payload)
+
+	if count := strings.Count(string(got), "<identity>"); count != 1 {
+		t.Fatalf("identity count = %d, want 1; body=%s", count, got)
+	}
+}
+
+func TestAntigravitySystemReminderDisabledKeepsLegacyCloaking(t *testing.T) {
+	cfg := &config.Config{Antigravity: config.AntigravityConfig{IdentityConfuse: true, SensitiveWords: []string{"proxy"}}}
+	executor := NewAntigravityExecutor(cfg)
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Use proxy safely"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
+
+	want := executor.obfuscateSensitiveWords(helps.PrependAntigravityIdentityInstruction(payload))
+	got := executor.cloakSystemInstruction(payload)
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf("cloakSystemInstruction() = %s, want %s", got, want)
+	}
+	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "hello" {
+		t.Fatalf("legacy cloaking must not touch user content, got %q", text)
+	}
+}
+
+func TestAntigravityStreamMovesSystemInstructionToReminder(t *testing.T) {
+	captured := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, errRead := io.ReadAll(r.Body)
+		if errRead != nil {
+			t.Errorf("read request body: %v", errRead)
+			return
+		}
+		captured <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {}\n\n"))
+	}))
+	defer server.Close()
+
+	executor := NewAntigravityExecutor(&config.Config{
+		Antigravity:  config.AntigravityConfig{SystemReminder: true},
+		RequestRetry: 1,
+	})
+	result, errExecute := executor.ExecuteStream(context.Background(), &cliproxyauth.Auth{
+		Metadata: map[string]any{
+			"access_token": "token-123",
+			"expired":      time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+			"project_id":   "project-1",
+		},
+		Attributes: map[string]string{"base_url": server.URL},
+	}, cliproxyexecutor.Request{
+		Model:   "gemini-3.6-flash-high",
+		Payload: []byte(`{"model":"gemini-3.6-flash-high","instructions":"Answer in French.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FormatOpenAIResponse,
+		ResponseFormat: sdktranslator.FormatOpenAIResponse,
+		Stream:         true,
+	})
+	if errExecute != nil {
+		t.Fatalf("ExecuteStream() error = %v", errExecute)
+	}
+	// The empty upstream frame trips the zero-output guard, so the stream may end
+	// with an error; only the captured upstream request matters here.
+	for range result.Chunks {
+	}
+
+	body := <-captured
+	if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\nAnswer in French.\n</system-reminder>" {
+		t.Fatalf("first user part = %q; body=%s", got, body)
+	}
+	if got := ojson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
+		t.Fatalf("second user part = %q, want hello; body=%s", got, body)
+	}
+	if got := ojson.GetBytes(body, "request.systemInstruction.parts.0.text").String(); !strings.HasPrefix(got, "<identity>") || strings.Contains(got, "Answer in French.") {
+		t.Fatalf("static system text = %q; body=%s", got, body)
+	}
+}
+
+func TestAntigravitySystemReminderAppliesToClaudeTarget(t *testing.T) {
+	payload := []byte(`{"model":"claude-sonnet-4-6","max_tokens":64,"system":"Answer in French.","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	sse := "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n"
+
+	type callFunc func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error
+	tests := []struct {
+		name string
+		call callFunc
+	}{
+		{"Execute", func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error {
+			_, err := e.Execute(context.Background(), auth, req, opts)
+			return err
+		}},
+		{"ExecuteStream", func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error {
+			result, err := e.ExecuteStream(context.Background(), auth, req, opts)
+			if err != nil {
+				return err
+			}
+			for chunk := range result.Chunks {
+				if chunk.Err != nil {
+					return chunk.Err
+				}
+			}
+			return nil
+		}},
+		{"CountTokens", func(e *AntigravityExecutor, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) error {
+			_, err := e.CountTokens(context.Background(), auth, req, opts)
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			captured := make(chan []byte, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, errRead := io.ReadAll(r.Body)
+				if errRead != nil {
+					t.Errorf("read request body: %v", errRead)
+					return
+				}
+				select {
+				case captured <- body:
+				default:
+				}
+				if r.URL.Path == antigravityCountTokensPath {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"totalTokens":42}`))
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte(sse))
+			}))
+			defer server.Close()
+
+			executor := NewAntigravityExecutor(&config.Config{
+				Antigravity:  config.AntigravityConfig{SystemReminder: true},
+				RequestRetry: 1,
+			})
+			auth := testAntigravityAuth(server.URL)
+			auth.Metadata["project_id"] = "project-1"
+			errCall := tt.call(executor, auth, cliproxyexecutor.Request{
+				Model:   "claude-sonnet-4-6",
+				Payload: payload,
+			}, cliproxyexecutor.Options{
+				SourceFormat:    sdktranslator.FormatClaude,
+				ResponseFormat:  sdktranslator.FormatClaude,
+				OriginalRequest: payload,
+				Stream:          tt.name == "ExecuteStream",
+			})
+			if errCall != nil {
+				t.Fatalf("%s error = %v", tt.name, errCall)
+			}
+
+			body := <-captured
+			if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\nAnswer in French.\n</system-reminder>" {
+				t.Fatalf("first user part = %q; body=%s", got, body)
+			}
+			if got := ojson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
+				t.Fatalf("second user part = %q, want hello; body=%s", got, body)
+			}
+			if got := ojson.GetBytes(body, "request.systemInstruction.parts.0.text").String(); !strings.HasPrefix(got, "<identity>") || strings.Contains(got, "Answer in French.") {
+				t.Fatalf("static system text = %q; body=%s", got, body)
+			}
+		})
 	}
 }

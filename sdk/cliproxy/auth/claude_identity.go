@@ -10,9 +10,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/google/uuid"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 const (
@@ -97,7 +96,7 @@ func GenerateRandomClaudeRequestIdentity() ClaudeRequestIdentity {
 // from the earliest wrapped user query, falling back to the first user-authored
 // message. Pure tool-result messages are skipped.
 func ResolveClaudeRequestIdentity(payload []byte) ([]byte, ClaudeRequestIdentity, error) {
-	existingUserID := gjson.GetBytes(payload, "metadata.user_id").String()
+	existingUserID := ojson.GetBytes(payload, "metadata.user_id").String()
 	if existingIdentity, valid := ParseClaudeUserID(existingUserID); valid {
 		return payload, existingIdentity, nil
 	}
@@ -125,7 +124,7 @@ func ApplyClaudeRequestIdentity(payload []byte, identity ClaudeRequestIdentity) 
 	if !IsValidClaudeUserID(identity.UserID) {
 		return nil, fmt.Errorf("invalid Claude request identity")
 	}
-	updatedPayload, errSet := sjson.SetBytes(payload, "metadata.user_id", identity.UserID)
+	updatedPayload, errSet := ojson.SetBytes(payload, "metadata.user_id", identity.UserID)
 	if errSet != nil {
 		return nil, fmt.Errorf("set Claude metadata.user_id: %w", errSet)
 	}
@@ -154,7 +153,7 @@ func buildClaudeRequestIdentity(userHash, accountID, sessionID string, determini
 }
 
 func firstCanonicalClaudeUserMessage(payload []byte) ([]byte, bool, error) {
-	messages := gjson.GetBytes(payload, "messages")
+	messages := ojson.GetBytes(payload, "messages")
 	if !messages.Exists() || !messages.IsArray() {
 		return nil, false, nil
 	}
@@ -170,10 +169,10 @@ func firstCanonicalClaudeUserMessage(payload []byte) ([]byte, bool, error) {
 	return firstCanonicalClaudeUserMessageFallback(messages)
 }
 
-func firstCanonicalClaudeUserQueryMessage(messages gjson.Result) ([]byte, bool, error) {
+func firstCanonicalClaudeUserQueryMessage(messages ojson.Result) ([]byte, bool, error) {
 	var canonicalMessage []byte
 	var canonicalError error
-	messages.ForEach(func(_, message gjson.Result) bool {
+	messages.ForEach(func(_, message ojson.Result) bool {
 		if message.Get("role").String() != "user" {
 			return true
 		}
@@ -201,10 +200,10 @@ func firstCanonicalClaudeUserQueryMessage(messages gjson.Result) ([]byte, bool, 
 	return canonicalMessage, len(canonicalMessage) > 0, nil
 }
 
-func firstCanonicalClaudeUserMessageFallback(messages gjson.Result) ([]byte, bool, error) {
+func firstCanonicalClaudeUserMessageFallback(messages ojson.Result) ([]byte, bool, error) {
 	var canonicalMessage []byte
 	var canonicalError error
-	messages.ForEach(func(_, message gjson.Result) bool {
+	messages.ForEach(func(_, message ojson.Result) bool {
 		if message.Get("role").String() != "user" {
 			return true
 		}
@@ -225,18 +224,18 @@ func firstCanonicalClaudeUserMessageFallback(messages gjson.Result) ([]byte, boo
 	return canonicalMessage, len(canonicalMessage) > 0, nil
 }
 
-func canonicalizeClaudeUserMessage(message gjson.Result) ([]byte, bool, error) {
+func canonicalizeClaudeUserMessage(message ojson.Result) ([]byte, bool, error) {
 	return canonicalizeClaudeUserMessageWithQuery(message, nil)
 }
 
-func canonicalizeClaudeUserMessageWithQuery(message gjson.Result, selection *claudeUserQuerySelection) ([]byte, bool, error) {
+func canonicalizeClaudeUserMessageWithQuery(message ojson.Result, selection *claudeUserQuerySelection) ([]byte, bool, error) {
 	content := message.Get("content")
 	parts := make([]canonicalClaudeContentPart, 0)
 	userAuthored := false
 	var contentError error
 
 	switch {
-	case content.Type == gjson.String:
+	case content.Type == ojson.String:
 		text := content.String()
 		if selection != nil {
 			text = selection.QueryText
@@ -248,7 +247,7 @@ func canonicalizeClaudeUserMessageWithQuery(message gjson.Result, selection *cla
 		userAuthored = true
 	case content.IsArray():
 		partIndex := 0
-		content.ForEach(func(_, part gjson.Result) bool {
+		content.ForEach(func(_, part ojson.Result) bool {
 			currentPartIndex := partIndex
 			partIndex++
 			partType := strings.TrimSpace(part.Get("type").String())
@@ -285,7 +284,7 @@ func canonicalizeClaudeUserMessageWithQuery(message gjson.Result, selection *cla
 			return nil, false, fmt.Errorf("canonicalize Claude user content: %w", contentError)
 		}
 	default:
-		if !content.Exists() || content.Type == gjson.Null {
+		if !content.Exists() || content.Type == ojson.Null {
 			return nil, false, nil
 		}
 		canonicalPayload, errCanonical := canonicalizeJSON(content.Raw)
@@ -310,9 +309,9 @@ func canonicalizeClaudeUserMessageWithQuery(message gjson.Result, selection *cla
 	return canonicalMessage, true, nil
 }
 
-func findClaudeUserQuerySelection(message gjson.Result) (claudeUserQuerySelection, claudeUserQueryStatus) {
+func findClaudeUserQuerySelection(message ojson.Result) (claudeUserQuerySelection, claudeUserQueryStatus) {
 	content := message.Get("content")
-	if content.Type == gjson.String {
+	if content.Type == ojson.String {
 		queryText, queryStatus := extractStandaloneClaudeUserQuery(content.String())
 		if queryStatus != claudeUserQueryValid {
 			return claudeUserQuerySelection{}, queryStatus
@@ -327,7 +326,7 @@ func findClaudeUserQuerySelection(message gjson.Result) (claudeUserQuerySelectio
 	selectedQueryText := ""
 	partIndex := 0
 	queryStatus := claudeUserQueryAbsent
-	content.ForEach(func(_, part gjson.Result) bool {
+	content.ForEach(func(_, part ojson.Result) bool {
 		currentPartIndex := partIndex
 		partIndex++
 		if strings.TrimSpace(part.Get("type").String()) != "text" {

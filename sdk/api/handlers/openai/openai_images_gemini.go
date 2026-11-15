@@ -7,11 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 )
 
 const (
@@ -89,20 +88,20 @@ func validateGeminiImagesEditInputs(c *gin.Context, r geminiImagesRequest) bool 
 }
 
 func geminiImagesOptionsFromJSON(rawJSON []byte) (aspectRatio string, imageSize string, n int) {
-	aspectRatio = geminiImagesAspectRatio(gjson.GetBytes(rawJSON, "size").String(), gjson.GetBytes(rawJSON, "aspect_ratio").String())
-	imageSize = geminiImagesImageSize(firstNonEmpty(gjson.GetBytes(rawJSON, "image_size").String(), gjson.GetBytes(rawJSON, "resolution").String()))
+	aspectRatio = geminiImagesAspectRatio(ojson.GetBytes(rawJSON, "size").String(), ojson.GetBytes(rawJSON, "aspect_ratio").String())
+	imageSize = geminiImagesImageSize(firstNonEmpty(ojson.GetBytes(rawJSON, "image_size").String(), ojson.GetBytes(rawJSON, "resolution").String()))
 	count := int64(1)
-	if v := gjson.GetBytes(rawJSON, "n"); v.Exists() && v.Type == gjson.Number {
+	if v := ojson.GetBytes(rawJSON, "n"); v.Exists() && v.Type == ojson.Number {
 		count = v.Int()
 	}
 	return aspectRatio, imageSize, clampGeminiImagesN(count)
 }
 
 func geminiImagesMaskFromJSON(rawJSON []byte) string {
-	if mask := gjson.GetBytes(rawJSON, "mask"); mask.Type == gjson.String {
+	if mask := ojson.GetBytes(rawJSON, "mask"); mask.Type == ojson.String {
 		return strings.TrimSpace(mask.String())
 	}
-	return strings.TrimSpace(gjson.GetBytes(rawJSON, "mask.image_url").String())
+	return strings.TrimSpace(ojson.GetBytes(rawJSON, "mask.image_url").String())
 }
 
 func firstNonEmpty(values ...string) string {
@@ -116,19 +115,19 @@ func firstNonEmpty(values ...string) string {
 
 func buildGeminiImagesChatRequest(r geminiImagesRequest) []byte {
 	out := []byte(`{"modalities":["image","text"],"messages":[{"role":"user","content":[]}]}`)
-	out, _ = sjson.SetBytes(out, "model", r.Model)
+	out, _ = ojson.SetBytes(out, "model", r.Model)
 
 	appendPart := func(part []byte) {
-		out, _ = sjson.SetRawBytes(out, "messages.0.content.-1", part)
+		out, _ = ojson.SetRawBytes(out, "messages.0.content.-1", part)
 	}
 	textPart := func(text string) []byte {
 		part := []byte(`{"type":"text"}`)
-		part, _ = sjson.SetBytes(part, "text", text)
+		part, _ = ojson.SetBytes(part, "text", text)
 		return part
 	}
 	imagePart := func(url string) []byte {
 		part := []byte(`{"type":"image_url"}`)
-		part, _ = sjson.SetBytes(part, "image_url.url", url)
+		part, _ = ojson.SetBytes(part, "image_url.url", url)
 		return part
 	}
 
@@ -142,10 +141,10 @@ func buildGeminiImagesChatRequest(r geminiImagesRequest) []byte {
 	}
 
 	if r.AspectRatio != "" {
-		out, _ = sjson.SetBytes(out, "image_config.aspect_ratio", r.AspectRatio)
+		out, _ = ojson.SetBytes(out, "image_config.aspect_ratio", r.AspectRatio)
 	}
 	if r.ImageSize != "" {
-		out, _ = sjson.SetBytes(out, "image_config.image_size", r.ImageSize)
+		out, _ = ojson.SetBytes(out, "image_config.image_size", r.ImageSize)
 	}
 	return out
 }
@@ -168,7 +167,7 @@ func parseGeminiImageDataURL(url string) (xaiImageResult, bool) {
 }
 
 func extractGeminiChatImages(chatResp []byte) (results []xaiImageResult, promptTokens int64, completionTokens int64, err error) {
-	for _, choice := range gjson.GetBytes(chatResp, "choices").Array() {
+	for _, choice := range ojson.GetBytes(chatResp, "choices").Array() {
 		for _, img := range choice.Get("message.images").Array() {
 			if result, ok := parseGeminiImageDataURL(img.Get("image_url.url").String()); ok {
 				results = append(results, result)
@@ -176,7 +175,7 @@ func extractGeminiChatImages(chatResp []byte) (results []xaiImageResult, promptT
 		}
 	}
 	if len(results) == 0 {
-		text := strings.TrimSpace(gjson.GetBytes(chatResp, "choices.0.message.content").String())
+		text := strings.TrimSpace(ojson.GetBytes(chatResp, "choices.0.message.content").String())
 		if len(text) > 200 {
 			text = text[:200]
 		}
@@ -185,23 +184,23 @@ func extractGeminiChatImages(chatResp []byte) (results []xaiImageResult, promptT
 		}
 		return nil, 0, 0, fmt.Errorf("upstream did not return image output")
 	}
-	promptTokens = gjson.GetBytes(chatResp, "usage.prompt_tokens").Int()
-	completionTokens = gjson.GetBytes(chatResp, "usage.completion_tokens").Int()
+	promptTokens = ojson.GetBytes(chatResp, "usage.prompt_tokens").Int()
+	completionTokens = ojson.GetBytes(chatResp, "usage.completion_tokens").Int()
 	return results, promptTokens, completionTokens, nil
 }
 
 func buildGeminiImagesPayload(results []xaiImageResult, promptTokens int64, completionTokens int64) []byte {
 	out := []byte(`{"created":0,"data":[]}`)
-	out, _ = sjson.SetBytes(out, "created", time.Now().Unix())
+	out, _ = ojson.SetBytes(out, "created", time.Now().Unix())
 	for _, img := range results {
 		item := []byte(`{}`)
-		item, _ = sjson.SetBytes(item, "b64_json", img.B64JSON)
-		item, _ = sjson.SetBytes(item, "mime_type", img.MimeType)
-		out, _ = sjson.SetRawBytes(out, "data.-1", item)
+		item, _ = ojson.SetBytes(item, "b64_json", img.B64JSON)
+		item, _ = ojson.SetBytes(item, "mime_type", img.MimeType)
+		out, _ = ojson.SetRawBytes(out, "data.-1", item)
 	}
-	out, _ = sjson.SetBytes(out, "usage.input_tokens", promptTokens)
-	out, _ = sjson.SetBytes(out, "usage.output_tokens", completionTokens)
-	out, _ = sjson.SetBytes(out, "usage.total_tokens", promptTokens+completionTokens)
+	out, _ = ojson.SetBytes(out, "usage.input_tokens", promptTokens)
+	out, _ = ojson.SetBytes(out, "usage.output_tokens", completionTokens)
+	out, _ = ojson.SetBytes(out, "usage.total_tokens", promptTokens+completionTokens)
 	return out
 }
 

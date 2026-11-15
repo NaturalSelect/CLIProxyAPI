@@ -1,12 +1,12 @@
 package common
 
-import "github.com/tidwall/gjson"
+import "github.com/MoeForge/moego/ojson"
 
 // HasUnsupportedPartPayload keeps omitted payloads from being mistaken for
 // detached signatures belonging to a neighboring supported part.
-func HasUnsupportedPartPayload(part gjson.Result, supportedFields ...string) bool {
+func HasUnsupportedPartPayload(part ojson.Result, supportedFields ...string) bool {
 	unsupported := false
-	part.ForEach(func(key, _ gjson.Result) bool {
+	part.ForEach(func(key, _ ojson.Result) bool {
 		name := key.String()
 		switch name {
 		case "text", "functionCall", "function_call", "functionResponse", "function_response",

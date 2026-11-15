@@ -7,15 +7,16 @@ import (
 	"context"
 	"fmt"
 
-	configaccess "github.com/router-for-me/CLIProxyAPI/v7/internal/access/config_access"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher"
-	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
-	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
-	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
+	configaccess "github.com/router-for-me/CLIProxyAPI/v8/internal/access/config_access"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher"
+	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
 // Builder constructs a Service instance with customizable providers.
@@ -52,11 +53,19 @@ type Builder struct {
 	// cooldownStateStore overrides runtime cooldown persistence.
 	cooldownStateStore coreauth.CooldownStateStore
 
+	// pluginInterceptorHost optionally overrides the PluginInterceptorHost
+	// installed on request handlers. The internal pluginHost still owns management
+	// routes and plugin executor wiring.
+	pluginInterceptorHost handlers.PluginInterceptorHost
+
 	// pluginHost owns dynamic plugin lifecycle and adapters.
 	pluginHost *pluginhost.Host
 
 	// postAuthHook is called after auth record creation and before persistence.
 	postAuthHook coreauth.PostAuthHook
+
+	// resultPolicy intercepts execution results before quota mutation and persistence.
+	resultPolicy coreauth.ResultPolicy
 
 	// serverOptions contains additional server configuration options.
 	serverOptions []api.ServerOption
@@ -69,6 +78,13 @@ type Hooks struct {
 	// OnBeforeStart is called before the service starts, allowing configuration
 	// modifications or additional setup.
 	OnBeforeStart func(*config.Config)
+
+	// OnConfigApplied is called once at the end of every successful runtime
+	// config apply, after executor re-registration and model sync. Embedders can
+	// use it to reinstall caller-owned state (executor wrappers, custom selector
+	// adjustments, interceptor context) that config apply would otherwise reset.
+	// The hook runs inside the service config runtime mutex; it must not block.
+	OnConfigApplied func(*Service, *config.Config)
 
 	// OnAfterStart is called after the service has started successfully,
 	// providing access to the service instance for additional operations.
@@ -156,6 +172,16 @@ func (b *Builder) WithCooldownStateStore(store coreauth.CooldownStateStore) *Bui
 	return b
 }
 
+// WithPluginInterceptorHost sets a caller-provided plugin interceptor host for
+// request handling. The server wraps it so plugin model routing, lifecycle
+// callbacks, and websocket observers keep delegating to the internal plugin
+// host; management routes and plugin executors are unaffected. When unset the
+// internal plugin host remains the request interceptor host as before.
+func (b *Builder) WithPluginInterceptorHost(host handlers.PluginInterceptorHost) *Builder {
+	b.pluginInterceptorHost = host
+	return b
+}
+
 // WithPluginHost overrides the dynamic plugin host used by the service.
 func (b *Builder) WithPluginHost(host *pluginhost.Host) *Builder {
 	b.pluginHost = host
@@ -184,6 +210,12 @@ func (b *Builder) WithPostAuthHook(hook coreauth.PostAuthHook) *Builder {
 		return b
 	}
 	b.postAuthHook = hook
+	return b
+}
+
+// WithResultPolicy sets an execution result policy invoked before in-memory quota mutations and persistence.
+func (b *Builder) WithResultPolicy(policy coreauth.ResultPolicy) *Builder {
+	b.resultPolicy = policy
 	return b
 }
 
@@ -264,9 +296,13 @@ func (b *Builder) Build() (*Service, error) {
 	if pluginHost != nil {
 		coreManager.SetPluginScheduler(pluginHost)
 	}
+	if b.resultPolicy != nil {
+		coreManager.SetResultPolicy(b.resultPolicy)
+	}
 
 	service := &Service{
-		cfg:                      b.cfg,
+		pluginInterceptorHost:    b.pluginInterceptorHost,
+		cfg:                      b.cfg.CloneForRuntime(),
 		configPath:               b.configPath,
 		tokenProvider:            tokenProvider,
 		apiKeyProvider:           apiKeyProvider,
@@ -276,13 +312,19 @@ func (b *Builder) Build() (*Service, error) {
 		accessManager:            accessManager,
 		coreManager:              coreManager,
 		cooldownStateStore:       cooldownStateStore,
-		claudePromptCacheRuntime: executor.NewClaudePromptCacheRuntime(),
 		pluginHost:               pluginHost,
+		claudePromptCacheRuntime: helps.NewClaudePromptCacheRuntime(),
+		discoveryManager:         newDiscoveryAdvertiserManager(),
 		appliedRoutingState:      appliedRoutingState,
 		serverOptions:            append([]api.ServerOption(nil), b.serverOptions...),
 	}
+	service.proxyPoolPublisher = helps.RegisterProxyPoolPublisher()
+	helps.AdvanceProxyPoolGeneration(service.proxyPoolPublisher, service.cfg)
 	if b.postAuthHook != nil {
 		service.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
+	}
+	if b.pluginInterceptorHost != nil {
+		service.serverOptions = append(service.serverOptions, api.WithPluginInterceptorHost(b.pluginInterceptorHost))
 	}
 	service.serverOptions = append(service.serverOptions,
 		api.WithPostAuthPersistHook(service.runtimeAuthSyncHook()),
@@ -310,10 +352,17 @@ func (s *Service) runtimeAuthSyncHook() coreauth.PostAuthHook {
 			ID:     auth.ID,
 			Auth:   auth,
 		}
-		if s.watcher != nil && s.watcher.DispatchPersistedAuthUpdate(update) {
-			return nil
+		if watcher := s.currentWatcher(); watcher != nil {
+			_, rev := watcher.DispatchPersistedAuthUpdateWithRevision(&update)
+			if rev > 0 {
+				update.SetRevision(rev)
+			}
 		}
-		s.handleAuthUpdate(coreauth.WithSkipPersist(ctx), update)
+		// Detach from request cancellation so runtime model registration always completes
+		// once the credential has been persisted to disk. If the watcher consumer already
+		// claimed this revision, handleAuthUpdate waits for that registration to finish.
+		syncCtx := coreauth.WithSkipPersist(context.Background())
+		s.handleAuthUpdate(syncCtx, update)
 		return nil
 	}
 }

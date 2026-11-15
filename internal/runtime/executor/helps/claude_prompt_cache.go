@@ -11,8 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 const (
@@ -296,7 +295,7 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 	payload []byte,
 	capabilities ClaudePromptCacheCapabilities,
 ) ([]byte, *ClaudePromptCachePlan) {
-	if runtime == nil || strings.TrimSpace(scopeKey) == "" || len(payload) == 0 || !gjson.ValidBytes(payload) {
+	if runtime == nil || strings.TrimSpace(scopeKey) == "" || len(payload) == 0 || !ojson.ValidBytes(payload) {
 		return payload, nil
 	}
 	runtime.initialize()
@@ -308,7 +307,7 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 
 	updatedPayload := payload
 	for _, invalidPath := range invalidPaths {
-		if nextPayload, errDelete := sjson.DeleteBytes(updatedPayload, invalidPath); errDelete == nil {
+		if nextPayload, errDelete := ojson.DeleteBytes(updatedPayload, invalidPath); errDelete == nil {
 			updatedPayload = nextPayload
 		}
 	}
@@ -332,7 +331,7 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 		if _, keep := selectedPaths[location.path]; keep {
 			continue
 		}
-		if nextPayload, errDelete := sjson.DeleteBytes(updatedPayload, location.path); errDelete == nil {
+		if nextPayload, errDelete := ojson.DeleteBytes(updatedPayload, location.path); errDelete == nil {
 			updatedPayload = nextPayload
 		}
 	}
@@ -343,7 +342,7 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 	if remainingSlots > 0 && len(toolFingerprints) > 0 {
 		path := fmt.Sprintf("tools.%d.cache_control", len(toolFingerprints)-1)
 		if _, exists := selectedPaths[path]; !exists {
-			if nextPayload, errSet := sjson.SetRawBytes(updatedPayload, path, controlJSON); errSet == nil {
+			if nextPayload, errSet := ojson.SetRawBytes(updatedPayload, path, controlJSON); errSet == nil {
 				updatedPayload = nextPayload
 				selectedPaths[path] = struct{}{}
 				addedPaths[path] = struct{}{}
@@ -378,12 +377,12 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 	automaticHistory := false
 	automaticHistoryAdded := false
 	if capabilities.AutomaticHistory {
-		cacheControl := gjson.GetBytes(updatedPayload, "cache_control")
+		cacheControl := ojson.GetBytes(updatedPayload, "cache_control")
 		if !isValidClaudeCacheControl(cacheControl) {
 			if cacheControl.Exists() {
-				updatedPayload, _ = sjson.DeleteBytes(updatedPayload, "cache_control")
+				updatedPayload, _ = ojson.DeleteBytes(updatedPayload, "cache_control")
 			}
-			if nextPayload, errSet := sjson.SetRawBytes(updatedPayload, "cache_control", controlJSON); errSet == nil {
+			if nextPayload, errSet := ojson.SetRawBytes(updatedPayload, "cache_control", controlJSON); errSet == nil {
 				updatedPayload = nextPayload
 				automaticHistory = true
 				automaticHistoryAdded = true
@@ -391,8 +390,8 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 		} else {
 			automaticHistory = true
 		}
-	} else if gjson.GetBytes(updatedPayload, "cache_control").Exists() {
-		updatedPayload, _ = sjson.DeleteBytes(updatedPayload, "cache_control")
+	} else if ojson.GetBytes(updatedPayload, "cache_control").Exists() {
+		updatedPayload, _ = ojson.DeleteBytes(updatedPayload, "cache_control")
 	}
 	updatedPayload = NormalizeClaudeCacheControlTTL(updatedPayload)
 
@@ -405,7 +404,7 @@ func (runtime *ClaudePromptCacheRuntime) PlanClaudePromptCache(
 		prefixes = append(prefixes, buildClaudeAutomaticHistoryPrefixes(
 			scopeKey,
 			updatedPayload,
-			claudeCacheControlTTL(gjson.GetBytes(updatedPayload, "cache_control").Raw),
+			claudeCacheControlTTL(ojson.GetBytes(updatedPayload, "cache_control").Raw),
 			automaticHistoryAdded,
 			runtime,
 			now,
@@ -433,7 +432,7 @@ func (runtime *ClaudePromptCacheRuntime) RebuildClaudePromptCachePlan(
 	payload []byte,
 	plan *ClaudePromptCachePlan,
 ) *ClaudePromptCachePlan {
-	if runtime == nil || plan == nil || strings.TrimSpace(plan.ScopeKey) == "" || len(payload) == 0 || !gjson.ValidBytes(payload) {
+	if runtime == nil || plan == nil || strings.TrimSpace(plan.ScopeKey) == "" || len(payload) == 0 || !ojson.ValidBytes(payload) {
 		return plan
 	}
 	runtime.initialize()
@@ -466,12 +465,12 @@ func (runtime *ClaudePromptCacheRuntime) RebuildClaudePromptCachePlan(
 
 	now := runtime.now()
 	prefixes := buildClaudePromptCachePrefixes(plan.ScopeKey, payload, finalLocations, toolPrefixKeys, runtime, now)
-	automaticHistory := plan.Summary.AutomaticHistory && isValidClaudeCacheControl(gjson.GetBytes(payload, "cache_control"))
+	automaticHistory := plan.Summary.AutomaticHistory && isValidClaudeCacheControl(ojson.GetBytes(payload, "cache_control"))
 	if automaticHistory {
 		prefixes = append(prefixes, buildClaudeAutomaticHistoryPrefixes(
 			plan.ScopeKey,
 			payload,
-			claudeCacheControlTTL(gjson.GetBytes(payload, "cache_control").Raw),
+			claudeCacheControlTTL(ojson.GetBytes(payload, "cache_control").Raw),
 			automaticHistoryAdded,
 			runtime,
 			now,
@@ -491,14 +490,14 @@ func (runtime *ClaudePromptCacheRuntime) RebuildClaudePromptCachePlan(
 // messages TTL ordering. Once a default 5-minute breakpoint appears, later
 // one-hour breakpoints are downgraded to the default TTL.
 func NormalizeClaudeCacheControlTTL(payload []byte) []byte {
-	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+	if len(payload) == 0 || !ojson.ValidBytes(payload) {
 		return payload
 	}
 
 	originalPayload := payload
 	seenDefaultTTL := false
 	modified := false
-	processBlock := func(path string, object gjson.Result) {
+	processBlock := func(path string, object ojson.Result) {
 		cacheControl := object.Get("cache_control")
 		if !cacheControl.Exists() {
 			return
@@ -508,7 +507,7 @@ func NormalizeClaudeCacheControlTTL(payload []byte) []byte {
 			return
 		}
 		ttl := cacheControl.Get("ttl")
-		if ttl.Type != gjson.String || ttl.String() != "1h" {
+		if ttl.Type != ojson.String || ttl.String() != "1h" {
 			seenDefaultTTL = true
 			return
 		}
@@ -519,7 +518,7 @@ func NormalizeClaudeCacheControlTTL(payload []byte) []byte {
 		if path != "" {
 			ttlPath = path + ".cache_control.ttl"
 		}
-		updatedPayload, errDelete := sjson.DeleteBytes(payload, ttlPath)
+		updatedPayload, errDelete := ojson.DeleteBytes(payload, ttlPath)
 		if errDelete != nil {
 			return
 		}
@@ -527,28 +526,28 @@ func NormalizeClaudeCacheControlTTL(payload []byte) []byte {
 		modified = true
 	}
 
-	tools := gjson.GetBytes(payload, "tools")
+	tools := ojson.GetBytes(payload, "tools")
 	if tools.IsArray() {
-		tools.ForEach(func(index, item gjson.Result) bool {
+		tools.ForEach(func(index, item ojson.Result) bool {
 			processBlock(fmt.Sprintf("tools.%d", index.Int()), item)
 			return true
 		})
 	}
-	system := gjson.GetBytes(payload, "system")
+	system := ojson.GetBytes(payload, "system")
 	if system.IsArray() {
-		system.ForEach(func(index, item gjson.Result) bool {
+		system.ForEach(func(index, item ojson.Result) bool {
 			processBlock(fmt.Sprintf("system.%d", index.Int()), item)
 			return true
 		})
 	}
-	messages := gjson.GetBytes(payload, "messages")
+	messages := ojson.GetBytes(payload, "messages")
 	if messages.IsArray() {
-		messages.ForEach(func(messageIndex, message gjson.Result) bool {
+		messages.ForEach(func(messageIndex, message ojson.Result) bool {
 			content := message.Get("content")
 			if !content.IsArray() {
 				return true
 			}
-			content.ForEach(func(contentIndex, item gjson.Result) bool {
+			content.ForEach(func(contentIndex, item ojson.Result) bool {
 				processBlock(
 					fmt.Sprintf("messages.%d.content.%d", messageIndex.Int(), contentIndex.Int()),
 					item,
@@ -558,7 +557,7 @@ func NormalizeClaudeCacheControlTTL(payload []byte) []byte {
 			return true
 		})
 	}
-	processBlock("", gjson.ParseBytes(payload))
+	processBlock("", ojson.ParseBytes(payload))
 
 	if !modified {
 		return originalPayload
@@ -964,10 +963,10 @@ func claudePromptCacheControlJSON(extendedTTL bool) []byte {
 }
 
 func HasClaudeExtendedCacheTTL(payload []byte) bool {
-	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+	if len(payload) == 0 || !ojson.ValidBytes(payload) {
 		return false
 	}
-	topLevel := gjson.GetBytes(payload, "cache_control")
+	topLevel := ojson.GetBytes(payload, "cache_control")
 	if isValidClaudeCacheControl(topLevel) && claudeCacheControlTTL(topLevel.Raw) == claudePromptCacheExtendedTTL {
 		return true
 	}
@@ -983,23 +982,23 @@ func HasClaudeExtendedCacheTTL(payload []byte) bool {
 // StripAllClaudeCacheControls removes every client/top-level/in-body cache_control
 // marker so adaptive planning can re-apply CPA's breakpoint strategy from scratch.
 func StripAllClaudeCacheControls(payload []byte) []byte {
-	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+	if len(payload) == 0 || !ojson.ValidBytes(payload) {
 		return payload
 	}
 	updatedPayload := payload
-	if gjson.GetBytes(updatedPayload, "cache_control").Exists() {
-		if nextPayload, errDelete := sjson.DeleteBytes(updatedPayload, "cache_control"); errDelete == nil {
+	if ojson.GetBytes(updatedPayload, "cache_control").Exists() {
+		if nextPayload, errDelete := ojson.DeleteBytes(updatedPayload, "cache_control"); errDelete == nil {
 			updatedPayload = nextPayload
 		}
 	}
 	locations, invalidPaths := collectClaudeCacheBreakpoints(updatedPayload)
 	for _, invalidPath := range invalidPaths {
-		if nextPayload, errDelete := sjson.DeleteBytes(updatedPayload, invalidPath); errDelete == nil {
+		if nextPayload, errDelete := ojson.DeleteBytes(updatedPayload, invalidPath); errDelete == nil {
 			updatedPayload = nextPayload
 		}
 	}
 	for _, location := range locations {
-		if nextPayload, errDelete := sjson.DeleteBytes(updatedPayload, location.path); errDelete == nil {
+		if nextPayload, errDelete := ojson.DeleteBytes(updatedPayload, location.path); errDelete == nil {
 			updatedPayload = nextPayload
 		}
 	}
@@ -1009,9 +1008,9 @@ func StripAllClaudeCacheControls(payload []byte) []byte {
 func collectClaudeCacheBreakpoints(payload []byte) ([]claudeBreakpointLocation, []string) {
 	locations := make([]claudeBreakpointLocation, 0, ClaudePromptCacheMaxBreakpoints)
 	invalidPaths := make([]string, 0)
-	tools := gjson.GetBytes(payload, "tools")
+	tools := ojson.GetBytes(payload, "tools")
 	if tools.IsArray() {
-		tools.ForEach(func(index, tool gjson.Result) bool {
+		tools.ForEach(func(index, tool ojson.Result) bool {
 			cacheControl := tool.Get("cache_control")
 			if !cacheControl.Exists() {
 				return true
@@ -1032,9 +1031,9 @@ func collectClaudeCacheBreakpoints(payload []byte) ([]claudeBreakpointLocation, 
 		})
 	}
 
-	system := gjson.GetBytes(payload, "system")
+	system := ojson.GetBytes(payload, "system")
 	if system.IsArray() {
-		system.ForEach(func(index, block gjson.Result) bool {
+		system.ForEach(func(index, block ojson.Result) bool {
 			cacheControl := block.Get("cache_control")
 			if !cacheControl.Exists() {
 				return true
@@ -1055,14 +1054,14 @@ func collectClaudeCacheBreakpoints(payload []byte) ([]claudeBreakpointLocation, 
 		})
 	}
 
-	messages := gjson.GetBytes(payload, "messages")
+	messages := ojson.GetBytes(payload, "messages")
 	if messages.IsArray() {
-		messages.ForEach(func(messageIndex, message gjson.Result) bool {
+		messages.ForEach(func(messageIndex, message ojson.Result) bool {
 			content := message.Get("content")
 			if !content.IsArray() {
 				return true
 			}
-			content.ForEach(func(contentIndex, block gjson.Result) bool {
+			content.ForEach(func(contentIndex, block ojson.Result) bool {
 				cacheControl := block.Get("cache_control")
 				if !cacheControl.Exists() {
 					return true
@@ -1137,19 +1136,19 @@ func addClaudeSystemTailBreakpoint(
 	selectedPaths map[string]struct{},
 	controlJSON []byte,
 ) ([]byte, bool, string) {
-	system := gjson.GetBytes(payload, "system")
+	system := ojson.GetBytes(payload, "system")
 	if !system.Exists() {
 		return payload, false, ""
 	}
-	if system.Type == gjson.String {
+	if system.Type == ojson.String {
 		text := system.String()
 		if strings.TrimSpace(text) == "" {
 			return payload, false, ""
 		}
 		block := []byte(`{"type":"text","text":""}`)
-		block, _ = sjson.SetBytes(block, "text", text)
-		block, _ = sjson.SetRawBytes(block, "cache_control", controlJSON)
-		updated, errSet := sjson.SetRawBytes(payload, "system", []byte("["+string(block)+"]"))
+		block, _ = ojson.SetBytes(block, "text", text)
+		block, _ = ojson.SetRawBytes(block, "cache_control", controlJSON)
+		updated, errSet := ojson.SetRawBytes(payload, "system", []byte("["+string(block)+"]"))
 		if errSet != nil {
 			return payload, false, ""
 		}
@@ -1165,10 +1164,10 @@ func addClaudeSystemTailBreakpoint(
 		return payload, false, ""
 	}
 	path := fmt.Sprintf("system.%d.cache_control", count-1)
-	if _, exists := selectedPaths[path]; exists || gjson.GetBytes(payload, path).Exists() {
+	if _, exists := selectedPaths[path]; exists || ojson.GetBytes(payload, path).Exists() {
 		return payload, false, ""
 	}
-	updated, errSet := sjson.SetRawBytes(payload, path, controlJSON)
+	updated, errSet := ojson.SetRawBytes(payload, path, controlJSON)
 	if errSet != nil {
 		return payload, false, ""
 	}
@@ -1181,12 +1180,12 @@ func addClaudeHistoryBreakpoint(
 	selectedPaths map[string]struct{},
 	controlJSON []byte,
 ) ([]byte, bool, string) {
-	messages := gjson.GetBytes(payload, "messages")
+	messages := ojson.GetBytes(payload, "messages")
 	if !messages.IsArray() {
 		return payload, false, ""
 	}
 	userIndexes := make([]int, 0)
-	messages.ForEach(func(index, message gjson.Result) bool {
+	messages.ForEach(func(index, message ojson.Result) bool {
 		if message.Get("role").String() == "user" {
 			userIndexes = append(userIndexes, int(index.Int()))
 		}
@@ -1197,12 +1196,12 @@ func addClaudeHistoryBreakpoint(
 	}
 	messageIndex := userIndexes[len(userIndexes)-2]
 	contentPath := fmt.Sprintf("messages.%d.content", messageIndex)
-	content := gjson.GetBytes(payload, contentPath)
-	if content.Type == gjson.String {
+	content := ojson.GetBytes(payload, contentPath)
+	if content.Type == ojson.String {
 		block := []byte(`{"type":"text","text":""}`)
-		block, _ = sjson.SetBytes(block, "text", content.String())
-		block, _ = sjson.SetRawBytes(block, "cache_control", controlJSON)
-		updated, errSet := sjson.SetRawBytes(payload, contentPath, []byte("["+string(block)+"]"))
+		block, _ = ojson.SetBytes(block, "text", content.String())
+		block, _ = ojson.SetRawBytes(block, "cache_control", controlJSON)
+		updated, errSet := ojson.SetRawBytes(payload, contentPath, []byte("["+string(block)+"]"))
 		if errSet != nil {
 			return payload, false, ""
 		}
@@ -1218,10 +1217,10 @@ func addClaudeHistoryBreakpoint(
 		return payload, false, ""
 	}
 	path := fmt.Sprintf("messages.%d.content.%d.cache_control", messageIndex, contentCount-1)
-	if _, exists := selectedPaths[path]; exists || gjson.GetBytes(payload, path).Exists() {
+	if _, exists := selectedPaths[path]; exists || ojson.GetBytes(payload, path).Exists() {
 		return payload, false, ""
 	}
-	updated, errSet := sjson.SetRawBytes(payload, path, controlJSON)
+	updated, errSet := ojson.SetRawBytes(payload, path, controlJSON)
 	if errSet != nil {
 		return payload, false, ""
 	}
@@ -1282,15 +1281,15 @@ func buildClaudeAutomaticHistoryPrefixes(
 		depth        int
 	}
 
-	messages := gjson.GetBytes(payload, "messages")
+	messages := ojson.GetBytes(payload, "messages")
 	if !messages.IsArray() {
 		return nil
 	}
 	boundaries := make([]messageBoundary, 0, maxAutomaticHistoryPrefixes)
-	messages.ForEach(func(messageIndex, message gjson.Result) bool {
+	messages.ForEach(func(messageIndex, message ojson.Result) bool {
 		content := message.Get("content")
 		if content.IsArray() {
-			content.ForEach(func(contentIndex, _ gjson.Result) bool {
+			content.ForEach(func(contentIndex, _ ojson.Result) bool {
 				boundaries = append(boundaries, messageBoundary{
 					messageIndex: int(messageIndex.Int()),
 					contentIndex: int(contentIndex.Int()),
@@ -1300,7 +1299,7 @@ func buildClaudeAutomaticHistoryPrefixes(
 			})
 			return true
 		}
-		if content.Type == gjson.String && strings.TrimSpace(content.String()) != "" {
+		if content.Type == ojson.String && strings.TrimSpace(content.String()) != "" {
 			boundaries = append(boundaries, messageBoundary{
 				messageIndex: int(messageIndex.Int()),
 				contentIndex: -1,
@@ -1344,17 +1343,17 @@ func (runtime *ClaudePromptCacheRuntime) prefixConfirmed(scopeKey, prefixKey str
 }
 
 func fingerprintClaudeTools(payload []byte) ([][32]byte, []string) {
-	tools := gjson.GetBytes(payload, "tools")
+	tools := ojson.GetBytes(payload, "tools")
 	if !tools.IsArray() {
 		return nil, nil
 	}
 	fingerprints := make([][32]byte, 0, int(tools.Get("#").Int()))
 	prefixKeys := make([]string, 0, int(tools.Get("#").Int()))
 	chain := sha256.Sum256([]byte(claudePromptCacheFingerprintDomain))
-	tools.ForEach(func(index, tool gjson.Result) bool {
+	tools.ForEach(func(index, tool ojson.Result) bool {
 		toolWithoutCacheControl := tool.Raw
 		if tool.Get("cache_control").Exists() {
-			toolWithoutCacheControl, _ = sjson.Delete(tool.Raw, "cache_control")
+			toolWithoutCacheControl, _ = ojson.Delete(tool.Raw, "cache_control")
 		}
 		fingerprint := sha256.Sum256(append([]byte(claudePromptCacheFingerprintDomain+"\x00"), []byte(toolWithoutCacheControl)...))
 		fingerprints = append(fingerprints, fingerprint)
@@ -1387,13 +1386,13 @@ func hashClaudePromptCachePrefix(scopeKey, kind, material string) string {
 func buildClaudeSystemPrefixMaterial(payload []byte, systemEndIndex int) string {
 	var buffer bytes.Buffer
 	writeClaudeToolsWithoutCacheControl(&buffer, payload, -1)
-	system := gjson.GetBytes(payload, "system")
-	if system.Type == gjson.String {
+	system := ojson.GetBytes(payload, "system")
+	if system.Type == ojson.String {
 		buffer.WriteString(system.Raw)
 		return buffer.String()
 	}
 	if system.IsArray() {
-		system.ForEach(func(index, block gjson.Result) bool {
+		system.ForEach(func(index, block ojson.Result) bool {
 			if int(index.Int()) > systemEndIndex {
 				return false
 			}
@@ -1409,11 +1408,11 @@ func buildClaudeMessagePrefixMaterial(payload []byte, messageEndIndex, contentEn
 	var buffer bytes.Buffer
 	writeClaudeToolsWithoutCacheControl(&buffer, payload, -1)
 	writeClaudeSystemWithoutCacheControl(&buffer, payload)
-	messages := gjson.GetBytes(payload, "messages")
+	messages := ojson.GetBytes(payload, "messages")
 	if !messages.IsArray() {
 		return buffer.String()
 	}
-	messages.ForEach(func(index, message gjson.Result) bool {
+	messages.ForEach(func(index, message ojson.Result) bool {
 		messageIndex := int(index.Int())
 		if messageIndex > messageEndIndex {
 			return false
@@ -1431,11 +1430,11 @@ func buildClaudeMessagePrefixMaterial(payload []byte, messageEndIndex, contentEn
 }
 
 func writeClaudeToolsWithoutCacheControl(buffer *bytes.Buffer, payload []byte, endIndex int) {
-	tools := gjson.GetBytes(payload, "tools")
+	tools := ojson.GetBytes(payload, "tools")
 	if !tools.IsArray() {
 		return
 	}
-	tools.ForEach(func(index, tool gjson.Result) bool {
+	tools.ForEach(func(index, tool ojson.Result) bool {
 		if endIndex >= 0 && int(index.Int()) > endIndex {
 			return false
 		}
@@ -1446,8 +1445,8 @@ func writeClaudeToolsWithoutCacheControl(buffer *bytes.Buffer, payload []byte, e
 }
 
 func writeClaudeSystemWithoutCacheControl(buffer *bytes.Buffer, payload []byte) {
-	system := gjson.GetBytes(payload, "system")
-	if system.Type == gjson.String {
+	system := ojson.GetBytes(payload, "system")
+	if system.Type == ojson.String {
 		buffer.WriteString(system.Raw)
 		buffer.WriteByte('\n')
 		return
@@ -1455,7 +1454,7 @@ func writeClaudeSystemWithoutCacheControl(buffer *bytes.Buffer, payload []byte) 
 	if !system.IsArray() {
 		return
 	}
-	system.ForEach(func(_, block gjson.Result) bool {
+	system.ForEach(func(_, block ojson.Result) bool {
 		buffer.WriteString(stripClaudeObjectCacheControl(block.Raw))
 		buffer.WriteByte('\n')
 		return true
@@ -1463,10 +1462,10 @@ func writeClaudeSystemWithoutCacheControl(buffer *bytes.Buffer, payload []byte) 
 }
 
 func stripClaudeObjectCacheControl(raw string) string {
-	if !gjson.Get(raw, "cache_control").Exists() {
+	if !ojson.Get(raw, "cache_control").Exists() {
 		return raw
 	}
-	updated, errDelete := sjson.Delete(raw, "cache_control")
+	updated, errDelete := ojson.Delete(raw, "cache_control")
 	if errDelete != nil {
 		return raw
 	}
@@ -1474,7 +1473,7 @@ func stripClaudeObjectCacheControl(raw string) string {
 }
 
 func stripClaudeMessageCacheControls(raw string, contentEndIndex int) string {
-	content := gjson.Get(raw, "content")
+	content := ojson.Get(raw, "content")
 	if !content.IsArray() {
 		return raw
 	}
@@ -1486,23 +1485,23 @@ func stripClaudeMessageCacheControls(raw string, contentEndIndex int) string {
 	for _, part := range parts {
 		partStrings = append(partStrings, stripClaudeObjectCacheControl(part.Raw))
 	}
-	updated, errSet := sjson.SetRaw(raw, "content", "["+strings.Join(partStrings, ",")+"]")
+	updated, errSet := ojson.SetRaw(raw, "content", "["+strings.Join(partStrings, ",")+"]")
 	if errSet != nil {
 		return raw
 	}
 	return updated
 }
 
-func isValidClaudeCacheControl(cacheControl gjson.Result) bool {
+func isValidClaudeCacheControl(cacheControl ojson.Result) bool {
 	if !cacheControl.Exists() || !cacheControl.IsObject() || cacheControl.Get("type").String() != "ephemeral" {
 		return false
 	}
 	ttl := cacheControl.Get("ttl")
-	return !ttl.Exists() || (ttl.Type == gjson.String && (ttl.String() == "5m" || ttl.String() == "1h"))
+	return !ttl.Exists() || (ttl.Type == ojson.String && (ttl.String() == "5m" || ttl.String() == "1h"))
 }
 
 func claudeCacheControlTTL(raw string) time.Duration {
-	if gjson.Get(raw, "ttl").String() == "1h" {
+	if ojson.Get(raw, "ttl").String() == "1h" {
 		return claudePromptCacheExtendedTTL
 	}
 	return claudePromptCacheDefaultTTL
