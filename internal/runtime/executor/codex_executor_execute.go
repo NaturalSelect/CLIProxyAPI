@@ -326,6 +326,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		if eventType == "response.completed" {
 			cacheCodexReasoningReplayFromCompleted(replayScope, completedData)
 		}
+		completedData = helps.CodexIdentityConfuseFromContext(httpReq.Context()).ExposeResponse(completedData)
 
 		var param any
 		out := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, originalPayload, body, completedData, &param)
@@ -554,6 +555,7 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 	}
 	upstreamData := helps.RestoreCodexMultiAgentV2Response(data, optimizeMultiAgentV2)
 	reporter.ObserveSemanticResponse(to, upstreamData)
+	upstreamData = helps.CodexIdentityConfuseFromContext(httpReq.Context()).ExposeResponse(upstreamData)
 	var param any
 	out := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, originalPayload, body, upstreamData, &param)
 	if helps.ApplyPatchTranslationError(param) != nil || len(out) == 0 {

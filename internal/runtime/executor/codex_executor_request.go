@@ -191,6 +191,11 @@ func (e *CodexExecutor) cacheHelperDoc(ctx context.Context, from sdktranslator.F
 		helps.SetStringIfDifferentDoc(doc, "prompt_cache_key", cache.ID)
 	}
 	helps.SanitizeCodexInputItemIDsDoc(doc)
+	identityState := helps.ApplyCodexIdentityConfuseDoc(e.cfg, auth, req.Payload, doc)
+	if key := identityState.PromptCacheKey(); key != "" {
+		cache.ID = key
+	}
+	ctx = helps.WithCodexIdentityConfuse(ctx, identityState)
 	helps.FinalizePayloadDoc(ctx, doc)
 	var rawJSON []byte
 	if doc != nil {
@@ -580,6 +585,27 @@ func applyCodexHeadersWithSIWC(r *http.Request, auth *cliproxyauth.Auth, useSIWC
 	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs, ginHeaders)
 	applyCodexCloakingHeaders(r.Header, cfg, auth)
+	applyCodexIdentityConfuseHeaders(r.Header, helps.CodexIdentityConfuseFromContext(r.Context()))
+}
+
+func applyCodexIdentityConfuseHeaders(headers http.Header, state *helps.CodexIdentityConfuseState) {
+	if headers == nil || state == nil {
+		return
+	}
+	if rawTurnMetadata := strings.TrimSpace(headers.Get("X-Codex-Turn-Metadata")); rawTurnMetadata != "" {
+		headers.Set("X-Codex-Turn-Metadata", state.ConfuseTurnMetadata(rawTurnMetadata))
+	}
+	promptCacheKey := state.PromptCacheKey()
+	if promptCacheKey == "" {
+		return
+	}
+	setCodexSessionHeaderCasePreserved(headers, "Session-Id", promptCacheKey)
+	if headerValueCaseInsensitive(headers, "Conversation_id") != "" {
+		setHeaderCasePreserved(headers, "Conversation_id", promptCacheKey)
+	}
+	headers.Set("X-Client-Request-Id", promptCacheKey)
+	headers.Set("Thread-Id", promptCacheKey)
+	headers.Set("X-Codex-Window-Id", state.WindowID())
 }
 
 const codexRoutingHintHeader = "X-Codex-Routing-Hint"

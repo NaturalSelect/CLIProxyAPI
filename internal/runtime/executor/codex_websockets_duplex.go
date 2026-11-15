@@ -736,6 +736,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 					if codexUseSIWCForRequest(ctx, auth, steerHeaders) {
 						thinking.StripConfigurationUpdatesDoc(steerDoc)
 					}
+					helps.ApplyCodexIdentityConfuseDoc(e.cfg, auth, steerReq.Payload, steerDoc)
 					steerCtx := helps.WithPayloadFinalizer(streamCtx, helps.NewPayloadFinalizer(e.cfg, "codex-websockets", thinking.ParseSuffix(req.Model).ModelName, "codex", "", steerReq.Payload, steerReq, steerOpts))
 					helps.FinalizePayloadDoc(steerCtx, steerDoc)
 					_ = steerDoc.Set("type", "response.steer")
@@ -1153,7 +1154,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 					e.duplexStateObserver("terminal_pending", false)
 				}
 			}
-			if !send(cliproxyexecutor.StreamChunk{Payload: helps.EnsureResponsesUsageDetails(payload), Incomplete: eventType == "response.incomplete"}) {
+			if !send(cliproxyexecutor.StreamChunk{Payload: helps.EnsureResponsesUsageDetails(eventPrepared.identityState.ExposeResponse(payload)), Incomplete: eventType == "response.incomplete"}) {
 				return
 			}
 			if isCodexTerminalEventType(eventType) {

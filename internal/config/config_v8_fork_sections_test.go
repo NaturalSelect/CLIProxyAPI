@@ -28,6 +28,8 @@ claude-prompt-cache:
   mode: adaptive
   cold-start-max-wait-seconds: 12
   diagnostics: true
+codex:
+  identity-confuse: true
 `)
 	migrated, _, errMigrate := NormalizeConfigLayout(legacy, true)
 	if errMigrate != nil {
@@ -46,7 +48,7 @@ claude-prompt-cache:
 	if errUnmarshal := yaml.Unmarshal(migrated, &doc); errUnmarshal != nil {
 		t.Fatal(errUnmarshal)
 	}
-	for _, path := range []string{"upstream.claude.prompt-cache.mode", "access.api-key-model-rules"} {
+	for _, path := range []string{"upstream.claude.prompt-cache.mode", "access.api-key-model-rules", "oauth.providers.codex.identity-confuse"} {
 		if yamlPath(doc.Content[0], path) == nil {
 			t.Errorf("migrated config is missing %s:\n%s", path, migrated)
 		}
@@ -64,6 +66,9 @@ claude-prompt-cache:
 	}
 	if !cfg.ClaudePromptCache.Diagnostics {
 		t.Fatal("prompt-cache diagnostics = false, want true")
+	}
+	if !cfg.Codex.IdentityConfuse {
+		t.Fatal("codex identity-confuse = false, want true")
 	}
 	if len(cfg.APIKeyModelRules) != 1 || cfg.APIKeyModelRules[0].APIKey != "client-key" ||
 		len(cfg.APIKeyModelRules[0].ExcludedModels) != 1 || cfg.APIKeyModelRules[0].ExcludedModels[0] != "gpt-*" {

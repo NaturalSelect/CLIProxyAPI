@@ -537,6 +537,19 @@ upstream:
     # When true, return original model IDs in Anthropic model list responses instead of cloaked IDs.
     disable-cloaking-model-list: false
 
+    # Claude prompt-cache planning.
+    prompt-cache:
+      # legacy (default): keep the existing automatic cache_control injection.
+      # adaptive: replace client cache_control breakpoints with a planned placement, and let
+      #   requests that share a new cache prefix wait for the first one to create it.
+      # passthrough: never add cache_control; forward the client's markers unchanged.
+      mode: legacy
+      # Adaptive mode only: seconds a request waits for another request to finish creating an
+      # identical cache prefix. Default 15, capped at 60; 0 disables waiting.
+      cold-start-max-wait-seconds: 15
+      # Enable Anthropic's cache-diagnosis beta on official api.anthropic.com endpoints.
+      diagnostics: false
+
     # Anthropic-Beta is assembled per request rather than sent as a fixed list, matching
     # Claude Code: context-1m sits right after claude-code, mid-conversation-system
     # is added only for models that accept a role=system turn, advanced-tool-use only when
@@ -1194,6 +1207,10 @@ oauth:
 
     # Codex provider behavior.
     codex:
+      # When true, and routing.strategy is fill-first or routing.session-affinity is true,
+      # remap Codex prompt_cache_key, installation, turn, and window identifiers per selected auth.
+      # Responses returned to the client carry the original identifiers.
+      identity-confuse: false
       # Terminate and relay Codex Live WebRTC audio and DataChannel traffic in this process.
       # This requires inbound UDP reachability. Keep disabled to preserve direct media behavior.
       live-media-relay:
