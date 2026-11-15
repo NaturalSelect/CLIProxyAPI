@@ -9,6 +9,7 @@ import (
 	"time"
 
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/common"
+	geminicommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/gemini/common"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -61,7 +62,7 @@ type geminiToResponsesState struct {
 	CompletedReasoning        map[int]geminiCompletedReasoningItem
 	SeenReasoningSignatures   map[string]bool
 	LastSemanticKind          string
-
+	UnsupportedBoundary       bool
 	// function call aggregation (keyed by output_index)
 	NextIndex        int
 	FuncArgsBuf      map[int]*strings.Builder
@@ -412,6 +413,16 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 	// Handle parts (text/thought/functionCall)
 	if parts := root.Get("candidates.0.content.parts"); parts.Exists() && parts.IsArray() {
 		parts.ForEach(func(_, part gjson.Result) bool {
+			if geminicommon.HasUnsupportedPartPayload(part, "text", "functionCall") {
+				// NOTE: Signatures must not bind across a part this converter cannot represent.
+				if st.PendingReasoningSignature != "" {
+					emitTrailingDetachedReasoning(st.PendingReasoningSignature)
+					st.PendingReasoningSignature = ""
+				}
+				st.LastSemanticKind = ""
+				st.UnsupportedBoundary = true
+				return true
+			}
 			signature := strings.TrimSpace(part.Get("thoughtSignature").String())
 			if signature == "" {
 				signature = strings.TrimSpace(part.Get("thought_signature").String())
@@ -419,6 +430,12 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 			functionCall := part.Get("functionCall")
 			text := part.Get("text")
 			isThought := part.Get("thought").Bool()
+			if st.UnsupportedBoundary {
+				if !functionCall.Exists() && (!text.Exists() || text.String() == "") {
+					return true
+				}
+				st.UnsupportedBoundary = false
+			}
 			if functionCall.Exists() && st.PendingReasoningSignature != "" {
 				if signature == "" {
 					emitDetachedReasoning(st.PendingReasoningSignature, geminiResponsesCarrierNext, geminiResponsesCarrierFunction)
@@ -1119,7 +1136,21 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 	}
 
 	if parts := root.Get("candidates.0.content.parts"); parts.Exists() && parts.IsArray() {
+		unsupportedBoundary := false
 		parts.ForEach(func(_, p gjson.Result) bool {
+			if geminicommon.HasUnsupportedPartPayload(p, "text", "functionCall") {
+				// NOTE: Signatures must not bind across a part this converter cannot represent.
+				flushReasoningOutput()
+				flushMessageOutput()
+				unsupportedBoundary = true
+				return true
+			}
+			if unsupportedBoundary {
+				if text := p.Get("text"); !p.Get("functionCall").Exists() && (!text.Exists() || text.String() == "") {
+					return true
+				}
+				unsupportedBoundary = false
+			}
 			signature := strings.TrimSpace(p.Get("thoughtSignature").String())
 			if signature == "" {
 				signature = strings.TrimSpace(p.Get("thought_signature").String())
