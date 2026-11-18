@@ -153,7 +153,7 @@ func TestWebsocketTranscriptKeepsLocalDiagnosticsWithoutHTTPBody(t *testing.T) {
 	capture.RecordResponseError(io.ErrUnexpectedEOF)
 	logger := NewFileRequestLogger(true, t.TempDir(), "", 0)
 	var output bytes.Buffer
-	if errWrite := logger.writeNonStreamingLog(&output, "/v1/responses", http.MethodGet, nil, nil, "", []byte("Event: websocket.error\n"), nil, nil, nil, nil, nil, nil, nil, capture.ResponseDiagnostics(), http.StatusSwitchingProtocols, nil, []byte("not a websocket response body"), nil, time.Now(), time.Time{}); errWrite != nil {
+	if errWrite := logger.writeNonStreamingLog(&output, "/v1/responses", http.MethodGet, nil, nil, "", []byte("Event: websocket.error\n"), nil, nil, nil, nil, nil, nil, nil, capture.ResponseDiagnostics(), http.StatusSwitchingProtocols, nil, []byte("not a websocket response body"), nil, time.Now(), time.Time{}, RequestTimingSnapshot{}); errWrite != nil {
 		t.Fatal(errWrite)
 	}
 	_, response, found := strings.Cut(output.String(), "=== RESPONSE ===\n")
