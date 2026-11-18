@@ -138,6 +138,39 @@ func TestAntigravityDynamicRegistrationExclusions(t *testing.T) {
 	}
 }
 
+func TestAntigravityDynamicRegistrationExclusionsMatchAliases(t *testing.T) {
+	const upstream = "gemini-3.1-flash-lite"
+	const alias = "flash-lite-alias"
+	hints := antigravityModelCapabilityHints{ModelIDs: map[string]struct{}{upstream: {}}}
+	for _, tc := range []struct {
+		name      string
+		excluded  []string
+		wantAlias bool
+	}{
+		{name: "alias excluded", excluded: []string{alias}},
+		{name: "alias wildcard excluded", excluded: []string{"flash-lite-*"}},
+		{name: "upstream excluded", excluded: []string{upstream}},
+		{name: "unrelated excluded", excluded: []string{"other-model"}, wantAlias: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &Service{cfg: &config.Config{
+				OAuthExcludedModels: map[string][]string{"antigravity": tc.excluded},
+				OAuthModelAlias:     map[string][]config.OAuthModelAlias{"antigravity": {{Name: upstream, Alias: alias}}},
+			}}
+			auth := antigravityTestAuth(t.Name(), "http://127.0.0.1:1")
+
+			present := make(map[string]bool)
+			for _, model := range svc.antigravityModelsForHints(auth, hints) {
+				present[model.ID] = true
+			}
+
+			if present[alias] != tc.wantAlias || present[upstream] {
+				t.Fatalf("models = %v, want alias present=%t and upstream absent", present, tc.wantAlias)
+			}
+		})
+	}
+}
+
 func TestAntigravityDynamicRegistrationBatches(t *testing.T) {
 	resetAntigravityCapabilityCache()
 	t.Cleanup(resetAntigravityCapabilityCache)

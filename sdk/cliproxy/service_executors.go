@@ -741,6 +741,7 @@ func (s *Service) tryRegisterPluginModelsForAuthWithConfigFenced(ctx context.Con
 	}
 	models := applyExcludedModels(result.Models, activeExcluded)
 	models = applyOAuthModelAliasForAuth(cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
+	models = applyExcludedModels(models, activeExcluded)
 	publicationFence := fence
 	if pluginAuthCommitted {
 		// A plugin-returned auth update is a deliberate identity transition,

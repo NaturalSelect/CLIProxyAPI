@@ -154,7 +154,7 @@ func TestPluginStaticModelAvailabilityFollowsCredentials(t *testing.T) {
 	assertAvailable("last supporting credential removed", false, false)
 }
 
-func TestRegisterModelsForAuth_PluginStaticExclusionsDoNotMatchNativeAliases(t *testing.T) {
+func TestRegisterModelsForAuth_ExclusionsMatchNativeAliases(t *testing.T) {
 	const provider = "kimi"
 	const nativeAlias = "native-alias"
 	catalog := registry.GetKimiModels()
@@ -173,9 +173,9 @@ func TestRegisterModelsForAuth_PluginStaticExclusionsDoNotMatchNativeAliases(t *
 
 	service.registerModelsForAuth(t.Context(), auth)
 
-	// Exclusions match original model IDs, so an alias named like a rule stays visible.
-	if !reg.ClientSupportsModel(auth.ID, nativeAlias) || reg.ClientSupportsModel(auth.ID, pluginStaticGlobalModel) {
-		t.Fatalf("models = (%s:%t, %s:%t), want native alias kept and plugin model excluded", nativeAlias, reg.ClientSupportsModel(auth.ID, nativeAlias), pluginStaticGlobalModel, reg.ClientSupportsModel(auth.ID, pluginStaticGlobalModel))
+	// Exclusions also match client-visible alias IDs produced by oauth-model-alias.
+	if reg.ClientSupportsModel(auth.ID, nativeAlias) || reg.ClientSupportsModel(auth.ID, pluginStaticGlobalModel) {
+		t.Fatalf("models = (%s:%t, %s:%t), want native alias and plugin model excluded", nativeAlias, reg.ClientSupportsModel(auth.ID, nativeAlias), pluginStaticGlobalModel, reg.ClientSupportsModel(auth.ID, pluginStaticGlobalModel))
 	}
 }
 

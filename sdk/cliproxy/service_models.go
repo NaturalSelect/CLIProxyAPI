@@ -322,6 +322,8 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 		return true
 	}
 	models = applyOAuthModelAliasForAuth(cfg, provider, authKind, a.Attributes, models)
+	// NOTE: Exclusions must also match client-visible alias IDs, which only exist after alias expansion.
+	models = applyExcludedModels(models, excluded)
 	if ctx.Err() != nil {
 		return true
 	}
