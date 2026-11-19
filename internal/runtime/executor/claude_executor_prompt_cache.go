@@ -66,6 +66,7 @@ func NewClaudeExecutorWithPromptCacheRuntime(
 		// Per-request ForAPIKey copies share these stores, so allocate them once here.
 		oauthToolAliases: &claudeOAuthToolAliasStore{},
 		threadBetas:      &helps.ClaudeThreadBetaStore{},
+		advisorOwners:    helps.NewClaudeAdvisorOwnerStore(),
 	}
 }
 
