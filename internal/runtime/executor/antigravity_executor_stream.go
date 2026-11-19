@@ -339,6 +339,16 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				}
 				return
 			}
+			if blockMsg, blocked := geminiPromptBlockErrorMessage(payload); blocked {
+				streamErr = statusErr{code: http.StatusBadGateway, msg: blockMsg}
+				stopDeliverySupport()
+				helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
+				select {
+				case out <- cliproxyexecutor.StreamChunk{Err: streamErr}:
+				case <-ctx.Done():
+				}
+				return
+			}
 			emitTranslatedPayload := func(p []byte) bool {
 				// Filter usage metadata for all models after block classification
 				// so only the terminal chunk retains client-visible usage statistics.

@@ -210,6 +210,14 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 		reporter.PublishFailureWithDetail(ctx, antiDetail, err)
 		return cliproxyexecutor.Response{}, err
 	}
+	if blockMsg, blocked := geminiPromptBlockErrorMessage(bodyBytes); blocked {
+		antiDetail := helps.ParseAntigravityUsage(bodyBytes)
+		helps.ApplyGeminiRequestImageConfig(&antiDetail, requestPayload)
+		err = statusErr{code: http.StatusBadGateway, msg: blockMsg}
+		helps.RecordAPIResponseError(ctx, e.cfg, err)
+		reporter.PublishFailureWithDetail(ctx, antiDetail, err)
+		return cliproxyexecutor.Response{}, err
+	}
 	if len(replayRequestPayload) == 0 {
 		replayRequestPayload = requestPayload
 	}
@@ -517,6 +525,17 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 			pendingFilterPayload = bytes.Clone(payload)
 			pendingFilterMsg = filterMsg
 			continue
+		}
+		if blockMsg, blocked := geminiPromptBlockErrorMessage(payload); blocked {
+			if errClose := httpResp.Body.Close(); errClose != nil {
+				log.Errorf("antigravity executor: close response body error: %v", errClose)
+			}
+			antiDetail := helps.ParseAntigravityUsage(payload)
+			helps.ApplyGeminiRequestImageConfig(&antiDetail, requestPayload)
+			err = statusErr{code: http.StatusBadGateway, msg: blockMsg}
+			helps.RecordAPIResponseError(ctx, e.cfg, err)
+			reporter.PublishFailureWithDetail(ctx, antiDetail, err)
+			return resp, err
 		}
 		reporter.ObserveResponseModel(payload)
 		rawPayloads = append(rawPayloads, bytes.Clone(payload))

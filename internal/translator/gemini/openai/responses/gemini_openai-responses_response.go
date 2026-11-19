@@ -1966,9 +1966,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 				}
 			}
 		}
-		if len(outputs) > 0 {
-			_ = completedDoc.SetRawBytes("response.output", translatorcommon.JoinRawArray(outputs))
-		}
+		_ = completedDoc.SetRawBytes("response.output", translatorcommon.JoinRawArray(outputs))
 		if st.WebSearchDone {
 			_ = completedDoc.Set("response.tool_usage.web_search.num_requests", 1)
 		}
@@ -2607,9 +2605,7 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 		wsAppended = true
 	}
 
-	if len(outputs) > 0 {
-		_ = respDoc.SetRawBytes("output", translatorcommon.JoinRawArray(outputs))
-	}
+	_ = respDoc.SetRawBytes("output", translatorcommon.JoinRawArray(outputs))
 
 	if hasGrounding {
 		_ = respDoc.Set("tool_usage.web_search.num_requests", 1)

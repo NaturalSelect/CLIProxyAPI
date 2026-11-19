@@ -1890,6 +1890,39 @@ func TestConvertGeminiResponseToOpenAIResponses_NonNormalFinishReasonsMapToIncom
 	}
 }
 
+func TestConvertGeminiResponseToOpenAIResponses_EmptyOutputKeepsOutputArray(t *testing.T) {
+	ctx := context.Background()
+	req := []byte(`{"model":"gemini-4-argon"}`)
+	body := `{"candidates":[{"content":{"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":20578,"totalTokenCount":20578},"modelVersion":"gemini-4-argon","responseId":"resp_empty"}`
+
+	t.Run("nonstream", func(t *testing.T) {
+		out := ConvertGeminiResponseToOpenAIResponsesNonStream(ctx, "gemini-4-argon", req, nil, []byte(body), nil)
+		output := ojson.GetBytesNoCopy(out, "output")
+		if !output.Exists() || !output.IsArray() || len(output.Array()) != 0 {
+			t.Fatalf("non-stream output = %q, want empty array; payload=%s", output.Raw, out)
+		}
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		var param any
+		var sawCompleted bool
+		for _, out := range ConvertGeminiResponseToOpenAIResponses(ctx, "gemini-4-argon", req, nil, []byte("data: "+body), &param) {
+			event, data := parseSSEEvent(t, out)
+			if event != "response.completed" {
+				continue
+			}
+			sawCompleted = true
+			output := data.Get("response.output")
+			if !output.Exists() || !output.IsArray() || len(output.Array()) != 0 {
+				t.Fatalf("stream response.output = %q, want empty array; event=%s", output.Raw, out)
+			}
+		}
+		if !sawCompleted {
+			t.Fatal("expected response.completed event")
+		}
+	})
+}
+
 func TestConvertGeminiResponseToOpenAIResponses_InputBufferReuse(t *testing.T) {
 	ctx := context.Background()
 	req := []byte(`{"model":"gemini-2.5-flash","tools":[{"googleSearch":{}}]}`)
