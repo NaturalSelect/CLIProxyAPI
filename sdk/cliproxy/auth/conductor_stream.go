@@ -134,8 +134,7 @@ func newStreamHeaderError(err error, headers http.Header) error {
 		return err
 	}
 	if existing, ok := err.(*streamHeaderError); ok && existing != nil {
-		existing.headers = cloneHTTPHeader(headers)
-		return existing
+		return &streamHeaderError{cause: existing.cause, headers: cloneHTTPHeader(headers)}
 	}
 	return &streamHeaderError{cause: err, headers: cloneHTTPHeader(headers)}
 }
@@ -719,17 +718,29 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			applyRequestScopedActionToResult(action, okAction, &result)
 			m.recordExecutionResult(ctx, result, auth, ephemeralResult)
 			errStream = annotateTrustedRetryAfterByHint(errStream)
+			if okAction && !isRequestStopError(errStream) && !isTOSViolationError(errStream) && !isRequestScopedStop(action, okAction) {
+				errStream = wrapRequestScopedContinueError(errStream)
+			}
 			if hasUpstreamExecutionAttempt(errStream) {
 				syncPreferredUpstreamError(&upstreamErr, errStream)
 			} else if preRefreshStreamErr != nil {
 				syncPreferredUpstreamError(&upstreamErr, preRefreshStreamErr)
 			}
-			if isRequestTerminatedError(errStream) || isRequestStopError(errStream) || isTOSViolationError(errStream) {
+			if isRequestStopError(errStream) {
+				return nil, errStream
+			}
+			if isTOSViolationError(errStream) {
+				if isRequestScopedStop(action, okAction) {
+					return nil, wrapRequestStopError(errStream)
+				}
 				return nil, errStream
 			}
 			if okAction {
 				if isRequestScopedStop(action, okAction) {
 					return nil, wrapRequestStopError(errStream)
+				}
+				if isRequestTerminatedError(errStream) {
+					return nil, errStream
 				}
 				lastErr = errStream
 				if result.CredentialScope {
@@ -737,7 +748,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				}
 				continue
 			}
-			if isRequestInvalidError(errStream) || cliproxyexecutor.IsUpstreamWebsocketTurnError(errStream) {
+			if isTerminalRequestStopError(errStream) || isRequestInvalidError(errStream) || cliproxyexecutor.IsUpstreamWebsocketTurnError(errStream) {
 				return nil, errStream
 			}
 			lastErr = errStream
@@ -831,14 +842,33 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				applyRequestScopedActionToResult(action, okAction, &result)
 				m.recordExecutionResult(ctx, result, auth, ephemeralResult)
 				bootstrapErr = annotateTrustedRetryAfterByHint(bootstrapErr)
+				if isRequestStopError(bootstrapErr) {
+					headerErr := newStreamHeaderError(bootstrapErr, streamResult.Headers)
+					syncPreferredUpstreamError(&upstreamErr, headerErr)
+					discardStreamChunks(streamResult.Chunks)
+					return nil, headerErr
+				}
+				if isTOSViolationError(bootstrapErr) {
+					headerErr := newStreamHeaderError(bootstrapErr, streamResult.Headers)
+					syncPreferredUpstreamError(&upstreamErr, headerErr)
+					discardStreamChunks(streamResult.Chunks)
+					if isRequestScopedStop(action, okAction) {
+						return nil, wrapRequestStopError(headerErr)
+					}
+					return nil, headerErr
+				}
+				if isRequestScopedStop(action, okAction) {
+					headerErr := newStreamHeaderError(bootstrapErr, streamResult.Headers)
+					syncPreferredUpstreamError(&upstreamErr, headerErr)
+					discardStreamChunks(streamResult.Chunks)
+					return nil, wrapRequestStopError(headerErr)
+				}
+				bootstrapErr = wrapRequestScopedContinueError(bootstrapErr)
 				bootstrapErr = newStreamBootstrapError(bootstrapErr, streamResult.Headers)
 				syncPreferredUpstreamError(&upstreamErr, bootstrapErr)
 				discardStreamChunks(streamResult.Chunks)
-				if isRequestTerminatedError(bootstrapErr) || isRequestStopError(bootstrapErr) || isTOSViolationError(bootstrapErr) {
+				if isRequestTerminatedError(bootstrapErr) {
 					return nil, bootstrapErr
-				}
-				if isRequestScopedStop(action, okAction) {
-					return nil, wrapRequestStopError(bootstrapErr)
 				}
 				lastErr = bootstrapErr
 				if result.CredentialScope {
@@ -847,7 +877,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				}
 				continue
 			}
-			if isRequestTerminatedError(bootstrapErr) || isRequestStopError(bootstrapErr) || isTOSViolationError(bootstrapErr) || isRequestInvalidError(bootstrapErr) || cliproxyexecutor.IsUpstreamWebsocketTurnError(bootstrapErr) {
+			if isTerminalRequestStopError(bootstrapErr) || isTOSViolationError(bootstrapErr) || isRequestInvalidError(bootstrapErr) || cliproxyexecutor.IsUpstreamWebsocketTurnError(bootstrapErr) {
 				rerr := resultErrorFromError(bootstrapErr)
 				result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, RouteModel: routeModel, Success: false, Error: rerr, ResponseHeaders: streamResult.Headers, ObservedAt: streamObservedAt, Options: execOpts, AccessToken: accessToken, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch, ExecutionSeq: executionSeq}
 				result.RetryAfter = retryAfterFromError(bootstrapErr)
