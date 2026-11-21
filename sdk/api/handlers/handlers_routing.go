@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/MoeForge/moego/ojson"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/copilot"
 	. "github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	requestlogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
@@ -201,13 +203,13 @@ func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowIma
 	}
 
 	providers = util.GetProviderName(baseModel)
-	// Fallback: if baseModel has no provider but differs from resolvedModelName,
-	// try using the full model name. This handles edge cases where custom models
-	// may be registered with their full suffixed name (e.g., "my-model(8192)").
-	// Evaluated in Story 11.8: This fallback is intentionally preserved to support
-	// custom model registrations that include thinking suffixes.
-	if len(providers) == 0 && baseModel != resolvedModelName {
-		providers = util.GetProviderName(resolvedModelName)
+	if baseModel != resolvedModelName {
+		exactProviders := util.GetProviderName(resolvedModelName)
+		// An explicitly registered Copilot route takes precedence over base
+		// inference. Otherwise retain base-first routing for existing providers.
+		if len(providers) == 0 || slices.Contains(exactProviders, copilot.Provider) {
+			providers = exactProviders
+		}
 	}
 
 	if len(providers) == 0 {
