@@ -1375,6 +1375,7 @@ type statusErr struct {
 	msg                string
 	retryAfter         *time.Duration
 	headers            http.Header
+	requestScoped      bool
 	credentialScoped   bool
 	streamTruncated    bool
 	transientRateLimit bool
@@ -1400,6 +1401,8 @@ func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
 // (e.g. Claude's Anthropic-Ratelimit-Unified-*) from error responses like 429s, which
 // otherwise carry no *http.Response through the executor's error path.
 func (e statusErr) Headers() http.Header { return e.headers }
+
+func (e statusErr) IsRequestScoped() bool { return e.requestScoped }
 
 func (e statusErr) IsCredentialScoped() bool { return e.credentialScoped }
 
