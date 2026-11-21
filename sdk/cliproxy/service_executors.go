@@ -754,7 +754,7 @@ func (s *Service) tryRegisterPluginModelsForAuthWithConfigFenced(ctx context.Con
 	}
 	models := result.Models
 	if _, _, compat := openAICompatInfoFromAuth(activeAuth); providerKey == copilot.Provider && !compat {
-		models = copilotPublicPluginModels(models)
+		models = s.copilotPublicPluginModels(activeAuth, models)
 	}
 	models = applyExcludedModels(models, activeExcluded)
 	models = applyOAuthModelAliasForAuth(cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
