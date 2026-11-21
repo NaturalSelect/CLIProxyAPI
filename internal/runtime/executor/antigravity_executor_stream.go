@@ -179,7 +179,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			logAntigravityReasoningReplayDegraded(replayScope, "invalidate", errClear)
 		}
 		if httpResp.StatusCode == http.StatusForbidden {
-			e.applyAntigravityTOSState(e.cfg, auth, bodyBytes)
+			e.applyAntigravityForbiddenState(e.cfg, auth, bodyBytes)
 		}
 		err = newAntigravityStatusErr(httpResp.StatusCode, bodyBytes)
 		return nil, err
@@ -300,7 +300,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 						logAntigravityReasoningReplayDegraded(replayScope, "invalidate", errClear)
 					}
 					if statusCode == http.StatusForbidden {
-						e.applyAntigravityTOSState(e.cfg, auth, payload)
+						e.applyAntigravityForbiddenState(e.cfg, auth, payload)
 					}
 					streamErr = newAntigravityStatusErr(statusCode, payload)
 				}
