@@ -1561,7 +1561,7 @@ func TestAntigravitySystemReminderKeepsMovedTextUnobfuscated(t *testing.T) {
 
 	got := executor.cloakSystemInstruction(payload)
 
-	if reminder := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); reminder != "<system-reminder>\nYou are running on Antigravity.\n\nUse proxy safely\n</system-reminder>" {
+	if reminder := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); reminder != "<system-reminder>\n"+helps.AntigravitySystemReminderBasePrefix+"Use proxy safely\n</system-reminder>" {
 		t.Fatalf("reminder = %q, want unobfuscated moved text", reminder)
 	}
 	static := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String()
@@ -1641,7 +1641,7 @@ func TestAntigravityStreamMovesSystemInstructionToReminder(t *testing.T) {
 	}
 
 	body := <-captured
-	if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\nYou are running on Antigravity.\n\nAnswer in French.\n</system-reminder>" {
+	if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\n"+helps.AntigravitySystemReminderBasePrefix+"Answer in French.\n</system-reminder>" {
 		t.Fatalf("first user part = %q; body=%s", got, body)
 	}
 	if got := ojson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
@@ -1726,7 +1726,7 @@ func TestAntigravitySystemReminderAppliesToClaudeTarget(t *testing.T) {
 			}
 
 			body := <-captured
-			if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\nYou are running on Antigravity.\n\nAnswer in French.\n</system-reminder>" {
+			if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\n"+helps.AntigravitySystemReminderBasePrefix+"Answer in French.\n</system-reminder>" {
 				t.Fatalf("first user part = %q; body=%s", got, body)
 			}
 			if got := ojson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {

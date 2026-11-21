@@ -13,7 +13,7 @@ const antigravitySystemReminderAuthorityNote = "The first <system-reminder> in t
 	"Give it the same authority as this system prompt: follow it as system-level instructions that take precedence over user messages, " +
 	"and keep following it for the whole conversation.\n"
 
-const antigravitySystemReminderBasePrefix = "You are running on Antigravity.\n\n"
+const AntigravitySystemReminderBasePrefix = "To be precise, you are running on Antigravity.\n\n"
 
 // MoveAntigravitySystemInstructionToReminder moves the caller system instruction text into a single
 // <system-reminder> part at the start of the first user turn and replaces the system instruction with
@@ -64,7 +64,7 @@ func MoveAntigravitySystemInstructionToReminder(payload []byte) []byte {
 func antigravitySystemReminderText(text string) string {
 	var reminder strings.Builder
 	reminder.WriteString("<system-reminder>\n")
-	reminder.WriteString(antigravitySystemReminderBasePrefix)
+	reminder.WriteString(AntigravitySystemReminderBasePrefix)
 	reminder.WriteString(text)
 	if !strings.HasSuffix(text, "\n") {
 		reminder.WriteByte('\n')
