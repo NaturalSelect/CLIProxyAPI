@@ -1098,7 +1098,7 @@ remote-management:
   secret-key: local-repro-only
   disable-control-panel: true
 codex:
-  identity-confuse: false
+  retired-setting: false
 `
 	if errWrite := os.WriteFile(path, []byte(raw), 0o600); errWrite != nil {
 		t.Fatal(errWrite)
@@ -1256,7 +1256,7 @@ codex:
 
 	// Quoted YAML section key ("codex":) must still emit a warning on persisted PATCH.
 	quotedPath := filepath.Join(t.TempDir(), "quoted-config.yaml")
-	quotedRaw := "port: 18317\n\"codex\":\n  identity-confuse: false\n"
+	quotedRaw := "port: 18317\n\"codex\":\n  retired-setting: false\n"
 	if errWriteQuoted := os.WriteFile(quotedPath, []byte(quotedRaw), 0o600); errWriteQuoted != nil {
 		t.Fatal(errWriteQuoted)
 	}
@@ -1304,7 +1304,7 @@ codex:
 	// comment inside an unknown section is trimmed when archiving FootComment;
 	// PATCH must still emit one migration warning.
 	trailingPath := filepath.Join(t.TempDir(), "trailing-ws-config.yaml")
-	trailingRaw := "port: 18317\ncodex:\n  identity-confuse: false # note  \u00a0\n"
+	trailingRaw := "port: 18317\ncodex:\n  retired-setting: false # note  \u00a0\n"
 	if errWriteTrailing := os.WriteFile(trailingPath, []byte(trailingRaw), 0o600); errWriteTrailing != nil {
 		t.Fatal(errWriteTrailing)
 	}

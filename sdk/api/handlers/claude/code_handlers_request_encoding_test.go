@@ -158,8 +158,13 @@ func TestClaudeRoutesDecodeRequestBody(t *testing.T) {
 			}
 			// The executor must see the same bytes a plain request delivers, and the
 			// decoded body must not travel with a stale Content-Encoding header.
-			if !bytes.Equal(gotReq.Payload, plain) {
-				t.Fatalf("executor payload = %q, want %q", gotReq.Payload, plain)
+			// NOTE: The handler adds a derived metadata.user_id to every Claude request.
+			wantPayload, _, errIdentity := coreauth.ResolveClaudeRequestIdentity(plain)
+			if errIdentity != nil {
+				t.Fatalf("resolve expected identity: %v", errIdentity)
+			}
+			if !bytes.Equal(gotReq.Payload, wantPayload) {
+				t.Fatalf("executor payload = %q, want %q", gotReq.Payload, wantPayload)
 			}
 			if gotOpts.Headers != nil && gotOpts.Headers.Get("Content-Encoding") != "" {
 				t.Fatalf("executor options still carry Content-Encoding %q", gotOpts.Headers.Get("Content-Encoding"))
