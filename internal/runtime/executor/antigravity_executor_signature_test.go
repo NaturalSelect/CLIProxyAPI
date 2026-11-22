@@ -1644,7 +1644,7 @@ func TestAntigravityStreamMovesSystemInstructionToReminder(t *testing.T) {
 	if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<EPHEMERAL_MESSAGE>\n"+helps.AntigravitySystemReminderBasePrefix+"Answer in French.\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("first user part = %q; body=%s", got, body)
 	}
-	if got := ojson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
+	if got := ojson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "<USER_REQUEST>\nhello\n</USER_REQUEST>" {
 		t.Fatalf("second user part = %q, want hello; body=%s", got, body)
 	}
 	if got := ojson.GetBytes(body, "request.systemInstruction.parts.0.text").String(); !strings.HasPrefix(got, "<identity>") || strings.Contains(got, "Answer in French.") {
@@ -1729,7 +1729,7 @@ func TestAntigravitySystemReminderAppliesToClaudeTarget(t *testing.T) {
 			if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<EPHEMERAL_MESSAGE>\n"+helps.AntigravitySystemReminderBasePrefix+"Answer in French.\n</EPHEMERAL_MESSAGE>" {
 				t.Fatalf("first user part = %q; body=%s", got, body)
 			}
-			if got := ojson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
+			if got := ojson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "<USER_REQUEST>\nhello\n</USER_REQUEST>" {
 				t.Fatalf("second user part = %q, want hello; body=%s", got, body)
 			}
 			if got := ojson.GetBytes(body, "request.systemInstruction.parts.0.text").String(); !strings.HasPrefix(got, "<identity>") || strings.Contains(got, "Answer in French.") {

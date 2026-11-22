@@ -1300,6 +1300,7 @@ oauth:
       # system-reminder: false        # optional: move the real system prompt into an <EPHEMERAL_MESSAGE> at the start of the
                                     # first user turn; systemInstruction keeps only the Antigravity identity plus the stock
                                     # note telling the model to follow such messages strictly. Moved text is not obfuscated.
+                                    # User text in every user turn is wrapped in <USER_REQUEST>, as the Antigravity client does.
       # sensitive-words:              # optional: words to obfuscate with combining grapheme joiners (U+034F) in system instructions
       #   - "API"
       #   - "proxy"

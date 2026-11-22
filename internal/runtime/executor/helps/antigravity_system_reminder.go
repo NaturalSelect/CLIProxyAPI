@@ -17,9 +17,16 @@ const antigravityEphemeralMessageNote = "<ephemeral_message>\n" +
 
 const AntigravitySystemReminderBasePrefix = "To be precise, you are running on Antigravity.\n\n"
 
+const (
+	antigravityUserRequestTag   = "<USER_REQUEST>"
+	antigravityUserRequestOpen  = antigravityUserRequestTag + "\n"
+	antigravityUserRequestClose = "\n</USER_REQUEST>"
+)
+
 // MoveAntigravitySystemInstructionToReminder moves the caller system instruction text into a single
 // <EPHEMERAL_MESSAGE> part at the start of the first user turn and replaces the system instruction with
-// the static Antigravity prompt that tells the model to follow such messages strictly.
+// the static Antigravity prompt that tells the model to follow such messages strictly. Real user text is
+// wrapped in <USER_REQUEST> because the static prompt tells the model that user requests come that way.
 func MoveAntigravitySystemInstructionToReminder(payload []byte) []byte {
 	doc := ojson.NewDoc(payload)
 	var texts, extraParts []string
@@ -49,6 +56,8 @@ func MoveAntigravitySystemInstructionToReminder(payload []byte) []byte {
 		}
 	}
 
+	wrapAntigravityUserRequests(doc)
+
 	static := antigravityIdentityPrefix
 	if len(movable) > 0 {
 		static += antigravityEphemeralMessageNote
@@ -61,6 +70,72 @@ func MoveAntigravitySystemInstructionToReminder(payload []byte) []byte {
 	// Deleting a missing key is not an error; any other failure leaves the document unchanged.
 	_ = doc.Delete("request.system_instruction")
 	return doc.Bytes()
+}
+
+func UnwrapAntigravityUserRequest(text string) string {
+	rest, ok := strings.CutPrefix(text, antigravityUserRequestOpen)
+	if !ok {
+		return text
+	}
+	return strings.TrimSuffix(rest, antigravityUserRequestClose)
+}
+
+// NOTE: One envelope per user turn spans its first to last real text part, so images and files stay inside it.
+func wrapAntigravityUserRequests(doc *ojson.Doc) {
+	contents := doc.Get("request.contents")
+	if !contents.IsArray() {
+		return
+	}
+
+	type textEdit struct{ path, text string }
+	var edits []textEdit
+	for idx, turn := range contents.Array() {
+		parts := turn.Get("parts")
+		if turn.Get("role").String() != "user" || !parts.IsArray() {
+			continue
+		}
+		items := parts.Array()
+		first, last := -1, -1
+		for partIdx, item := range items {
+			if !isAntigravityUserRequestText(item.Get("text")) {
+				continue
+			}
+			if first < 0 {
+				first = partIdx
+			}
+			last = partIdx
+		}
+		if first < 0 {
+			continue
+		}
+
+		base := "request.contents." + strconv.Itoa(idx) + ".parts."
+		firstText := items[first].Get("text").String()
+		if first == last {
+			edits = append(edits, textEdit{base + strconv.Itoa(first) + ".text", antigravityUserRequestOpen + firstText + antigravityUserRequestClose})
+			continue
+		}
+		edits = append(edits,
+			textEdit{base + strconv.Itoa(first) + ".text", antigravityUserRequestOpen + firstText},
+			textEdit{base + strconv.Itoa(last) + ".text", items[last].Get("text").String() + antigravityUserRequestClose},
+		)
+	}
+	for _, edit := range edits {
+		setAntigravityRaw(doc, edit.path, marshalAntigravityString(edit.text))
+	}
+}
+
+func isAntigravityUserRequestText(text ojson.Result) bool {
+	if text.Type != ojson.String {
+		return false
+	}
+	value := text.String()
+	if strings.TrimSpace(value) == "" {
+		return false
+	}
+	return !strings.HasPrefix(value, "<system-reminder>") &&
+		!strings.HasPrefix(value, "<EPHEMERAL_MESSAGE>") &&
+		!strings.HasPrefix(value, antigravityUserRequestTag)
 }
 
 func antigravitySystemReminderText(text string) string {
@@ -126,13 +201,17 @@ func setAntigravityRaw(doc *ojson.Doc, path, raw string) {
 	_ = doc.SetRaw(path, raw)
 }
 
-// NOTE: encoding/json escapes "<" and ">" by default; the reminder tags must stay literal.
-func marshalAntigravityTextPart(text string) string {
+// NOTE: encoding/json escapes "<" and ">" by default; the injected tags must stay literal.
+func marshalAntigravityString(text string) string {
 	var encoded bytes.Buffer
 	encoder := json.NewEncoder(&encoded)
 	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(map[string]string{"text": text}); err != nil {
-		return `{"text":""}`
+	if err := encoder.Encode(text); err != nil {
+		return `""`
 	}
 	return strings.TrimSuffix(encoded.String(), "\n")
+}
+
+func marshalAntigravityTextPart(text string) string {
+	return `{"text":` + marshalAntigravityString(text) + `}`
 }

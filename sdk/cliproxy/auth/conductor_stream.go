@@ -243,7 +243,7 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 						failed = true
 						return false
 					}
-					if !isRequestScopedError(chunk.Err) {
+					if !isRequestScopedError(chunk.Err) && (errors.Is(chunk.Err, context.Canceled) || errors.Is(chunk.Err, context.DeadlineExceeded)) {
 						failed = true
 						return false
 					}

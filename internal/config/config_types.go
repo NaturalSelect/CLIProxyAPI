@@ -322,7 +322,7 @@ type AntigravityConfig struct {
 	// masking the real client identity from upstream content filtering.
 	IdentityConfuse bool `yaml:"identity-confuse" json:"identity-confuse"`
 
-	// SystemReminder moves the caller system instruction into an <EPHEMERAL_MESSAGE> block at the start of the first user turn.
+	// SystemReminder moves the caller system instruction into an <EPHEMERAL_MESSAGE> block at the start of the first user turn and wraps user text in <USER_REQUEST>.
 	SystemReminder bool `yaml:"system-reminder" json:"system-reminder"`
 
 	// SensitiveWords is a list of words to obfuscate with invisible combining grapheme joiners in system instructions.
