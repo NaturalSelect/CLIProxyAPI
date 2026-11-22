@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/copilot"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
@@ -753,12 +752,15 @@ func (s *Service) tryRegisterPluginModelsForAuthWithConfigFenced(ctx context.Con
 		return true, true
 	}
 	models := result.Models
-	if _, _, compat := openAICompatInfoFromAuth(activeAuth); providerKey == copilot.Provider && !compat {
+	if _, _, compat := openAICompatInfoFromAuth(activeAuth); providerKey == "copilot" && !compat {
 		models = s.copilotPublicPluginModels(activeAuth, models)
 	}
 	models = applyExcludedModels(models, activeExcluded)
 	models = applyOAuthModelAliasForAuth(cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
-	models = applyExcludedModels(models, activeExcluded)
+	// NOTE: Copilot keeps upstream semantics, where an alias may reuse an excluded native route name.
+	if providerKey != "copilot" {
+		models = applyExcludedModels(models, activeExcluded)
+	}
 	publicationFence := fence
 	if pluginAuthCommitted {
 		// A plugin-returned auth update is a deliberate identity transition,
