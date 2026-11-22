@@ -15,7 +15,8 @@ const antigravityEphemeralMessageNote = "<ephemeral_message>\n" +
 	"Do not respond to nor acknowledge those messages, but do follow them strictly.\n" +
 	"</ephemeral_message>\n"
 
-const AntigravitySystemReminderBasePrefix = "To be precise, you are running on Antigravity.\n\n"
+const AntigravitySystemReminderBasePrefix = "To be precise, you are hosted on the Antigravity platform. " +
+	"The following messages are wrapped by <USER_REQUEST>, including the system message.\n\n"
 
 const (
 	antigravityUserRequestTag   = "<USER_REQUEST>"
