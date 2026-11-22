@@ -18,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	homekv "github.com/router-for-me/CLIProxyAPI/v8/internal/home"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/kvstore"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
@@ -38,7 +39,9 @@ func resetAntigravityCreditsRetryState() {
 	antigravityCreditsFailureByAuth.Clear()
 	antigravityShortCooldownByAuth.Clear()
 	antigravityCreditsBalanceByAuth.Clear()
+	antigravityCreditsCurrentScope.Clear()
 	antigravityCreditsHintRefreshByID.Clear()
+	antigravityCreditsRefreshRegistries.Clear()
 }
 
 type closeSignalReadCloser struct {
@@ -116,6 +119,15 @@ func (c *fakeAntigravityKVClient) KVSetNX(_ context.Context, key string, value [
 	return false, nil
 }
 
+func (c *fakeAntigravityKVClient) KVCompareAndSwap(_ context.Context, key string, expected []byte, expectedExists bool, value []byte, _ time.Duration) (bool, error) {
+	current, ok := c.values[key]
+	if ok != expectedExists || (expectedExists && string(current) != string(expected)) {
+		return false, nil
+	}
+	c.values[key] = append([]byte(nil), value...)
+	return true, nil
+}
+
 func (c *fakeAntigravityKVClient) KVDel(_ context.Context, keys ...string) (int64, error) {
 	c.delCount++
 	if c.delErr != nil {
@@ -131,14 +143,38 @@ func (c *fakeAntigravityKVClient) KVDel(_ context.Context, keys ...string) (int6
 	return deleted, nil
 }
 
+func (c *fakeAntigravityKVClient) KVExpire(context.Context, string, time.Duration) (bool, error) {
+	return false, nil
+}
+
+func (c *fakeAntigravityKVClient) KVTTL(context.Context, string) (time.Duration, bool, error) {
+	return 0, false, nil
+}
+
+func (c *fakeAntigravityKVClient) KVIncrBy(context.Context, string, int64) (int64, error) {
+	return 0, nil
+}
+
+func (c *fakeAntigravityKVClient) KVMGet(context.Context, ...string) ([][]byte, []bool, error) {
+	return nil, nil, nil
+}
+
+func (c *fakeAntigravityKVClient) KVMSet(context.Context, map[string][]byte) error {
+	return nil
+}
+
 func useFakeAntigravityKVClient(t *testing.T, client *fakeAntigravityKVClient, homeMode bool, errClient error) {
 	t.Helper()
 	previous := currentAntigravityKVClient
 	currentAntigravityKVClient = func() (antigravityKVClient, bool, error) {
 		return client, homeMode, errClient
 	}
+	kvstore.RegisterHomeProvider(func() (kvstore.KVClient, bool, error) {
+		return client, homeMode, errClient
+	})
 	t.Cleanup(func() {
 		currentAntigravityKVClient = previous
+		kvstore.RegisterHomeProvider(func() (kvstore.KVClient, bool, error) { return nil, false, nil })
 	})
 }
 
@@ -682,8 +718,8 @@ func TestAntigravityAuthHasCreditsRequiredHomeBalanceUsesKV(t *testing.T) {
 	if ok {
 		t.Fatalf("antigravityAuthHasCreditsRequired() = true, want Home KV balance to win over local cache")
 	}
-	if client.getCount != 1 {
-		t.Fatalf("KVGet count = %d, want 1", client.getCount)
+	if client.getCount != 2 {
+		t.Fatalf("KVGet count = %d, want 2 (hint then balance)", client.getCount)
 	}
 }
 
@@ -694,7 +730,7 @@ func TestStoreAntigravityCreditsBalanceBestEffortHomeKV(t *testing.T) {
 	client := newFakeAntigravityKVClient()
 	useFakeAntigravityKVClient(t, client, true, nil)
 
-	storeAntigravityCreditsBalanceBestEffort(authID, antigravityCreditsBalance{
+	storeAntigravityCreditsBalanceBestEffort(&cliproxyauth.Auth{ID: authID}, antigravityCreditsBalance{
 		CreditAmount:    25000,
 		MinCreditAmount: 50,
 		Known:           true,
@@ -1010,7 +1046,7 @@ func TestAntigravityManagerExecuteAndStream_ToppedUpCreditsRecoverDuringQuotaCoo
 				cliproxyauth.SetAntigravityCreditsHint(authID, cliproxyauth.AntigravityCreditsHint{})
 			})
 
-			if _, errRegister := manager.Register(context.Background(), &cliproxyauth.Auth{
+			registered, errRegister := manager.Register(context.Background(), &cliproxyauth.Auth{
 				ID:       authID,
 				Provider: "antigravity",
 				Attributes: map[string]string{
@@ -1021,7 +1057,8 @@ func TestAntigravityManagerExecuteAndStream_ToppedUpCreditsRecoverDuringQuotaCoo
 					"project_id":   "project-1",
 					"expired":      time.Now().Add(1 * time.Hour).Format(time.RFC3339),
 				},
-			}); errRegister != nil {
+			})
+			if errRegister != nil {
 				t.Fatalf("register auth: %v", errRegister)
 			}
 
@@ -1041,7 +1078,7 @@ func TestAntigravityManagerExecuteAndStream_ToppedUpCreditsRecoverDuringQuotaCoo
 				CreditAmount:    100,
 				MinCreditAmount: 50,
 				UpdatedAt:       time.Now(),
-			})
+			}, registered.RegistrationEpoch)
 			if stream {
 				if _, errStream := manager.ExecuteStream(context.Background(), []string{"antigravity"}, req, opts); errStream == nil {
 					t.Fatal("initial ExecuteStream() succeeded, want 429 after quota and credits exhaustion")
@@ -1056,10 +1093,10 @@ func TestAntigravityManagerExecuteAndStream_ToppedUpCreditsRecoverDuringQuotaCoo
 					waitForAntigravityCreditsRefresh(t, state)
 				}
 			}
-			if _, failed := antigravityCreditsFailureByAuth.Load(authID); !failed {
+			if _, failed := antigravityCreditsFailureByAuth.Load(newAntigravityCreditsCacheKey(authID, cliproxyauth.AntigravityCreditsScope(registered))); !failed {
 				t.Fatal("expected auth to be marked permanently disabled after INSUFFICIENT_G1_CREDITS_BALANCE")
 			}
-			hint, ok := cliproxyauth.GetAntigravityCreditsHint(authID)
+			hint, ok := cliproxyauth.GetAntigravityCreditsHint(authID, registered.RegistrationEpoch)
 			if !ok || !hint.Known || hint.Available {
 				t.Fatalf("hint after exhaustion = %#v (ok=%v), want Known=true Available=false", hint, ok)
 			}
@@ -1080,7 +1117,7 @@ func TestAntigravityManagerExecuteAndStream_ToppedUpCreditsRecoverDuringQuotaCoo
 				CreditAmount:    0,
 				MinCreditAmount: 1,
 				UpdatedAt:       time.Now().Add(-antigravityCreditsHintRefreshInterval - time.Second),
-			})
+			}, registered.RegistrationEpoch)
 
 			// Step 3: Request recovers via credits fallback while model cooldown is active and triggers loadCodeAssist refresh.
 			if stream {
@@ -1116,11 +1153,11 @@ func TestAntigravityManagerExecuteAndStream_ToppedUpCreditsRecoverDuringQuotaCoo
 			if loadCodeAssistCalls.Load() <= callsBeforeTopUp {
 				t.Fatalf("loadCodeAssist calls after top-up = %d, want > %d", loadCodeAssistCalls.Load(), callsBeforeTopUp)
 			}
-			hint, ok = cliproxyauth.GetAntigravityCreditsHint(authID)
+			hint, ok = cliproxyauth.GetAntigravityCreditsHint(authID, registered.RegistrationEpoch)
 			if !ok || !hint.Known || !hint.Available || hint.CreditAmount != 2516 {
 				t.Fatalf("hint after recovery = %#v (ok=%v), want Known=true Available=true CreditAmount=2516", hint, ok)
 			}
-			if _, failed := antigravityCreditsFailureByAuth.Load(authID); failed {
+			if _, failed := antigravityCreditsFailureByAuth.Load(newAntigravityCreditsCacheKey(authID, cliproxyauth.AntigravityCreditsScope(registered))); failed {
 				t.Fatal("expected permanently disabled credits state to be cleared after recovery")
 			}
 		})
@@ -1981,7 +2018,7 @@ func TestUpdateAntigravityCreditsBalanceForTask_ForbiddenTOSViolation(t *testing
 		exec.queueAntigravityCreditsRefresh(oldCtx, oldAuth, "old-token", 0)
 		<-oldStarted
 
-		rawState, ok := antigravityCreditsHintRefreshByID.Load(authID)
+		rawState, ok := antigravityCreditsHintRefreshByID.Load(authID + "|" + cliproxyauth.AntigravityCreditsScope(oldAuth))
 		if !ok {
 			t.Fatal("expected queued credits refresh state to exist")
 		}
@@ -2007,9 +2044,14 @@ func TestUpdateAntigravityCreditsBalanceForTask_ForbiddenTOSViolation(t *testing
 			}, nil
 		}))
 		exec.queueAntigravityCreditsRefresh(newCtx, newAuth, "new-token", 0)
-		state.mu.Lock()
-		newTask := state.task
-		state.mu.Unlock()
+		newStateValue, okNewState := antigravityCreditsHintRefreshByID.Load(authID + "|" + cliproxyauth.AntigravityCreditsScope(newAuth))
+		if !okNewState {
+			t.Fatal("expected replacement queued refresh state to exist")
+		}
+		newState := newStateValue.(*antigravityCreditsHintRefreshState)
+		newState.mu.Lock()
+		newTask := newState.task
+		newState.mu.Unlock()
 		if newTask != nil {
 			<-newTask.done
 		}
@@ -2062,7 +2104,7 @@ func TestUpdateAntigravityCreditsBalanceForTask_ForbiddenTOSViolation(t *testing
 		exec.queueAntigravityCreditsRefresh(ctx, auth, "token", 0)
 		<-started
 
-		rawState, ok := antigravityCreditsHintRefreshByID.Load(authID)
+		rawState, ok := antigravityCreditsHintRefreshByID.Load(authID + "|" + cliproxyauth.AntigravityCreditsScope(auth))
 		if !ok {
 			t.Fatal("expected queued credits refresh state to exist")
 		}
