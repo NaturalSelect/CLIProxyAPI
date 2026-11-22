@@ -140,15 +140,18 @@ func (e *AntigravityExecutor) obfuscateSensitiveWordsDoc(doc *ojson.Doc) bool {
 // system-reminder mode moves the caller instruction into the first user turn,
 // otherwise identity-confuse prepends the native identity. Sensitive words are
 // then obfuscated in the system instruction only, so reminder text stays intact.
+// User text is wrapped in <USER_REQUEST> unless the caller is the native Antigravity
+// client, which does that itself.
 // It returns the document to continue with, which is a new document when the
 // system-reminder rewrite ran.
-func (e *AntigravityExecutor) cloakSystemInstructionDoc(doc *ojson.Doc) *ojson.Doc {
+func (e *AntigravityExecutor) cloakSystemInstructionDoc(doc *ojson.Doc, headers http.Header) *ojson.Doc {
 	if doc == nil {
 		return doc
 	}
 	if e != nil && e.cfg != nil {
 		if e.cfg.Antigravity.SystemReminder {
-			doc = ojson.NewDoc(helps.MoveAntigravitySystemInstructionToReminder(doc.Bytes()))
+			wrapUserRequests := !helps.IsAntigravityClientUserAgent(headers.Get("User-Agent"))
+			doc = ojson.NewDoc(helps.MoveAntigravitySystemInstructionToReminder(doc.Bytes(), wrapUserRequests))
 		} else if e.cfg.Antigravity.IdentityConfuse {
 			helps.PrependAntigravityIdentityInstructionDoc(doc)
 		}
@@ -159,7 +162,7 @@ func (e *AntigravityExecutor) cloakSystemInstructionDoc(doc *ojson.Doc) *ojson.D
 
 // cloakSystemInstruction is the byte-slice form of cloakSystemInstructionDoc.
 func (e *AntigravityExecutor) cloakSystemInstruction(payload []byte) []byte {
-	return e.cloakSystemInstructionDoc(ojson.NewDoc(payload)).Bytes()
+	return e.cloakSystemInstructionDoc(ojson.NewDoc(payload), nil).Bytes()
 }
 
 // Each Antigravity credential gets its own HTTP/1.1 connection pool. Sessions routed

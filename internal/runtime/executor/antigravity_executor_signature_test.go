@@ -1570,6 +1570,40 @@ func TestAntigravitySystemReminderKeepsMovedTextUnobfuscated(t *testing.T) {
 	}
 }
 
+func TestAntigravitySystemReminderWrapsUserTextUnlessNativeClient(t *testing.T) {
+	executor := NewAntigravityExecutor(&config.Config{
+		Antigravity: config.AntigravityConfig{SystemReminder: true},
+	})
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
+
+	cases := []struct {
+		name      string
+		userAgent string
+		want      string
+	}{
+		{name: "other client", userAgent: "claude-cli/2.1.0 (external, cli)", want: "<USER_REQUEST>\nhello\n</USER_REQUEST>"},
+		{name: "no user agent", userAgent: "", want: "<USER_REQUEST>\nhello\n</USER_REQUEST>"},
+		{name: "native client", userAgent: "antigravity/1.23.2 linux/amd64", want: "hello"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			headers := http.Header{}
+			if tc.userAgent != "" {
+				headers.Set("User-Agent", tc.userAgent)
+			}
+
+			got := executor.cloakSystemInstructionDoc(ojson.NewDoc(payload), headers).Bytes()
+
+			if text := ojson.GetBytes(got, "request.contents.0.parts.1.text").String(); text != tc.want {
+				t.Fatalf("user text = %q, want %q", text, tc.want)
+			}
+			if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); !strings.HasPrefix(text, "<EPHEMERAL_MESSAGE>") {
+				t.Fatalf("system instruction must still move to the reminder, got %q", text)
+			}
+		})
+	}
+}
+
 func TestAntigravitySystemReminderDoesNotDuplicateIdentity(t *testing.T) {
 	executor := NewAntigravityExecutor(&config.Config{
 		Antigravity: config.AntigravityConfig{SystemReminder: true, IdentityConfuse: true},

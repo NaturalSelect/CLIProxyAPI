@@ -26,8 +26,9 @@ const (
 // MoveAntigravitySystemInstructionToReminder moves the caller system instruction text into a single
 // <EPHEMERAL_MESSAGE> part at the start of the first user turn and replaces the system instruction with
 // the static Antigravity prompt that tells the model to follow such messages strictly. Real user text is
-// wrapped in <USER_REQUEST> because the static prompt tells the model that user requests come that way.
-func MoveAntigravitySystemInstructionToReminder(payload []byte) []byte {
+// wrapped in <USER_REQUEST> when wrapUserRequests is set, because the static prompt tells the model that
+// user requests come that way.
+func MoveAntigravitySystemInstructionToReminder(payload []byte, wrapUserRequests bool) []byte {
 	doc := ojson.NewDoc(payload)
 	var texts, extraParts []string
 	for _, path := range []string{"request.systemInstruction", "request.system_instruction"} {
@@ -56,7 +57,9 @@ func MoveAntigravitySystemInstructionToReminder(payload []byte) []byte {
 		}
 	}
 
-	wrapAntigravityUserRequests(doc)
+	if wrapUserRequests {
+		wrapAntigravityUserRequests(doc)
+	}
 
 	static := antigravityIdentityPrefix
 	if len(movable) > 0 {
@@ -70,6 +73,13 @@ func MoveAntigravitySystemInstructionToReminder(payload []byte) []byte {
 	// Deleting a missing key is not an error; any other failure leaves the document unchanged.
 	_ = doc.Delete("request.system_instruction")
 	return doc.Bytes()
+}
+
+// NOTE: The native Antigravity client already wraps its own user text, so its requests must not be wrapped again.
+func IsAntigravityClientUserAgent(userAgent string) bool {
+	const prefix = "antigravity"
+	value := strings.TrimSpace(userAgent)
+	return len(value) >= len(prefix) && strings.EqualFold(value[:len(prefix)], prefix)
 }
 
 func UnwrapAntigravityUserRequest(text string) string {

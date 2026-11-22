@@ -102,7 +102,7 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 
 	finalize := helps.NewPayloadFinalizer(e.cfg, e.Identifier(), baseModel, "antigravity", "request", originalTranslated, req, opts)
 	ctx = helps.WithPayloadFinalizer(ctx, finalize)
-	doc = e.cloakSystemInstructionDoc(doc)
+	doc = e.cloakSystemInstructionDoc(doc, opts.Headers)
 	sanitizeAntigravityGeminiRequestSignaturesDoc(baseModel, doc)
 
 	useCredits := cliproxyauth.AntigravityCreditsRequested(ctx) && antigravityCreditsRetryEnabled(e.cfg)
@@ -353,7 +353,7 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 
 	finalize := helps.NewPayloadFinalizer(e.cfg, e.Identifier(), baseModel, "antigravity", "request", originalTranslated, req, opts)
 	ctx = helps.WithPayloadFinalizer(ctx, finalize)
-	doc = e.cloakSystemInstructionDoc(doc)
+	doc = e.cloakSystemInstructionDoc(doc, opts.Headers)
 	sanitizeAntigravityGeminiRequestSignaturesDoc(baseModel, doc)
 
 	useCredits := cliproxyauth.AntigravityCreditsRequested(ctx) && antigravityCreditsRetryEnabled(e.cfg)

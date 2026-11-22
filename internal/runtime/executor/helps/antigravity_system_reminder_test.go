@@ -12,7 +12,7 @@ const wrappedHello = "<USER_REQUEST>\nhello\n</USER_REQUEST>"
 func TestMoveAntigravitySystemInstructionToReminder_MovesTextParts(t *testing.T) {
 	payload := []byte(`{"request":{"systemInstruction":{"role":"user","parts":[{"text":"A"},{"text":"B"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	wantStatic := antigravityIdentityPrefix + antigravityEphemeralMessageNote
 	if text := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String(); text != wantStatic {
@@ -35,7 +35,7 @@ func TestMoveAntigravitySystemInstructionToReminder_MovesTextParts(t *testing.T)
 func TestMoveAntigravitySystemInstructionToReminder_StringInstruction(t *testing.T) {
 	payload := []byte(`{"request":{"systemInstruction":"Be brief","contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<EPHEMERAL_MESSAGE>\n"+AntigravitySystemReminderBasePrefix+"Be brief\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("reminder text = %q", text)
@@ -48,7 +48,7 @@ func TestMoveAntigravitySystemInstructionToReminder_StringInstruction(t *testing
 func TestMoveAntigravitySystemInstructionToReminder_SnakeCaseInstruction(t *testing.T) {
 	payload := []byte(`{"request":{"system_instruction":{"parts":[{"text":"Be brief"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if ojson.GetBytes(got, "request.system_instruction").Exists() {
 		t.Fatalf("system_instruction should be removed: %s", got)
@@ -64,7 +64,7 @@ func TestMoveAntigravitySystemInstructionToReminder_SnakeCaseInstruction(t *test
 func TestMoveAntigravitySystemInstructionToReminder_SkipsLeadingModelTurn(t *testing.T) {
 	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]},"contents":[{"role":"model","parts":[{"text":"hi"}]},{"role":"user","parts":[{"text":"hello"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "hi" {
 		t.Fatalf("model turn changed: %q", text)
@@ -80,7 +80,7 @@ func TestMoveAntigravitySystemInstructionToReminder_SkipsLeadingModelTurn(t *tes
 func TestMoveAntigravitySystemInstructionToReminder_PlacesAfterFunctionResponses(t *testing.T) {
 	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]},"contents":[{"role":"user","parts":[{"functionResponse":{"name":"a","response":{}}},{"text":"hello"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if !ojson.GetBytes(got, "request.contents.0.parts.0.functionResponse").Exists() {
 		t.Fatalf("functionResponse must stay first: %s", got)
@@ -96,7 +96,7 @@ func TestMoveAntigravitySystemInstructionToReminder_PlacesAfterFunctionResponses
 func TestMoveAntigravitySystemInstructionToReminder_NoUserTurn(t *testing.T) {
 	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]},"contents":[{"role":"model","parts":[{"text":"hi"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if role := ojson.GetBytes(got, "request.contents.0.role").String(); role != "user" {
 		t.Fatalf("contents.0.role = %q, want user", role)
@@ -112,7 +112,7 @@ func TestMoveAntigravitySystemInstructionToReminder_NoUserTurn(t *testing.T) {
 func TestMoveAntigravitySystemInstructionToReminder_NoContents(t *testing.T) {
 	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]}}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<EPHEMERAL_MESSAGE>\n"+AntigravitySystemReminderBasePrefix+"Rules\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("reminder text = %q", text)
@@ -122,7 +122,7 @@ func TestMoveAntigravitySystemInstructionToReminder_NoContents(t *testing.T) {
 func TestMoveAntigravitySystemInstructionToReminder_NoSystemInstruction(t *testing.T) {
 	payload := []byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if text := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String(); text != antigravityIdentityPrefix {
 		t.Fatalf("static system text = %q, want identity only", text)
@@ -138,7 +138,7 @@ func TestMoveAntigravitySystemInstructionToReminder_NoSystemInstruction(t *testi
 func TestMoveAntigravitySystemInstructionToReminder_WrapsEveryUserTurn(t *testing.T) {
 	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]},"contents":[{"role":"user","parts":[{"text":"one"}]},{"role":"model","parts":[{"text":"answer"}]},{"role":"user","parts":[{"text":"two"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if text := ojson.GetBytes(got, "request.contents.0.parts.1.text").String(); text != "<USER_REQUEST>\none\n</USER_REQUEST>" {
 		t.Fatalf("first user text = %q", text)
@@ -154,7 +154,7 @@ func TestMoveAntigravitySystemInstructionToReminder_WrapsEveryUserTurn(t *testin
 func TestMoveAntigravitySystemInstructionToReminder_EnvelopeSpansMultipleParts(t *testing.T) {
 	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]},"contents":[{"role":"user","parts":[{"text":"first"},{"inlineData":{"mimeType":"image/png","data":"AA=="}},{"text":"last"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if text := ojson.GetBytes(got, "request.contents.0.parts.1.text").String(); text != "<USER_REQUEST>\nfirst" {
 		t.Fatalf("first part = %q, want opening tag only", text)
@@ -170,7 +170,7 @@ func TestMoveAntigravitySystemInstructionToReminder_EnvelopeSpansMultipleParts(t
 func TestMoveAntigravitySystemInstructionToReminder_LeavesNonUserTextUnwrapped(t *testing.T) {
 	payload := []byte(`{"request":{"contents":[{"role":"user","parts":[{"functionResponse":{"name":"a","response":{}}}]},{"role":"user","parts":[{"text":"<system-reminder>\nctx\n</system-reminder>"},{"text":"<EPHEMERAL_MESSAGE>\nx\n</EPHEMERAL_MESSAGE>"},{"text":"  \n"},{"text":"<USER_REQUEST>\nnative\n</USER_REQUEST>"}]},{"role":"model","parts":[{"text":"answer"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if gotContents, wantContents := ojson.GetBytes(got, "request.contents").Raw, ojson.GetBytes(payload, "request.contents").Raw; gotContents != wantContents {
 		t.Fatalf("contents changed:\n got %s\nwant %s", gotContents, wantContents)
@@ -180,7 +180,7 @@ func TestMoveAntigravitySystemInstructionToReminder_LeavesNonUserTextUnwrapped(t
 func TestMoveAntigravitySystemInstructionToReminder_UserRequestKeepsLiteralCharacters(t *testing.T) {
 	payload := []byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"a < b && \"c\""}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<USER_REQUEST>\na < b && \"c\"\n</USER_REQUEST>" {
 		t.Fatalf("user text = %q", text)
@@ -204,10 +204,41 @@ func TestUnwrapAntigravityUserRequest(t *testing.T) {
 	}
 }
 
+func TestMoveAntigravitySystemInstructionToReminder_SkipsWrappingWhenDisabled(t *testing.T) {
+	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"Rules"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
+
+	got := MoveAntigravitySystemInstructionToReminder(payload, false)
+
+	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<EPHEMERAL_MESSAGE>\n"+AntigravitySystemReminderBasePrefix+"Rules\n</EPHEMERAL_MESSAGE>" {
+		t.Fatalf("reminder text = %q", text)
+	}
+	if text := ojson.GetBytes(got, "request.contents.0.parts.1.text").String(); text != "hello" {
+		t.Fatalf("user text = %q, want it untouched", text)
+	}
+}
+
+func TestIsAntigravityClientUserAgent(t *testing.T) {
+	cases := map[string]bool{
+		"antigravity/1.23.2 windows/amd64":      true,
+		"Antigravity/1.23.2 linux/amd64":        true,
+		"  antigravity/hub/1.23.2 darwin/arm64": true,
+		"antigravity":                           true,
+		"":                                      false,
+		"claude-cli/2.1.0 (external, cli)":      false,
+		"my-antigravity-client/1.0":             false,
+		"antigrav":                              false,
+	}
+	for in, want := range cases {
+		if got := IsAntigravityClientUserAgent(in); got != want {
+			t.Fatalf("IsAntigravityClientUserAgent(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
 func TestMoveAntigravitySystemInstructionToReminder_BlankInstructionIsNotMoved(t *testing.T) {
 	payload := []byte(`{"request":{"systemInstruction":{"parts":[{"text":"  \n"}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}}`)
 
-	got := MoveAntigravitySystemInstructionToReminder(payload)
+	got := MoveAntigravitySystemInstructionToReminder(payload, true)
 
 	if text := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String(); text != antigravityIdentityPrefix {
 		t.Fatalf("static system text = %q, want identity only", text)

@@ -100,7 +100,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 
 	finalize := helps.NewPayloadFinalizer(e.cfg, e.Identifier(), baseModel, "antigravity", "request", originalTranslated, req, opts)
 	ctx = helps.WithPayloadFinalizer(ctx, finalize)
-	doc = e.cloakSystemInstructionDoc(doc)
+	doc = e.cloakSystemInstructionDoc(doc, opts.Headers)
 	sanitizeAntigravityGeminiRequestSignaturesDoc(baseModel, doc)
 	_ = doc.Delete("request.stream")
 
