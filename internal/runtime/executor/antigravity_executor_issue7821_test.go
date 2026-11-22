@@ -505,8 +505,8 @@ func TestAntigravityIssue7821_RetryAfterThresholdsPrecedenceAndBoundaries(t *tes
 					ResponseFormat: sdktranslator.FormatAntigravity,
 				})
 				var sErr statusErr
-				if !errors.As(errExec, &sErr) || sErr.RetryAfter() != nil {
-					t.Fatalf("Execute(%s) retryAfter = %v, want nil", tc.name, sErr.RetryAfter())
+				if !errors.As(errExec, &sErr) || !onlyDefaultAntigravityRetryAfter(sErr.RetryAfter()) {
+					t.Fatalf("Execute(%s) retryAfter = %v, want nil or the default hint", tc.name, sErr.RetryAfter())
 				}
 				inCooldown, _, errCooldown := antigravityIsInShortCooldownRequired(context.Background(), auth, "gemini-3-flash", time.Now())
 				if errCooldown != nil || inCooldown {
@@ -570,8 +570,8 @@ func TestAntigravityIssue7821_RetryAfterThresholdsPrecedenceAndBoundaries(t *tes
 				if !errors.As(gotErr, &sErr) || sErr.StatusCode() != http.StatusTooManyRequests {
 					t.Fatalf("mid-stream %s err = %#v, want 429 statusErr", name, gotErr)
 				}
-				if sErr.RetryAfter() != nil {
-					t.Fatalf("mid-stream %s RetryAfter() = %v, want nil", name, sErr.RetryAfter())
+				if !onlyDefaultAntigravityRetryAfter(sErr.RetryAfter()) {
+					t.Fatalf("mid-stream %s RetryAfter() = %v, want nil or the default hint", name, sErr.RetryAfter())
 				}
 				inCooldown, _, errCooldown := antigravityIsInShortCooldownRequired(context.Background(), auth, model, time.Now())
 				if errCooldown != nil || inCooldown {
@@ -775,4 +775,9 @@ func TestAntigravityIssue7821_DecideAndStatusErrWithHeaders(t *testing.T) {
 
 func durationPtr(d time.Duration) *time.Duration {
 	return &d
+}
+
+// NOTE: The fork attaches a default retry hint to 429 responses without one, so only a header-derived value counts as a leak.
+func onlyDefaultAntigravityRetryAfter(d *time.Duration) bool {
+	return d == nil || *d == antigravityDefaultRateLimitRetryAfter
 }
