@@ -199,10 +199,7 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 		reporter.PublishFailureWithDetail(ctx, antiDetail, err)
 		return cliproxyexecutor.Response{}, err
 	}
-	if len(replayRequestPayload) == 0 {
-		replayRequestPayload = requestPayload
-	}
-	cacheAntigravityReasoningReplayFromResponse(ctx, replayScope, replayRequestPayload, bodyBytes)
+	rawResponseBody := bodyBytes
 	bodyBytes = e.resolveWebSearchGroundingURLs(ctx, auth, from, originalPayload, translated, bodyBytes)
 	var param any
 	converted := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, helps.ApplyPatchOriginalRequest(req, opts), translated, bodyBytes, &param)
@@ -216,6 +213,10 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 		reporter.PublishFailureWithDetail(ctx, antiDetail, err)
 		return cliproxyexecutor.Response{}, err
 	}
+	if len(replayRequestPayload) == 0 {
+		replayRequestPayload = requestPayload
+	}
+	cacheAntigravityReasoningReplayFromResponse(ctx, replayScope, replayRequestPayload, rawResponseBody)
 	if useCredits {
 		clearAntigravityCreditsFailureState(auth)
 	}
@@ -491,9 +492,6 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 		reporter.PublishFailureWithDetail(ctx, antiDetail, err)
 		return cliproxyexecutor.Response{}, err
 	}
-	if replayAccumulator != nil {
-		replayAccumulator.Commit(ctx)
-	}
 	resp = cliproxyexecutor.Response{Payload: aggregatedPayload}
 
 	resp.Payload = e.resolveWebSearchGroundingURLs(ctx, auth, from, originalPayload, translated, resp.Payload)
@@ -510,6 +508,9 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 		helps.ApplyGeminiRequestImageConfig(&antiDetail, requestPayload)
 		reporter.PublishFailureWithDetail(ctx, antiDetail, err)
 		return cliproxyexecutor.Response{}, err
+	}
+	if replayAccumulator != nil {
+		replayAccumulator.Commit(ctx)
 	}
 	if useCredits {
 		clearAntigravityCreditsFailureState(auth)
