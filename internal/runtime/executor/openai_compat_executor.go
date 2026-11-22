@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -1394,7 +1395,14 @@ func (e statusErr) Error() string {
 	}
 	return fmt.Sprintf("status %d", e.code)
 }
-func (e statusErr) Unwrap() error              { return e.cause }
+func (e statusErr) Unwrap() error { return e.cause }
+
+// NOTE: The headers map makes statusErr non-comparable, so errors.Is needs this to keep matching by value.
+func (e statusErr) Is(target error) bool {
+	other, ok := target.(statusErr)
+	return ok && reflect.DeepEqual(e, other)
+}
+
 func (e statusErr) StatusCode() int            { return e.code }
 func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
 
