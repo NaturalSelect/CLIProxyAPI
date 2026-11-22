@@ -23,6 +23,7 @@ func TestIssue7741WrapStreamResultClosesOnCancellationDuringUpstreamStall(t *tes
 		"issue7741-model",
 		"issue7741-model",
 		nil,
+		time.Time{},
 		nil,
 		remaining,
 		OAuthModelAliasResult{},
