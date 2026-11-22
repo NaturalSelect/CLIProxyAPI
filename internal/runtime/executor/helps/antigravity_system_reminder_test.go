@@ -12,20 +12,20 @@ func TestMoveAntigravitySystemInstructionToReminder_MovesTextParts(t *testing.T)
 
 	got := MoveAntigravitySystemInstructionToReminder(payload)
 
-	wantStatic := antigravityIdentityPrefix + antigravitySystemReminderAuthorityNote
+	wantStatic := antigravityIdentityPrefix + antigravityEphemeralMessageNote
 	if text := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String(); text != wantStatic {
 		t.Fatalf("static system text = %q, want %q", text, wantStatic)
 	}
 	if n := len(ojson.GetBytes(got, "request.systemInstruction.parts").Array()); n != 1 {
 		t.Fatalf("systemInstruction parts = %d, want 1", n)
 	}
-	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<system-reminder>\n"+AntigravitySystemReminderBasePrefix+"A\n\nB\n</system-reminder>" {
+	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<EPHEMERAL_MESSAGE>\n"+AntigravitySystemReminderBasePrefix+"A\n\nB\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("reminder text = %q", text)
 	}
 	if text := ojson.GetBytes(got, "request.contents.0.parts.1.text").String(); text != "hello" {
 		t.Fatalf("user text = %q, want hello", text)
 	}
-	if !strings.Contains(string(got), "<system-reminder>") || strings.Contains(string(got), `\u003c`) {
+	if !strings.Contains(string(got), "<EPHEMERAL_MESSAGE>") || strings.Contains(string(got), `\u003c`) {
 		t.Fatalf("payload must keep literal reminder tags: %s", got)
 	}
 }
@@ -35,7 +35,7 @@ func TestMoveAntigravitySystemInstructionToReminder_StringInstruction(t *testing
 
 	got := MoveAntigravitySystemInstructionToReminder(payload)
 
-	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<system-reminder>\n"+AntigravitySystemReminderBasePrefix+"Be brief\n</system-reminder>" {
+	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<EPHEMERAL_MESSAGE>\n"+AntigravitySystemReminderBasePrefix+"Be brief\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("reminder text = %q", text)
 	}
 	if text := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String(); !strings.HasPrefix(text, antigravityIdentityPrefix) {
@@ -51,7 +51,7 @@ func TestMoveAntigravitySystemInstructionToReminder_SnakeCaseInstruction(t *test
 	if ojson.GetBytes(got, "request.system_instruction").Exists() {
 		t.Fatalf("system_instruction should be removed: %s", got)
 	}
-	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<system-reminder>\n"+AntigravitySystemReminderBasePrefix+"Be brief\n</system-reminder>" {
+	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<EPHEMERAL_MESSAGE>\n"+AntigravitySystemReminderBasePrefix+"Be brief\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("reminder text = %q", text)
 	}
 	if text := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String(); !strings.HasPrefix(text, antigravityIdentityPrefix) {
@@ -67,7 +67,7 @@ func TestMoveAntigravitySystemInstructionToReminder_SkipsLeadingModelTurn(t *tes
 	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "hi" {
 		t.Fatalf("model turn changed: %q", text)
 	}
-	if text := ojson.GetBytes(got, "request.contents.1.parts.0.text").String(); text != "<system-reminder>\n"+AntigravitySystemReminderBasePrefix+"Rules\n</system-reminder>" {
+	if text := ojson.GetBytes(got, "request.contents.1.parts.0.text").String(); text != "<EPHEMERAL_MESSAGE>\n"+AntigravitySystemReminderBasePrefix+"Rules\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("reminder text = %q", text)
 	}
 	if text := ojson.GetBytes(got, "request.contents.1.parts.1.text").String(); text != "hello" {
@@ -83,7 +83,7 @@ func TestMoveAntigravitySystemInstructionToReminder_PlacesAfterFunctionResponses
 	if !ojson.GetBytes(got, "request.contents.0.parts.0.functionResponse").Exists() {
 		t.Fatalf("functionResponse must stay first: %s", got)
 	}
-	if text := ojson.GetBytes(got, "request.contents.0.parts.1.text").String(); text != "<system-reminder>\n"+AntigravitySystemReminderBasePrefix+"Rules\n</system-reminder>" {
+	if text := ojson.GetBytes(got, "request.contents.0.parts.1.text").String(); text != "<EPHEMERAL_MESSAGE>\n"+AntigravitySystemReminderBasePrefix+"Rules\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("reminder text = %q", text)
 	}
 	if text := ojson.GetBytes(got, "request.contents.0.parts.2.text").String(); text != "hello" {
@@ -99,7 +99,7 @@ func TestMoveAntigravitySystemInstructionToReminder_NoUserTurn(t *testing.T) {
 	if role := ojson.GetBytes(got, "request.contents.0.role").String(); role != "user" {
 		t.Fatalf("contents.0.role = %q, want user", role)
 	}
-	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<system-reminder>\n"+AntigravitySystemReminderBasePrefix+"Rules\n</system-reminder>" {
+	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<EPHEMERAL_MESSAGE>\n"+AntigravitySystemReminderBasePrefix+"Rules\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("reminder text = %q", text)
 	}
 	if text := ojson.GetBytes(got, "request.contents.1.parts.0.text").String(); text != "hi" {
@@ -112,7 +112,7 @@ func TestMoveAntigravitySystemInstructionToReminder_NoContents(t *testing.T) {
 
 	got := MoveAntigravitySystemInstructionToReminder(payload)
 
-	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<system-reminder>\n"+AntigravitySystemReminderBasePrefix+"Rules\n</system-reminder>" {
+	if text := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); text != "<EPHEMERAL_MESSAGE>\n"+AntigravitySystemReminderBasePrefix+"Rules\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("reminder text = %q", text)
 	}
 }

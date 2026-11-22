@@ -1297,9 +1297,9 @@ oauth:
     # Antigravity provider behavior.
     antigravity:
       # identity-confuse: false       # optional: prepend the native Antigravity identity to the system instruction
-      # system-reminder: false        # optional: move the real system prompt into a <system-reminder> at the start of the
-                                    # first user turn (Claude Code style); systemInstruction keeps only the Antigravity identity
-                                    # plus a note granting that reminder system-level authority. Moved text is not obfuscated.
+      # system-reminder: false        # optional: move the real system prompt into an <EPHEMERAL_MESSAGE> at the start of the
+                                    # first user turn; systemInstruction keeps only the Antigravity identity plus the stock
+                                    # note telling the model to follow such messages strictly. Moved text is not obfuscated.
       # sensitive-words:              # optional: words to obfuscate with combining grapheme joiners (U+034F) in system instructions
       #   - "API"
       #   - "proxy"

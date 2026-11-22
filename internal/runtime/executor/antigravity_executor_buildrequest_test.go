@@ -217,9 +217,21 @@ func TestGenerateStableSessionIDSkipsSystemReminderParts(t *testing.T) {
 	withReminder := generateStableSessionID([]byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"<system-reminder>\nRules A\n</system-reminder>"},{"text":"hello"}]}]}}`))
 	otherReminder := generateStableSessionID([]byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"<system-reminder>\nRules B\n</system-reminder>"},{"text":"hello"}]}]}}`))
 	otherUserText := generateStableSessionID([]byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"<system-reminder>\nRules A\n</system-reminder>"},{"text":"goodbye"}]}]}}`))
+	withEphemeral := generateStableSessionID([]byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"<EPHEMERAL_MESSAGE>\nRules A\n</EPHEMERAL_MESSAGE>"},{"text":"hello"}]}]}}`))
+	otherEphemeral := generateStableSessionID([]byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"<EPHEMERAL_MESSAGE>\nRules B\n</EPHEMERAL_MESSAGE>"},{"text":"hello"}]}]}}`))
+	otherEphemeralUserText := generateStableSessionID([]byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"<EPHEMERAL_MESSAGE>\nRules A\n</EPHEMERAL_MESSAGE>"},{"text":"goodbye"}]}]}}`))
 
 	if withReminder != plain {
 		t.Fatalf("session ID with reminder = %q, want %q", withReminder, plain)
+	}
+	if withEphemeral != plain {
+		t.Fatalf("session ID with ephemeral message = %q, want %q", withEphemeral, plain)
+	}
+	if otherEphemeral != plain {
+		t.Fatalf("session ID with other ephemeral message = %q, want %q", otherEphemeral, plain)
+	}
+	if otherEphemeralUserText == plain {
+		t.Fatalf("session ID should change with the real user text after an ephemeral message, got %q", otherEphemeralUserText)
 	}
 	if otherReminder != plain {
 		t.Fatalf("session ID with other reminder = %q, want %q", otherReminder, plain)

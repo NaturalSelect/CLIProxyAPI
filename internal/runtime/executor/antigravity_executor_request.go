@@ -833,8 +833,8 @@ func generateStableSessionIDFromContentsForAuth(contents ojson.Result, authID st
 		text := ""
 		content.Get("parts").ForEach(func(_, part ojson.Result) bool {
 			partText := part.Get("text").String()
-			// NOTE: Skip injected <system-reminder> parts so the ID follows the real user text.
-			if partText == "" || strings.HasPrefix(partText, "<system-reminder>") {
+			// NOTE: Skip injected reminder and ephemeral parts so the ID follows the real user text.
+			if partText == "" || strings.HasPrefix(partText, "<system-reminder>") || strings.HasPrefix(partText, "<EPHEMERAL_MESSAGE>") {
 				return true
 			}
 			text = partText

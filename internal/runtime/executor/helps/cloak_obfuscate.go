@@ -829,7 +829,12 @@ func ObfuscateSensitiveWordsInSystemInstructionDoc(doc *ojson.Doc, matcher *Sens
 	return modified
 }
 
-const antigravityIdentityPrefix = "<identity>\nYou are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.</identity>\n"
+// NOTE: Verbatim stock identity.tmpl, interactive branch (IsAutonomous false); keep it unedited.
+const antigravityIdentityPrefix = "<identity>\n" +
+	"You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\n" +
+	"You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\n" +
+	"The USER will send you requests, which you must always prioritize addressing. User requests are enclosed within <USER_REQUEST> tags.\n" +
+	"</identity>\n"
 
 // PrependAntigravityIdentityInstruction prepends the native Antigravity identity
 // to the system instruction so upstream content filtering sees the expected client.

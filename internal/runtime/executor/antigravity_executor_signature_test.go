@@ -1561,12 +1561,12 @@ func TestAntigravitySystemReminderKeepsMovedTextUnobfuscated(t *testing.T) {
 
 	got := executor.cloakSystemInstruction(payload)
 
-	if reminder := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); reminder != "<system-reminder>\n"+helps.AntigravitySystemReminderBasePrefix+"Use proxy safely\n</system-reminder>" {
+	if reminder := ojson.GetBytes(got, "request.contents.0.parts.0.text").String(); reminder != "<EPHEMERAL_MESSAGE>\n"+helps.AntigravitySystemReminderBasePrefix+"Use proxy safely\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("reminder = %q, want unobfuscated moved text", reminder)
 	}
 	static := ojson.GetBytes(got, "request.systemInstruction.parts.0.text").String()
-	if !strings.Contains(static, "<identity>") || !strings.Contains(static, "<system-reminder>") {
-		t.Fatalf("static system text = %q, want identity and reminder note", static)
+	if !strings.Contains(static, "<identity>") || !strings.Contains(static, "<ephemeral_message>") {
+		t.Fatalf("static system text = %q, want identity and ephemeral message note", static)
 	}
 }
 
@@ -1641,7 +1641,7 @@ func TestAntigravityStreamMovesSystemInstructionToReminder(t *testing.T) {
 	}
 
 	body := <-captured
-	if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\n"+helps.AntigravitySystemReminderBasePrefix+"Answer in French.\n</system-reminder>" {
+	if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<EPHEMERAL_MESSAGE>\n"+helps.AntigravitySystemReminderBasePrefix+"Answer in French.\n</EPHEMERAL_MESSAGE>" {
 		t.Fatalf("first user part = %q; body=%s", got, body)
 	}
 	if got := ojson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
@@ -1726,7 +1726,7 @@ func TestAntigravitySystemReminderAppliesToClaudeTarget(t *testing.T) {
 			}
 
 			body := <-captured
-			if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<system-reminder>\n"+helps.AntigravitySystemReminderBasePrefix+"Answer in French.\n</system-reminder>" {
+			if got := ojson.GetBytes(body, "request.contents.0.parts.0.text").String(); got != "<EPHEMERAL_MESSAGE>\n"+helps.AntigravitySystemReminderBasePrefix+"Answer in French.\n</EPHEMERAL_MESSAGE>" {
 				t.Fatalf("first user part = %q; body=%s", got, body)
 			}
 			if got := ojson.GetBytes(body, "request.contents.0.parts.1.text").String(); got != "hello" {
