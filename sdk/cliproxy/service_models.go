@@ -12,7 +12,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
@@ -744,7 +743,7 @@ func applyExcludedModels(models []*ModelInfo, excluded []string) []*ModelInfo {
 		sourceID := strings.ToLower(strings.TrimSpace(model.SourceModelID))
 		blocked := false
 		for _, pattern := range patterns {
-			if util.MatchWildcard(pattern, modelID) || (sourceID != "" && sourceID != modelID && util.MatchWildcard(pattern, sourceID)) {
+			if modelconfig.MatchExcludedModelPattern(pattern, modelID) || (sourceID != "" && sourceID != modelID && modelconfig.MatchExcludedModelPattern(pattern, sourceID)) {
 				blocked = true
 				break
 			}
