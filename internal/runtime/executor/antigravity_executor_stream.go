@@ -391,6 +391,9 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				}
 			}
 			if len(pendingFilterPayload) > 0 {
+				if !geminiPayloadHasContentParts(payload) {
+					continue
+				}
 				flushed := pendingFilterPayload
 				pendingFilterPayload = nil
 				pendingFilterMsg = ""
