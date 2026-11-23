@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 )
 
 // tosTestError mimics an executor error that carries a terminal TOS suspension.
@@ -63,6 +64,41 @@ func TestMarkResultTOSViolationWithoutModelDisablesCredential(t *testing.T) {
 	updated, _ := manager.GetByID(auth.ID)
 	if updated.Status != StatusDisabled || !updated.Disabled {
 		t.Fatalf("status=%q disabled=%v, want disabled", updated.Status, updated.Disabled)
+	}
+}
+
+func TestApplyAuthFailureState_TOSViolationIsAlwaysTerminal(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name           string
+		httpStatus     int
+		disableCooling bool
+	}{
+		{name: "disabled cooling", httpStatus: http.StatusForbidden, disableCooling: true},
+		{name: "service unavailable", httpStatus: http.StatusServiceUnavailable},
+		{name: "request error status", httpStatus: http.StatusBadRequest},
+		{name: "missing http status"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auth := &Auth{Status: StatusActive}
+			applyAuthFailureState(auth, &Error{
+				HTTPStatus: tt.httpStatus,
+				Code:       "tos_violation",
+				Message:    "TOS_VIOLATION",
+			}, nil, now, tt.disableCooling)
+
+			if !auth.Disabled || auth.Status != StatusDisabled {
+				t.Fatalf("disabled=%v status=%q, want true / %q", auth.Disabled, auth.Status, StatusDisabled)
+			}
+			if !auth.Unavailable {
+				t.Fatal("auth.Unavailable = false, want true")
+			}
+			if !auth.NextRetryAfter.IsZero() {
+				t.Fatalf("auth.NextRetryAfter = %v, want zero", auth.NextRetryAfter)
+			}
+		})
 	}
 }
 
