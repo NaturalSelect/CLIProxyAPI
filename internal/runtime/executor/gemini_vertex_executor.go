@@ -1000,6 +1000,9 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 			}
 			reporter.ObserveResponseModel(line)
 			rawPayload := helps.JSONPayload(line)
+			if len(rawPayload) > 0 && len(pendingFilterLine) > 0 && !ojson.ValidBytes(rawPayload) {
+				continue
+			}
 			if len(rawPayload) > 0 && len(pendingFilterLine) > 0 {
 				flushed := pendingFilterLine
 				pendingFilterLine = nil
@@ -1049,7 +1052,7 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 			}
 			return
 		}
-		if len(pendingFilterLine) > 0 {
+		if scanner.Err() == nil && len(pendingFilterLine) > 0 {
 			if !guardAndEmitLine(pendingFilterLine) {
 				return
 			}
@@ -1363,6 +1366,9 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 			}
 			reporter.ObserveResponseModel(line)
 			rawPayload := helps.JSONPayload(line)
+			if len(rawPayload) > 0 && len(pendingFilterLine) > 0 && !ojson.ValidBytes(rawPayload) {
+				continue
+			}
 			if len(rawPayload) > 0 && len(pendingFilterLine) > 0 {
 				flushed := pendingFilterLine
 				pendingFilterLine = nil
@@ -1412,7 +1418,7 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 			}
 			return
 		}
-		if len(pendingFilterLine) > 0 {
+		if scanner.Err() == nil && len(pendingFilterLine) > 0 {
 			if !guardAndEmitLine(pendingFilterLine) {
 				return
 			}
