@@ -1300,10 +1300,6 @@ func capGeminiMaxOutputTokens(body []byte, modelName string) []byte {
 }
 
 func capGeminiMaxOutputTokensDoc(doc *ojson.Doc, modelName string) bool {
-	return capMaxOutputTokensForProviderDoc(doc, modelName, "gemini")
-}
-
-func capMaxOutputTokensForProviderDoc(doc *ojson.Doc, modelName, provider string) bool {
 	if doc == nil {
 		return false
 	}
@@ -1311,7 +1307,7 @@ func capMaxOutputTokensForProviderDoc(doc *ojson.Doc, modelName, provider string
 	if !maxOut.Exists() || maxOut.Type != ojson.Number {
 		return false
 	}
-	modelInfo := registry.LookupModelInfo(modelName, provider)
+	modelInfo := registry.LookupModelInfo(modelName, "gemini")
 	if modelInfo == nil {
 		return false
 	}

@@ -489,7 +489,6 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 			return resp, err
 		}
 
-		capMaxOutputTokensForProviderDoc(doc, baseModel, "vertex")
 		fixGeminiImageAspectRatioDoc(baseModel, doc)
 		helps.SetStringIfDifferentDoc(doc, "model", baseModel)
 		internalsignature.SanitizeGeminiRequestThoughtSignaturesDoc(doc, "contents")
@@ -685,7 +684,6 @@ func (e *GeminiVertexExecutor) executeWithAPIKey(ctx context.Context, auth *clip
 			return resp, err
 		}
 
-		capMaxOutputTokensForProviderDoc(doc, baseModel, "vertex")
 		fixGeminiImageAspectRatioDoc(baseModel, doc)
 		helps.SetStringIfDifferentDoc(doc, "model", baseModel)
 		internalsignature.SanitizeGeminiRequestThoughtSignaturesDoc(doc, "contents")
@@ -870,7 +868,6 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 			return nil, err
 		}
 
-		capMaxOutputTokensForProviderDoc(doc, baseModel, "vertex")
 		fixGeminiImageAspectRatioDoc(baseModel, doc)
 		helps.SetStringIfDifferentDoc(doc, "model", baseModel)
 		internalsignature.SanitizeGeminiRequestThoughtSignaturesDoc(doc, "contents")
@@ -1291,7 +1288,6 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 			return nil, err
 		}
 
-		capMaxOutputTokensForProviderDoc(doc, baseModel, "vertex")
 		fixGeminiImageAspectRatioDoc(baseModel, doc)
 		helps.SetStringIfDifferentDoc(doc, "model", baseModel)
 		internalsignature.SanitizeGeminiRequestThoughtSignaturesDoc(doc, "contents")
