@@ -370,15 +370,16 @@ func TestAntigravityThinkingGroupsReviewClaudeCreditsFallback(t *testing.T) {
 	const rateLimitError = `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"reason":"RATE_LIMIT_EXCEEDED"}]}}`
 	const capacityError = `{"error":{"code":503,"status":"UNAVAILABLE","details":[{"reason":"MODEL_CAPACITY_EXHAUSTED"}]}}`
 	const success = `{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"recovered"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}}`
+	// NOTE: The fork gives hintless 429s a one-minute default retry hint, which credits fallback treats as a short rate limit, so quota cases carry an explicit long reset.
 	for _, tc := range []struct {
 		name, model, failure, retryAfter string
 		failureStatus                    int
 		credits, wantRetry, stream       bool
 		targetStatus                     cliproxyauth.Status
 	}{
-		{name: "direct-low", model: low, failure: quotaError, failureStatus: http.StatusTooManyRequests, credits: true, wantRetry: true},
-		{name: "switched-low", model: high, failure: quotaError, failureStatus: http.StatusTooManyRequests, credits: true, wantRetry: true},
-		{name: "switched-low-stream", model: high, failure: quotaError, failureStatus: http.StatusTooManyRequests, credits: true, wantRetry: true, stream: true},
+		{name: "direct-low", model: low, failure: quotaError, failureStatus: http.StatusTooManyRequests, retryAfter: "600", credits: true, wantRetry: true},
+		{name: "switched-low", model: high, failure: quotaError, failureStatus: http.StatusTooManyRequests, retryAfter: "600", credits: true, wantRetry: true},
+		{name: "switched-low-stream", model: high, failure: quotaError, failureStatus: http.StatusTooManyRequests, retryAfter: "600", credits: true, wantRetry: true, stream: true},
 		{name: "switched-long-rate-limit", model: high, failure: rateLimitError, failureStatus: http.StatusTooManyRequests, retryAfter: "600", credits: true, wantRetry: true},
 		{name: "switched-short-rate-limit", model: high, failure: rateLimitError, failureStatus: http.StatusTooManyRequests, retryAfter: "45", credits: true},
 		{name: "switched-short-quota-hint", model: high, failure: quotaError, failureStatus: http.StatusTooManyRequests, retryAfter: "45", credits: true},
