@@ -81,9 +81,18 @@ func TestIssue7000AntigravityAliasesPreserveOtherFieldsAndToolChoice(t *testing.
 							t.Errorf("%s = %q, want %q", path, got, want)
 						}
 					}
-					// NOTE: Antigravity normalization merges camelCase system parts, so the original text only leads the first part.
-					if got := request.Get(systemKey + ".parts.0.text").String(); !strings.HasPrefix(got, "keep system") {
-						t.Errorf("%s.parts.0.text = %q, want prefix %q", systemKey, got, "keep system")
+					if systemKey == "systemInstruction" {
+						if got := request.Get("systemInstruction.role").String(); got != "user" {
+							t.Errorf("systemInstruction.role = %q, want user", got)
+						}
+						if got := request.Get("systemInstruction.parts.#").Int(); got != 1 {
+							t.Errorf("systemInstruction.parts.# = %d, want 1", got)
+						}
+						if got := request.Get("systemInstruction.parts.0.text").String(); !strings.HasPrefix(got, "keep system\n\n") {
+							t.Errorf("systemInstruction.parts.0.text = %q, want prefix %q", got, "keep system\n\n")
+						}
+					} else if got := request.Get(systemKey + ".parts.0.text").String(); got != "keep system" {
+						t.Errorf("%s.parts.0.text = %q, want %q", systemKey, got, "keep system")
 					}
 					for _, configKey := range []string{"generationConfig", "generation_config"} {
 						for _, key := range []string{"responseSchema", "responseJsonSchema", "response_schema", "response_json_schema", "responseMimeType", "response_mime_type"} {
