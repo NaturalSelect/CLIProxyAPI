@@ -533,20 +533,14 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			if len(rawPayload) > 0 && len(pendingFilterPayload) > 0 && !ojson.ValidBytes(rawPayload) {
 				continue
 			}
-			if len(rawPayload) > 0 && len(pendingFilterPayload) > 0 {
-				flushed := pendingFilterPayload
-				pendingFilterPayload = nil
-				pendingFilterMsg = ""
-				if !guardAndEmitPayload(flushed) {
-					return
-				}
-			}
-			if !sawFinishReason && geminiStreamHasFinishSignal(rawPayload) {
-				sawFinishReason = true
+			if filterMsg, blocked := clienterror.GeminiFilterBlockMessage(rawPayload); blocked {
+				pendingFilterPayload = bytes.Clone(rawPayload)
+				pendingFilterMsg = filterMsg
+				continue
 			}
 			reporter.ObserveSemanticResponse(to, rawPayload)
-			streamUsage.ObserveGeminiStream(rawPayload)
 			if blockMsg, blocked := geminiPromptBlockErrorMessage(rawPayload); blocked {
+				streamUsage.ObserveGeminiStream(rawPayload)
 				blockErr := statusErr{code: http.StatusBadGateway, msg: blockMsg}
 				helps.RecordAPIResponseError(ctx, e.cfg, blockErr)
 				if !streamUsage.PublishFailure(ctx, reporter, blockErr) {
@@ -558,10 +552,20 @@ func (e *GeminiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 				}
 				return
 			}
-			if filterMsg, blocked := clienterror.GeminiFilterBlockMessage(rawPayload); blocked {
-				pendingFilterPayload = bytes.Clone(rawPayload)
-				pendingFilterMsg = filterMsg
-				continue
+			if len(rawPayload) > 0 && len(pendingFilterPayload) > 0 {
+				flushed := pendingFilterPayload
+				pendingFilterPayload = nil
+				pendingFilterMsg = ""
+				if !sawFinishReason && geminiStreamHasFinishSignal(flushed) {
+					sawFinishReason = true
+				}
+				if !guardAndEmitPayload(flushed) {
+					return
+				}
+			}
+			streamUsage.ObserveGeminiStream(rawPayload)
+			if !sawFinishReason && geminiStreamHasFinishSignal(rawPayload) {
+				sawFinishReason = true
 			}
 			if len(rawPayload) == 0 {
 				continue
