@@ -198,10 +198,32 @@ func TestApplyPatchActualProviderErrorAndEOF(t *testing.T) {
 					if errExecuteStream != nil {
 						t.Fatal(errExecuteStream)
 					}
-					assertTask6FailedStream(t, stream.Chunks)
+					// NOTE: An empty HTTP 200 stream holds no apply_patch call, so it fails as a retryable zero-output 502.
+					if provider == "antigravity" && mode == "empty" {
+						assertTask6ZeroOutputStream(t, stream.Chunks)
+					} else {
+						assertTask6FailedStream(t, stream.Chunks)
+					}
 				}
 			})
 		}
+	}
+}
+
+func assertTask6ZeroOutputStream(t *testing.T, chunks <-chan cliproxyexecutor.StreamChunk) {
+	t.Helper()
+	var streamErr error
+	for chunk := range chunks {
+		if len(chunk.Payload) != 0 {
+			t.Fatalf("empty upstream stream emitted payload: %q", chunk.Payload)
+		}
+		if chunk.Err != nil {
+			streamErr = chunk.Err
+		}
+	}
+	status, okStatus := streamErr.(interface{ StatusCode() int })
+	if !okStatus || status.StatusCode() != http.StatusBadGateway || streamErr.Error() != "upstream stream closed with zero output" {
+		t.Fatalf("expected zero-output 502, got %T %v", streamErr, streamErr)
 	}
 }
 

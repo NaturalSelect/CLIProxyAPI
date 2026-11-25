@@ -74,12 +74,16 @@ func TestIssue7000AntigravityAliasesPreserveOtherFieldsAndToolChoice(t *testing.
 					assertIssue7000PromptSchema(t, request.Get(systemKey), issue7000LiteralSchema)
 					for path, want := range map[string]string{
 						"generationConfig.temperature": "0.25", "generation_config.stopSequences.0": "STOP",
-						systemKey + ".parts.0.text": "keep system", "contents.0.parts.0.text": "keep history",
+						"contents.0.parts.0.text":             "keep history",
 						"tools.0.functionDeclarations.0.name": "lookup",
 					} {
 						if got := request.Get(path).String(); got != want {
 							t.Errorf("%s = %q, want %q", path, got, want)
 						}
+					}
+					// NOTE: Antigravity normalization merges camelCase system parts, so the original text only leads the first part.
+					if got := request.Get(systemKey + ".parts.0.text").String(); !strings.HasPrefix(got, "keep system") {
+						t.Errorf("%s.parts.0.text = %q, want prefix %q", systemKey, got, "keep system")
 					}
 					for _, configKey := range []string{"generationConfig", "generation_config"} {
 						for _, key := range []string{"responseSchema", "responseJsonSchema", "response_schema", "response_json_schema", "responseMimeType", "response_mime_type"} {
