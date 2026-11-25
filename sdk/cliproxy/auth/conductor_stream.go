@@ -734,6 +734,9 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		}
 		if errStream != nil {
 			abandonAttempt(streamResult)
+			if isHomeExecutorPluginUnavailableError(errStream) {
+				return nil, errStream
+			}
 			if errCtx := execCtx.Err(); errCtx != nil {
 				m.recordCanceledUpstreamCooldown(execCtx, auth, provider, resultModel, routeModel, execOpts, errStream, ephemeralResult, executionSeq)
 				return nil, errCtx
