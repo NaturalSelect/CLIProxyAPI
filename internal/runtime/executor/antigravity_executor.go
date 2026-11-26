@@ -48,12 +48,8 @@ const (
 	antigravityCreditsHintRefreshTimeout   = 5 * time.Second
 	antigravityShortQuotaCooldownThreshold = 5 * time.Minute
 	antigravityInstantRetryThreshold       = 3 * time.Second
-	// antigravityDefaultRateLimitRetryAfter is applied to RESOURCE_EXHAUSTED 429
-	// responses that carry no RetryInfo, quotaResetDelay or human-readable reset
-	// hint. Without it the conductor starts an exponential backoff at one second
-	// and spends additional retry rounds on an upstream that already reported
-	// exhaustion.
-	antigravityDefaultRateLimitRetryAfter = time.Minute
+	// NOTE: Applied to RESOURCE_EXHAUSTED 429 responses with no reset hint so the conductor cools the credential instead of backing off from one second. Credits admission reads the remaining cooldown, so this must stay above the auth package credits short-cooldown threshold of 5 minutes with headroom for elapsed time.
+	antigravityDefaultRateLimitRetryAfter = 6 * time.Minute
 	// systemInstruction              = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.**Absolute paths only****Proactiveness**"
 )
 
