@@ -84,3 +84,5 @@ docker-compose.override.yml
 .llm-wiki
 
 tmp/
+
+.angela.json
