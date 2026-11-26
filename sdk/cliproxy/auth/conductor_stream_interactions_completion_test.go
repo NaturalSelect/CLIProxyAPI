@@ -326,6 +326,7 @@ func TestWrapStreamResult_InteractionsSSEInferenceVerified(t *testing.T) {
 				"gemini-3-flash",
 				"gemini-3-flash",
 				nil,
+				time.Time{},
 				nil,
 				remaining,
 				OAuthModelAliasResult{},
