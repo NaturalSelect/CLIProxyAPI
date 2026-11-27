@@ -274,6 +274,9 @@ type Manager struct {
 	refreshLoop   *authAutoRefreshLoop
 	// refreshJobs retains queued and running jobs across loop restarts under m.mu.
 	refreshJobs map[string]*authRefreshJob
+	// autoRefreshInFlight counts auto-refresh workers still refreshing or persisting under m.mu.
+	autoRefreshInFlight int
+	autoRefreshIdleCh   chan struct{}
 
 	// usageRefreshCancel stops the background usage-refresh prober, if running.
 	usageRefreshCancel context.CancelFunc
